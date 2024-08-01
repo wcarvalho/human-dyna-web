@@ -1,0 +1,6 @@
+[submodule "libraries/fast-web-rl"]
+	path = libraries/fast-web-rl
+	url = https://github.com/wcarvalho/fast-web-rl
+[submodule "libraries/housemaze"]
+	path = libraries/housemaze
+	url = https://github.com/wcarvalho/jaxhousemaze
