@@ -1,0 +1,61 @@
+from housemaze import renderer
+from housemaze.human_dyna import env
+from housemaze.human_dyna import utils
+from housemaze.human_dyna import env as maze
+from housemaze.human_dyna import mazes
+from housemaze.human_dyna import experiments
+from fasthtml.common import *
+
+import numpy as np
+import jax.numpy as jnp
+
+from fastwebrl.stages import ConsentStage, EnvStage
+from fastwebrl.jax import JaxWebEnv
+
+char2key, group_set, task_objects = mazes.get_group_set(3)
+image_data = utils.load_image_dict()
+
+task_runner = env.TaskRunner(task_objects=task_objects)
+keys = image_data['keys']
+
+jax_env = env.HouseMaze(
+    task_runner=task_runner,
+    num_categories=len(keys),
+    use_done=True,
+)
+jax_env = utils.AutoResetWrapper(jax_env)
+
+maze3_train_params = mazes.get_maze_reset_params(
+    group_set=group_set,
+    char2key=char2key,
+    maze_str=mazes.maze3,
+    label=jnp.array(0),
+    make_env_params=True,
+)
+
+def housemaze_render_fn(timestep):
+    image: jnp.ndarray = renderer.create_image_from_grid(
+        timestep.state.grid,
+        timestep.state.agent_pos,
+        timestep.state.agent_dir,
+        image_data)
+    return np.asarray(image)
+
+def task_desc_fn(timestep):
+  category = keys[timestep.state.task_object]
+  return H2(f"GOAL: {category}")
+
+
+web_env = JaxWebEnv(jax_env)
+
+stages = [
+  ConsentStage(name='consent'),
+  EnvStage(
+    name='Training',
+    instruction='Please get the object of interest',
+    web_env=web_env,
+    env_params=maze3_train_params.replace(training=False),
+    render_fn=housemaze_render_fn,
+    task_desc_fn=task_desc_fn,
+  )
+]
