@@ -4,3 +4,6 @@
 [submodule "libraries/housemaze"]
 	path = libraries/housemaze
 	url = https://github.com/wcarvalho/jaxhousemaze
+[submodule "libraries/nicewebrl"]
+	path = libraries/nicewebrl
+	url = https://github.com/wcarvalho/nicewebrl.git
