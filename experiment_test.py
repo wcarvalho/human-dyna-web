@@ -59,7 +59,7 @@ action_to_key = {
 
 web_env = JaxWebEnv(jax_env)
 
-def evaluate_success(timestep):
+def evaluate_success_fn(timestep):
     return int(timestep.reward > .5)
 
 @struct.dataclass
@@ -84,7 +84,7 @@ stages = [
     render_fn=jax.jit(housemaze_render_fn),
     multi_render_fn=jax.jit(jax.vmap(housemaze_render_fn)),
     task_desc_fn=task_desc_fn,
-    evaluate_success_fn=evaluate_success,
+    evaluate_success_fn=evaluate_success_fn,
     state_cls=EnvStageState,
   )
 ]
