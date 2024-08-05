@@ -36,8 +36,9 @@ maze3_train_params = mazes.get_maze_reset_params(
     make_env_params=True,
 )
 
-def housemaze_render_fn(timestep):
-    image: jnp.ndarray = renderer.create_image_from_grid(
+
+def housemaze_render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
+    image = renderer.create_image_from_grid(
         timestep.state.grid,
         timestep.state.agent_pos,
         timestep.state.agent_dir,
@@ -58,6 +59,8 @@ action_to_key = {
 
 web_env = JaxWebEnv(jax_env)
 
+def evaluate_success(timestep):
+    return int(timestep.reward > .5)
 
 @struct.dataclass
 class StageState:
@@ -78,9 +81,10 @@ stages = [
     web_env=web_env,
     action_to_key=action_to_key,
     env_params=maze3_train_params.replace(training=False),
-    render_fn=housemaze_render_fn,
-    vmap_render_fn=jax.jit(jax.vmap(housemaze_render_fn)),
+    render_fn=jax.jit(housemaze_render_fn),
+    multi_render_fn=jax.jit(jax.vmap(housemaze_render_fn)),
     task_desc_fn=task_desc_fn,
+    evaluate_success_fn=evaluate_success,
     state_cls=EnvStageState,
   )
 ]

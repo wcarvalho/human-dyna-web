@@ -7,7 +7,6 @@ from tortoise import Tortoise
 ##import experiment_1
 import experiment_test as experiment
 import nicewebrl
-from nicewebrl.stages import get_latest_stage_state
 import models
 
 stages = experiment.stages
@@ -30,8 +29,7 @@ async def start_experiment(container):
 
 async def load_experiment(container):
   stage = stages[app.storage.user['stage_idx']]
-  latest_stage_state = await get_latest_stage_state(cls=stage.state_cls)
-  await stage.load(container, latest_stage_state)
+  await stage.run(container)
 
 #####################################
 # Setup database
@@ -51,7 +49,7 @@ app.on_shutdown(close_db)
 #####################################
 def footer():
   with ui.row():
-      ui.label(f"user: {app.storage.user['seed']}.")
+      ui.label(f"user id: {app.storage.user['seed']}.")
       ui.label(f"stage: {app.storage.user['stage_idx']}")
 
 @ui.page('/')
