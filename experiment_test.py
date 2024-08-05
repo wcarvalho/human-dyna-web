@@ -1,16 +1,18 @@
 from housemaze import renderer
+from housemaze.maze import KeyboardActions
 from housemaze.human_dyna import env
 from housemaze.human_dyna import utils
 from housemaze.human_dyna import env as maze
 from housemaze.human_dyna import mazes
 from housemaze.human_dyna import experiments
-from fasthtml.common import *
 
-import numpy as np
+import jax
 import jax.numpy as jnp
+import numpy as np
 
-from fastwebrl.stages import ConsentStage, EnvStage
-from fastwebrl.jax import JaxWebEnv
+from nicegui import app, ui
+from nicewebrl.stages import Stage, EnvStage
+from nicewebrl.nicejax import JaxWebEnv
 
 char2key, group_set, task_objects = mazes.get_group_set(3)
 image_data = utils.load_image_dict()
@@ -39,23 +41,31 @@ def housemaze_render_fn(timestep):
         timestep.state.agent_pos,
         timestep.state.agent_dir,
         image_data)
-    return np.asarray(image)
+    return image
 
 def task_desc_fn(timestep):
   category = keys[timestep.state.task_object]
-  return H2(f"GOAL: {category}")
+  return ui.markdown(f"### GOAL: {category}")
 
+action_to_key = {
+  int(KeyboardActions.right): "ArrowRight",
+  int(KeyboardActions.down): "ArrowDown",
+  int(KeyboardActions.left): "ArrowLeft",
+  int(KeyboardActions.up) : "ArrowUp",
+  int(KeyboardActions.done): "d",
+}
 
 web_env = JaxWebEnv(jax_env)
 
 stages = [
-  ConsentStage(name='consent'),
   EnvStage(
     name='Training',
     instruction='Please get the object of interest',
     web_env=web_env,
+    action_to_key=action_to_key,
     env_params=maze3_train_params.replace(training=False),
     render_fn=housemaze_render_fn,
+    vmap_render_fn=jax.jit(jax.vmap(housemaze_render_fn)),
     task_desc_fn=task_desc_fn,
   )
 ]
