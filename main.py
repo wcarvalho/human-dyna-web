@@ -12,8 +12,6 @@ stages = experiment.stages
 def footer():
   with ui.row():
       ui.label(f"user: {app.storage.user['seed']}.")
-      #ui.label(f"rng_key = {app.storage.user['rng_key']}")
-      #ui.label(f"rng_splits = {app.storage.user['rng_splits']}")
       ui.label(f"stage: {app.storage.user['stage_idx']}")
 
 #####################################
