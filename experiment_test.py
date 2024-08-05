@@ -9,6 +9,7 @@ from housemaze.human_dyna import experiments
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax import struct
 
 from nicegui import app, ui
 from nicewebrl.stages import Stage, EnvStage
@@ -57,6 +58,19 @@ action_to_key = {
 
 web_env = JaxWebEnv(jax_env)
 
+
+@struct.dataclass
+class StageState:
+    finished: bool = False
+
+
+@struct.dataclass
+class EnvStageState(StageState):
+    timestep: maze.TimeStep = None
+    nsteps: int = 0
+    nepisodes: int = 0
+    nsuccesses: int = 0
+
 stages = [
   EnvStage(
     name='Training',
@@ -67,5 +81,6 @@ stages = [
     render_fn=housemaze_render_fn,
     vmap_render_fn=jax.jit(jax.vmap(housemaze_render_fn)),
     task_desc_fn=task_desc_fn,
+    state_cls=EnvStageState,
   )
 ]

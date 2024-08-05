@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .sesskey
+db.*
+.nicegui
 
 # C extensions
 *.so
