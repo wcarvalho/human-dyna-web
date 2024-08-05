@@ -30,8 +30,8 @@ async def start_experiment(container):
 
 async def load_experiment(container):
   stage = stages[app.storage.user['stage_idx']]
-  #latest_stage_state = await get_latest_stage_state(cls=stage.state_cls)
-  await stage.load(container, None)
+  latest_stage_state = await get_latest_stage_state(cls=stage.state_cls)
+  await stage.load(container, latest_stage_state)
 
 #####################################
 # Setup database
@@ -56,9 +56,7 @@ def footer():
 
 @ui.page('/')
 async def index():
-    nicewebrl.nicejax.init_rng()
-    app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
-
+    nicewebrl.initialize_user()
     basic_javascript_file = nicewebrl.basic_javascript_file()
     with open(basic_javascript_file) as f:
         ui.add_body_html('<script>' + f.read() + '</script>')
