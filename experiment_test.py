@@ -1,3 +1,5 @@
+from functools import partial
+
 from housemaze import renderer
 from housemaze.maze import KeyboardActions
 from housemaze.human_dyna import env
@@ -12,8 +14,8 @@ import numpy as np
 from flax import struct
 
 from nicegui import app, ui
-from nicewebrl.stages import Stage, EnvStage
-from nicewebrl.nicejax import JaxWebEnv
+from nicewebrl.stages import Stage, EnvStage, make_image_html
+from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 
 char2key, group_set, task_objects = mazes.get_group_set(3)
 image_data = utils.load_image_dict()
@@ -28,13 +30,14 @@ jax_env = env.HouseMaze(
 )
 jax_env = utils.AutoResetWrapper(jax_env)
 
-maze3_train_params = mazes.get_maze_reset_params(
-    group_set=group_set,
-    char2key=char2key,
-    maze_str=mazes.maze3,
-    label=jnp.array(0),
-    make_env_params=True,
-)
+def make_train_params(maze_str):
+  return mazes.get_maze_reset_params(
+      group_set=group_set,
+      char2key=char2key,
+      maze_str=maze_str,
+      label=jnp.array(0),
+      make_env_params=True,
+  ).replace(training=False)
 
 
 def housemaze_render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
@@ -45,9 +48,8 @@ def housemaze_render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
         image_data)
     return image
 
-def task_desc_fn(timestep):
-  category = keys[timestep.state.task_object]
-  return ui.markdown(f"### GOAL: {category}")
+housemaze_render_fn = jax.jit(housemaze_render_fn)
+
 
 action_to_key = {
   int(KeyboardActions.right): "ArrowRight",
@@ -60,31 +62,67 @@ action_to_key = {
 web_env = JaxWebEnv(jax_env)
 
 def evaluate_success_fn(timestep):
+    print('reward', timestep.reward)
     return int(timestep.reward > .5)
 
-@struct.dataclass
-class StageState:
-    finished: bool = False
-
 
 @struct.dataclass
-class EnvStageState(StageState):
+class EnvStageState:
     timestep: maze.TimeStep = None
     nsteps: int = 0
     nepisodes: int = 0
     nsuccesses: int = 0
 
+def stage_display_fn(stage, container):
+    with container.style('align-items: center;'):
+        container.clear()
+        ui.markdown(f"## {stage.name}")
+        ui.markdown(f"{stage.body}")
+
+
+def env_stage_display_fn(stage, container, timestep):
+    image = housemaze_render_fn(timestep)
+    image = base64_npimage(image)
+    category = keys[timestep.state.task_object]
+
+    stage_state = stage.get_user_data('stage_state')
+    with container.style('align-items: center;'):
+        container.clear()
+        ui.markdown(f"## {stage.name}")
+        ui.markdown(f"#### {stage.instruction}")
+        ui.markdown(f"#### GOAL: {category}")
+        text = f"Episodes completed: {stage_state.nepisodes}/{stage.max_episodes}"
+        text += f" | # of Successful episodes: {stage_state.nsuccesses}"
+        ui.markdown(text)
+        ui.html(make_image_html(src=image))
+
+def make_env_stage(maze_name):
+    return EnvStage(
+        name=f'Training: {maze_name}',
+        instruction='Please get the object of interest',
+        web_env=web_env,
+        action_to_key=action_to_key,
+        env_params=make_train_params(getattr(mazes, maze_name)),
+        render_fn=housemaze_render_fn,
+        display_fn=env_stage_display_fn,
+        evaluate_success_fn=evaluate_success_fn,
+        state_cls=EnvStageState,
+        max_episodes=1,
+        min_success=1,
+    )
 stages = [
-  EnvStage(
-    name='Training',
-    instruction='Please get the object of interest',
-    web_env=web_env,
-    action_to_key=action_to_key,
-    env_params=maze3_train_params.replace(training=False),
-    render_fn=jax.jit(housemaze_render_fn),
-    multi_render_fn=jax.jit(jax.vmap(housemaze_render_fn)),
-    task_desc_fn=task_desc_fn,
-    evaluate_success_fn=evaluate_success_fn,
-    state_cls=EnvStageState,
-  )
+    Stage(
+        name='Instructions',
+        body="""
+        You will practice learning how to interact with the environment.
+        <br><br>
+        You can control the red triangle with the arrow keys on your keyboard.
+        <br><br>
+        Your goal is to move it to the goal object.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage('maze0'),
+    make_env_stage('maze1'),
+    #make_env_stage('maze2'),
 ]
