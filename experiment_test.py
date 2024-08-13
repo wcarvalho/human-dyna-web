@@ -59,10 +59,17 @@ action_to_key = {
   int(KeyboardActions.done): "d",
 }
 
+action_to_name = {
+    int(KeyboardActions.right): "right",
+    int(KeyboardActions.down): "down",
+    int(KeyboardActions.left): "left",
+    int(KeyboardActions.up): "up",
+    int(KeyboardActions.done): "done",
+}
+
 web_env = JaxWebEnv(jax_env)
 
 def evaluate_success_fn(timestep):
-    print('reward', timestep.reward)
     return int(timestep.reward > .5)
 
 
@@ -102,6 +109,7 @@ def make_env_stage(maze_name):
         instruction='Please get the object of interest',
         web_env=web_env,
         action_to_key=action_to_key,
+        action_to_name=action_to_name,
         env_params=make_train_params(getattr(mazes, maze_name)),
         render_fn=housemaze_render_fn,
         display_fn=env_stage_display_fn,
