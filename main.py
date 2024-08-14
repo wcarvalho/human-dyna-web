@@ -9,83 +9,111 @@ from tortoise.contrib.pydantic import pydantic_model_creator
 import os
 
 ##import experiment_1s
-import experiment_test as experiment
 import nicewebrl
 from nicewebrl.stages import ExperimentData
 
-stages = experiment.stages
 
 load_dotenv()
 
 APP_TITLE = 'Human Dyna Test'
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 DEBUG = int(os.environ.get('DEBUG', 0))
+EXPERIMENT = int(os.environ.get('EXP', 1))
+if EXPERIMENT == 0:
+  import experiment_test as experiment
+elif EXPERIMENT == 1:
+  import experiment_1 as experiment
+else:
+   raise NotImplementedError
+   
 
+DATABASE_FILE = f'{DATABASE_FILE}_exp{EXPERIMENT}'
+stages = experiment.stages
 #####################################
 # Consent Form
 #####################################
-def make_consent_form(container):
+
+
+def make_consent_form(
+    meta_container, stage_container, button_container
+):
   ui.markdown('## Consent Form')
   ui.markdown('Please agree to this experiment.')
-  ui.checkbox('I agree to participate.',
-              on_change=lambda: start_experiment(container))
+  ui.checkbox(
+    'I agree to participate.',
+    on_change=lambda: start_experiment(
+       meta_container, stage_container, button_container))
 
 #####################################
 # Start/load experiment
 #####################################
-async def start_experiment(container):
+
+async def start_experiment(
+      meta_container,
+      stage_container,
+      button_container):
   app.storage.user['experiment_started'] = True
-  await load_experiment(container)
 
+  if app.storage.user.get('experiment_finished', False):
+    await finish_experiment(
+       meta_container, stage_container, button_container)
+    return
 
-async def load_experiment(container):
-  with container.style('align-items: center;'):
-    stage = stages[app.storage.user['stage_idx']]
-    await stage.run(container)
-    ui.on('key_pressed', lambda e: handle_key_press(e, container))
+  nicewebrl.get_user_session_minutes()
+  meta_container.clear()
+  ui.on('key_pressed', 
+        lambda e: handle_key_press(e, meta_container, stage_container, button_container))
+  await load_stage(meta_container, stage_container, button_container)
 
-    button = stage.get_user_data('button')
-    if button is not None:
-       await button.clicked()
-       await handle_button_press(container)
+async def handle_key_press(e, meta_container, stage_container, button_container):
+  stage = stages[app.storage.user['stage_idx']]
+  await stage.handle_key_press(e, stage_container)
+  if stage.get_user_data('finished', False):
+    app.storage.user['stage_idx'] += 1
+    await load_stage(meta_container, stage_container, button_container)
 
-
-async def handle_button_press(container):
+async def handle_button_press(*args, **kwargs):
   stage = stages[app.storage.user['stage_idx']]
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
-    await update_stage(container)
-
-async def handle_key_press(e, container):
-  stage = stages[app.storage.user['stage_idx']]
-  await stage.handle_key_press(e, container)
-  if stage.get_user_data('finished', False):
-    await update_stage(container)
-
-async def update_stage(container):
-    """Default behavior for progressing through stages."""
     app.storage.user['stage_idx'] += 1
+    await load_stage(*args, **kwargs)
+
+
+async def load_stage(meta_container, stage_container, button_container):
+    """Default behavior for progressing through stages."""
     if app.storage.user['stage_idx'] >= len(stages):
-        await finish_experiment(container)
+        await finish_experiment(meta_container, stage_container, button_container)
         return
 
-    container.clear()
     stage = stages[app.storage.user['stage_idx']]
-    await stage.run(container)
+    with stage_container.style('align-items: center;'):
+      await stage.activate(stage_container)
 
-async def finish_experiment(container):
+    with button_container.style('align-items: center;'):
+      button_container.clear()
+      button = ui.button('Next page').bind_visibility_from(stage, 'next_button')
+      await button.clicked()
+      await handle_button_press(meta_container, stage_container, button_container)
+
+
+async def finish_experiment(meta_container, stage_container, button_container):
+    meta_container.clear()
+    stage_container.clear()
+    button_container.clear()
+
     app.storage.user['experiment_finished'] = True
     app.storage.user['data_saved'] = app.storage.user.get(
         'data_saved', False)
     if not app.storage.user['data_saved']:
-      with container:
-        container.clear()
+      with meta_container:
+        meta_container.clear()
         ui.markdown(f"# Saving data. Please wait")
       await save_data()
       app.storage.user['data_saved'] = True
 
-    with container:
-        container.clear()
+    with meta_container:
+        meta_container.clear()
         ui.markdown("# Experiment over")
         ui.markdown("## Data saved")
         ui.markdown("### You may close the browser")
@@ -131,6 +159,14 @@ app.on_shutdown(close_db)
 #####################################
 # Start page
 #####################################
+
+
+def check_if_over(*args, **kwargs):
+   minutes_passed = nicewebrl.get_user_session_minutes()
+   if minutes_passed > 60:
+      app.storage.user['stage_idx'] = 1000
+      finish_experiment(*args, **kwargs)
+
 def footer():
   with ui.row():
       ui.label().bind_text_from(
@@ -140,10 +176,10 @@ def footer():
       ui.label().bind_text_from(
           app.storage.user, 'stage_idx',
           lambda v: f"stage: {v}.")
-      #ui.label(f"user id:")
-      #ui.label().bind_text_from(app.storage.user, 'seed')
-      #ui.label(f"stage:")
-      #ui.label().bind_text_from(app.storage.user, 'stage_idx')
+      ui.label()
+      ui.label().bind_text_from(
+          app.storage.user, 'session_duration',
+          lambda v: f"minutes passed: {int(v)}.")
 
 @ui.page('/')
 async def index():
@@ -152,20 +188,23 @@ async def index():
     with open(basic_javascript_file) as f:
         ui.add_body_html('<script>' + f.read() + '</script>')
 
-    experiment_started = app.storage.user.get(
-       'experiment_started', False)
-    experiment_ended = app.storage.user.get(
-       'experiment_finished', False)
-
     card = ui.card(align_items=['center']).classes('fixed-center')
+
     with card:
-      with ui.column() as container:
-        if experiment_ended: # final page
-          await finish_experiment(container)
-        elif experiment_started: # intermediary pages
-          await load_experiment(container)
+      stage_container = ui.card()
+      button_container = ui.column()
+      with ui.column() as meta_container:
+        # Run every 5 minutes
+        ui.timer(60, lambda: check_if_over(
+            meta_container, stage_container, button_container))
+
+        if app.storage.user.get('experiment_started', False):
+          await start_experiment(
+             meta_container, stage_container, button_container)
         else: # very initial page
-          make_consent_form(container)
+          make_consent_form(
+             meta_container, stage_container, button_container)
+
       footer()
 
 #secret_key = secrets.token_urlsafe(32)

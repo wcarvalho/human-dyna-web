@@ -48,8 +48,7 @@ def housemaze_render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
         image_data)
     return image
 
-housemaze_render_fn = jax.jit(housemaze_render_fn)
-
+render_fn = jax.jit(housemaze_render_fn)
 
 action_to_key = {
   int(KeyboardActions.right): "ArrowRight",
@@ -68,6 +67,9 @@ action_to_name = {
 }
 
 web_env = JaxWebEnv(jax_env)
+# Call this function to pre-compile jax functions before experiment starsts.
+dummy_env_params = make_train_params(mazes.maze0)
+web_env.precompile(dummy_env_params=dummy_env_params)
 
 def evaluate_success_fn(timestep):
     return int(timestep.reward > .5)
@@ -111,7 +113,7 @@ def make_env_stage(maze_name):
         action_to_key=action_to_key,
         action_to_name=action_to_name,
         env_params=make_train_params(getattr(mazes, maze_name)),
-        render_fn=housemaze_render_fn,
+        render_fn=render_fn,
         display_fn=env_stage_display_fn,
         evaluate_success_fn=evaluate_success_fn,
         state_cls=EnvStageState,
