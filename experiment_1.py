@@ -149,25 +149,6 @@ def make_env_stage(
         min_success=1 if DEBUG else min_success,
     )
 
-
-
-"""
-Experiments Will be
-1. Shortcut introduction (need to higlight open sections somehow)
-  - train: maze3
-  - test1: maze3_open
-  - test1: maze3_open2
-2. Change starting location (need to highlight map changes)
-  - test: maze3_onpath
-  - test: maze3_onpath_shortcut
-  - test: maze3_offpath_shortcut
-
-3. closer/further object:
-  - train: maze5
-  - test: maze5
-"""
-
-
 stages = [
     Stage(
         name='Experiment instructions',
@@ -223,47 +204,74 @@ stages.extend([
         max_episodes=1,
         training=False),
 ])
+"""
+Experiments Will be
+1. Shortcut introduction (need to higlight open sections somehow)
+  - train: maze3
+  - test1: maze3_open2
+2. Change starting location (need to highlight map changes)
+  - test: maze3_onpath
+  - test: maze3_onpath_shortcut
+  - test: maze3_offpath_shortcut
 
-#stages.extend([
-#    #############
-#    # Practice off-task
-#    #############
-#    Stage(
-#        name='Practice eval instructions',
-#        body="""
-#        i
-#        <br><br>
-#        You can control the red triangle with the arrow keys on your keyboard.
-#        <br><br>
-#        Your goal is to move it to the goal object. 
-#        """,
-#        display_fn=stage_display_fn,
-#    ),
-#    make_env_stage('Practice', 'maze0'),
-#    #############
-#    # Maze 3 training
-#    #############
-#    Stage(
-#        name='Training, Maze 1',
-#        body="""
-#        You now need to learn the task.
-#        <br><br>
-#        Your goal is to move it to the goal object. 
-#        """,
-#        display_fn=stage_display_fn,
-#    ),
-#    make_env_stage('Training', 'maze3'),
-#    #############
-#    # Maze 3 test
-#    #############
-#    Stage(
-#        name='Evaluation, Maze 1',
-#        body="""
-#        You now need to learn the task.
-#        <br><br>
-#        Your goal is to move it to the goal object. 
-#        """,
-#        display_fn=stage_display_fn,
-#    ),
-#    make_env_stage('Training', 'maze3'),
-#])
+3. closer/further object:
+  - train: maze5
+  - test: maze5
+"""
+stages.extend([
+    Stage(
+        name='Training on Maze 1',
+        body="""
+        Please learn to obtain the objects. You need to succeed 20 times.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 1', 'maze3',
+        min_success=20, max_episodes=30, training=True),
+    Stage(
+        name='Evaluation on Maze 1',
+        body="""
+        The following are evaluaton tasks. You will get 1 chance each time.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    #make_env_stage(
+    #    'Maze 1', 'maze3_open',
+    #    min_success=1, max_episodes=1, training=False),
+    make_env_stage(
+        'Maze 1', 'maze3_open2',
+        min_success=1, max_episodes=1, training=False),
+    make_env_stage(
+        'Maze 1', 'maze3_onpath',
+        min_success=1, max_episodes=1, training=False),
+    make_env_stage(
+        'Maze 1', 'maze3_onpath_shortcut',
+        min_success=1, max_episodes=1, training=False),
+    make_env_stage(
+        'Maze 1', 'maze3_offpath_shortcut',
+        min_success=1, max_episodes=1, training=False),
+])
+
+stages.extend([
+    Stage(
+        name='Training on Maze 2',
+        body="""
+        Please learn to obtain the objects. You need to succeed 20 times.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 1', 'maze5',
+        min_success=20, max_episodes=30, training=True),
+    Stage(
+        name='Evaluation on Maze 2',
+        body="""
+        The following are evaluaton tasks. You will get 1 chance each time.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 1', 'maze5',
+        min_success=1, max_episodes=1, training=False),
+])
