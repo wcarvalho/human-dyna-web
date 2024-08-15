@@ -124,15 +124,15 @@ async def finish_experiment(meta_container, stage_container, button_container):
     if not app.storage.user['data_saved']:
       with meta_container:
         meta_container.clear()
-        ui.markdown(f"# Saving data. Please wait")
+        ui.markdown(f"## Saving data. Please wait")
       await save_data()
       app.storage.user['data_saved'] = True
 
     with meta_container:
         meta_container.clear()
-        ui.markdown("# Experiment over")
-        ui.markdown("## Data saved")
-        ui.markdown("### You may close the browser")
+        ui.markdown("## Experiment over")
+        ui.markdown("### Data saved")
+        ui.markdown("#### You may close the browser")
 
 
 async def save_data():
