@@ -15,7 +15,7 @@ RUN pip install -e libraries/nicewebrl -e libraries/housemaze -r requirements.tx
 EXPOSE 8080
 
 # Define environment variable
-ENV GOOGLE_APPLICATION_CREDENTIALS ./keys/datastore-key.json
+ENV GOOGLE_CREDENTIALS ./keys/datastore-key.json
 
 # Command to run your application using Uvicorn
 CMD ["python", "main.py"]

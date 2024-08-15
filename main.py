@@ -2,8 +2,10 @@
 from dotenv import load_dotenv
 import json
 from nicegui import app, ui
+import nicewebrl
 import nicewebrl.nicejax
 import nicewebrl.stages
+import nicewebrl.utils
 from tortoise import Tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
 import os
@@ -49,11 +51,6 @@ def make_consent_form(
 # Start/load experiment
 #####################################
 
-
-async def check_fullscreen():
-    result = await ui.run_javascript('isFullscreen()')
-    return result
-
 async def start_experiment(
       meta_container,
       stage_container,
@@ -73,7 +70,7 @@ async def start_experiment(
   await load_stage(meta_container, stage_container, button_container)
 
 async def handle_key_press(e, meta_container, stage_container, button_container):
-  if not await check_fullscreen():
+  if not await nicewebrl.utils.check_fullscreen():
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
@@ -84,7 +81,7 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
     await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, **kwargs):
-  if not await check_fullscreen():
+  if not await nicewebrl.utils.check_fullscreen():
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
@@ -125,6 +122,8 @@ async def finish_experiment(meta_container, stage_container, button_container):
       with meta_container:
         meta_container.clear()
         ui.markdown(f"## Saving data. Please wait")
+        ui.markdown(
+           "**Once the data is uploaded, this app will automatically move to the next screen**")
       await save_data()
       app.storage.user['data_saved'] = True
 
@@ -223,17 +222,9 @@ async def index():
 
     card = ui.card(align_items=['center']).classes('fixed-center')
     with card:
-      def toggle() -> None:
-        ui.run_javascript('''
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen();
-            } else {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                }
-            }
-        ''')
-      ui.button('Toggle fullscreen', icon='fullscreen', on_click=toggle).props('flat')
+      ui.button(
+         'Toggle fullscreen', icon='fullscreen',
+          on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
       stage_container = ui.column()
       button_container = ui.column()
       with ui.column() as meta_container:

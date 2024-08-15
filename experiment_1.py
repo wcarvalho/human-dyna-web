@@ -242,6 +242,8 @@ stages.extend([
         name='Evaluation on Maze 1',
         body="""
         The following are evaluaton tasks. You will get 1 chance each time.
+
+        **Note that some parts of the maze may have changed**.
         """,
         display_fn=stage_display_fn,
     ),
