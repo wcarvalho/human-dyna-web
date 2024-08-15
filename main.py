@@ -35,7 +35,6 @@ stages = experiment.stages
 # Consent Form
 #####################################
 
-
 def make_consent_form(
     meta_container, stage_container, button_container
 ):
@@ -50,10 +49,16 @@ def make_consent_form(
 # Start/load experiment
 #####################################
 
+
+async def check_fullscreen():
+    result = await ui.run_javascript('isFullscreen()')
+    return result
+
 async def start_experiment(
       meta_container,
       stage_container,
       button_container):
+  ui.run_javascript('document.documentElement.requestFullscreen()')
   app.storage.user['experiment_started'] = True
 
   if app.storage.user.get('experiment_finished', False):
@@ -68,6 +73,10 @@ async def start_experiment(
   await load_stage(meta_container, stage_container, button_container)
 
 async def handle_key_press(e, meta_container, stage_container, button_container):
+  if not await check_fullscreen():
+    ui.notify('Please enter fullscreen mode to continue experiment',
+              type='negative')
+    return
   stage = stages[app.storage.user['stage_idx']]
   await stage.handle_key_press(e, stage_container)
   if stage.get_user_data('finished', False):
@@ -75,6 +84,10 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
     await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, **kwargs):
+  if not await check_fullscreen():
+    ui.notify('Please enter fullscreen mode to continue experiment',
+              type='negative')
+    return
   stage = stages[app.storage.user['stage_idx']]
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
@@ -94,9 +107,10 @@ async def load_stage(meta_container, stage_container, button_container):
 
     with button_container.style('align-items: center;'):
       button_container.clear()
-      button = ui.button('Next page').bind_visibility_from(stage, 'next_button')
-      await button.clicked()
-      await handle_button_press(meta_container, stage_container, button_container)
+      ui.button('Next page',
+                on_click=lambda: handle_button_press(
+                    meta_container, stage_container, button_container)
+                ).bind_visibility_from(stage, 'next_button')
 
 
 async def finish_experiment(meta_container, stage_container, button_container):
@@ -147,6 +161,13 @@ def save_to_gcs(user_data, filename):
     print(f'Saved {filename} in bucket {bucket.name}')
 
 
+def check_if_over(*args, episode_limit=60, ** kwargs):
+   minutes_passed = nicewebrl.get_user_session_minutes()
+   if minutes_passed > episode_limit:
+      print(f"experiment timed out after {minutes_passed} minutes")
+      app.storage.user['stage_idx'] = 1000
+      finish_experiment(*args, **kwargs)
+
 #####################################
 # Setup database
 #####################################
@@ -167,16 +188,8 @@ app.on_startup(init_db)
 app.on_shutdown(close_db)
 
 #####################################
-# Start page
+# Home page
 #####################################
-
-
-def check_if_over(*args, episode_limit=60, ** kwargs):
-   minutes_passed = nicewebrl.get_user_session_minutes()
-   if minutes_passed > episode_limit:
-      print(f"experiment timed out after {minutes_passed} minutes")
-      app.storage.user['stage_idx'] = 1000
-      finish_experiment(*args, **kwargs)
 
 def footer(card):
   with card:
@@ -199,11 +212,29 @@ async def index():
     basic_javascript_file = nicewebrl.basic_javascript_file()
     with open(basic_javascript_file) as f:
         ui.add_body_html('<script>' + f.read() + '</script>')
+    ui.add_body_html('''
+      <script>
+      function isFullscreen() {
+          return document.fullscreenElement !== null;
+      }
+      </script>
+      ''')
+
 
     card = ui.card(align_items=['center']).classes('fixed-center')
-
     with card:
-      stage_container = ui.card()
+      def toggle() -> None:
+        ui.run_javascript('''
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        ''')
+      ui.button('Toggle fullscreen', icon='fullscreen', on_click=toggle).props('flat')
+      stage_container = ui.column()
       button_container = ui.column()
       with ui.column() as meta_container:
         # Run every 5 minutes
