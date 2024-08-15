@@ -12,6 +12,16 @@ pip install -e libraries/housemaze -e libraries/fast-web-rl
 
 ```
 
+## Deploying with fly.io
+
+I followed [these instructions](https://github.com/zauberzeug/nicegui/wiki/fly.io-Deployment).
+
+1. Install [flyctl](https://fly.io/docs/flyctl/install/), the command line interface (CLI) to administer your fly.io deployment. I used `brew`, i.e. `brew install flyctl` with a mac.
+2. Create an account. With the terminal, you can use command `fly auth signup` or login with `fly auth login`.
+3. Run `fly launch` to create the `fly.toml` file.
+4. Run `fly deploy` to launch online.
+
+
 
 ## Setting up google cloud for storing/loading data
 

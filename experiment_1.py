@@ -21,7 +21,10 @@ from nicegui import ui
 from nicewebrl.stages import Stage, EnvStage, make_image_html
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 
-char2key, group_set, task_objects = mazes.get_group_set(1)
+num_rooms = 3
+num_pairs_for_exp = 1
+char2key, group_set, task_objects = mazes.get_group_set(num_rooms)
+#task_objects = group_set[:1].reshape(-1)
 image_data = utils.load_image_dict()
 
 task_runner = env.TaskRunner(task_objects=task_objects)
@@ -37,11 +40,13 @@ jax_env = utils.AutoResetWrapper(jax_env)
 
 def make_train_params(maze_str):
   return mazes.get_maze_reset_params(
-      group_set=group_set,
+      group_set=group_set[:num_pairs_for_exp],
       char2key=char2key,
       maze_str=maze_str,
       label=jnp.array(0),
       make_env_params=True,
+  ).replace(
+        terminate_with_done=jnp.array(2),
   )
 
 
@@ -112,11 +117,16 @@ def env_stage_display_fn(stage, container, timestep):
     with container.style('align-items: center;'):
         container.clear()
         ui.markdown(f"## {stage.name}")
-        ui.markdown(f"#### {stage.instruction}")
-        ui.markdown(f"#### GOAL: {category}")
-        text = f"Episodes completed: {stage_state.nepisodes}/{stage.max_episodes}"
-        text += f"<br>Number of successful episodes: {stage_state.nsuccesses}"
-        ui.markdown(text)
+        #ui.markdown(f"#### {stage.instruction}")
+        ui.markdown(f"#### Please obtain the {category}")
+        with ui.row():
+            with ui.element('div').classes('p-2 bg-blue-100'):
+                ui.label(f"Number of successful episodes: {stage_state.nsuccesses}/{stage.min_success}") 
+            with ui.element('div').classes('p-2 bg-green-100'):
+                ui.label(
+                    f"Try: {stage_state.nepisodes}/{stage.max_episodes}")
+        text = f"You must complete at least {stage.min_success} episodes. You have {stage.max_episodes} tries."
+        ui.html(text).style('align-items: center;')
         ui.html(make_image_html(src=image))
 
 
