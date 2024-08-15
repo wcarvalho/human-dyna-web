@@ -12,6 +12,12 @@ pip install -e libraries/housemaze -e libraries/fast-web-rl
 
 ```
 
+## Testing locally
+```
+python main.py
+```
+
+
 ## Deploying with fly.io
 
 I followed [these instructions](https://github.com/zauberzeug/nicegui/wiki/fly.io-Deployment).
