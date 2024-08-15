@@ -9,6 +9,7 @@ from tortoise.contrib.pydantic import pydantic_model_creator
 import os
 
 ##import experiment_1s
+import gcs
 import nicewebrl
 from nicewebrl.stages import ExperimentData
 
@@ -19,6 +20,7 @@ APP_TITLE = 'Human Dyna Test'
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 DEBUG = int(os.environ.get('DEBUG', 0))
 EXPERIMENT = int(os.environ.get('EXP', 1))
+
 if EXPERIMENT == 0:
   import experiment_test as experiment
 elif EXPERIMENT == 1:
@@ -27,7 +29,7 @@ else:
    raise NotImplementedError
    
 
-DATABASE_FILE = f'{DATABASE_FILE}_exp{EXPERIMENT}'
+DATABASE_FILE = f'{DATABASE_FILE}_exp{EXPERIMENT}_debug{DEBUG}'
 stages = experiment.stages
 #####################################
 # Consent Form
@@ -131,10 +133,18 @@ async def save_data():
         data).model_dump() for data in user_experiment_data]
 
     user_seed = app.storage.user['seed']
-    user_data_file = f'data/user_{user_seed}.json'
+    user_data_file = f'data/user={user_seed}_exp={EXPERIMENT}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:
       json.dump(data_dicts, f)
     print(f'saved: {user_data_file}')
+    save_to_gcs(user_data=data_dicts, filename=user_data_file)
+
+def save_to_gcs(user_data, filename):
+    bucket = gcs.initialize_storage_client()
+    blob = bucket.blob(filename)
+    blob.upload_from_string(data=json.dumps(
+        user_data), content_type='application/json')
+    print(f'Saved {filename} in bucket {bucket.name}')
 
 
 #####################################
@@ -161,25 +171,27 @@ app.on_shutdown(close_db)
 #####################################
 
 
-def check_if_over(*args, **kwargs):
+def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()
-   if minutes_passed > 60:
+   if minutes_passed > episode_limit:
+      print(f"experiment timed out after {minutes_passed} minutes")
       app.storage.user['stage_idx'] = 1000
       finish_experiment(*args, **kwargs)
 
-def footer():
-  with ui.row():
-      ui.label().bind_text_from(
-          app.storage.user, 'seed',
-          lambda v: f"user id: {v}.")
-      ui.label()
-      ui.label().bind_text_from(
-          app.storage.user, 'stage_idx',
-          lambda v: f"stage: {v}.")
-      ui.label()
-      ui.label().bind_text_from(
-          app.storage.user, 'session_duration',
-          lambda v: f"minutes passed: {int(v)}.")
+def footer(card):
+  with card:
+    with ui.row():
+        ui.label().bind_text_from(
+            app.storage.user, 'seed',
+            lambda v: f"user id: {v}.")
+        ui.label()
+        ui.label().bind_text_from(
+            app.storage.user, 'stage_idx',
+            lambda v: f"stage: {v}.")
+        ui.label()
+        ui.label().bind_text_from(
+            app.storage.user, 'session_duration',
+            lambda v: f"minutes passed: {int(v)}.")
 
 @ui.page('/')
 async def index():
@@ -195,8 +207,14 @@ async def index():
       button_container = ui.column()
       with ui.column() as meta_container:
         # Run every 5 minutes
-        ui.timer(60, lambda: check_if_over(
-            meta_container, stage_container, button_container))
+        episode_limit = 1 if DEBUG else 60
+        ui.timer(
+           1,  # check every minute
+           lambda: check_if_over(
+               episode_limit=episode_limit,
+               meta_container=meta_container, 
+               stage_container=stage_container,
+               button_container=button_container))
 
         if app.storage.user.get('experiment_started', False):
           await start_experiment(
@@ -204,10 +222,8 @@ async def index():
         else: # very initial page
           make_consent_form(
              meta_container, stage_container, button_container)
+      footer(card)
 
-      footer()
-
-#secret_key = secrets.token_urlsafe(32)
 ui.run(
    storage_secret='private key to secure the browser session cookie',
    reload='FLY_ALLOC_ID' not in os.environ,

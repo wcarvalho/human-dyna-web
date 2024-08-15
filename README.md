@@ -11,3 +11,13 @@ mamba activate human-dyna-web
 pip install -e libraries/housemaze -e libraries/fast-web-rl
 
 ```
+
+
+## Setting up google cloud for storing/loading data
+
+Create a [Google Service Account](https://console.cloud.google.com/iam-admin/serviceaccounts?) for accessing your Database. Select "CREATE SERVICE ACCOUNT", give it some name and the following permissions:
+- Storage Object Creator (for uploading/saving data)
+- Storage Object Viewer and Storage Object Admin (for viewing/downloading data)
+
+- create a bucket using [this link](https://console.cloud.google.com/storage/). this will be used to store data.
+- create a key using [this link](https://console.cloud.google.com/iam-admin/serviceaccounts/details/111959560397464491265/keys?project=human-web-rl). this will be used to authenticate uploading and downloading of data. store the key somewhere and make `GOOGLE_CREDENTIALS` point to it. e.g. `export GOOGLE_CREDENTIALS=path/to/key.json`.

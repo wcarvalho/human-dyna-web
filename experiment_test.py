@@ -133,6 +133,6 @@ stages = [
         display_fn=stage_display_fn,
     ),
     make_env_stage('maze0'),
-    make_env_stage('maze1'),
+    #make_env_stage('maze1'),
     #make_env_stage('maze2'),
 ]

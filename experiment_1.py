@@ -53,8 +53,7 @@ def housemaze_render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
         image_data)
     return image
 
-
-render_fn = jax.jit(housemaze_render_fn)
+housemaze_render_fn = jax.jit(housemaze_render_fn)
 
 action_to_key = {
     int(KeyboardActions.right): "ArrowRight",
@@ -141,7 +140,7 @@ def make_env_stage(
           # if testing, sample_train=0.0
           p_test_sample_train=float(training),
           ),
-        render_fn=render_fn,
+        render_fn=housemaze_render_fn,
         display_fn=env_stage_display_fn,
         evaluate_success_fn=evaluate_success_fn,
         state_cls=EnvStageState,
