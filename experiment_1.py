@@ -79,6 +79,8 @@ web_env = JaxWebEnv(jax_env)
 # Call this function to pre-compile jax functions before experiment starsts.
 dummy_env_params = make_train_params(mazes.maze0)
 web_env.precompile(dummy_env_params=dummy_env_params)
+vmap_render_fn = web_env.precompile_vmap_render_fn(
+    housemaze_render_fn, dummy_env_params)
 
 
 def evaluate_success_fn(timestep):
@@ -148,6 +150,7 @@ def make_env_stage(
           p_test_sample_train=float(training),
           ),
         render_fn=housemaze_render_fn,
+        vmap_render_fn=vmap_render_fn,
         display_fn=env_stage_display_fn,
         evaluate_success_fn=evaluate_success_fn,
         state_cls=EnvStageState,
@@ -173,6 +176,22 @@ stages = [
 #############
 # Practice
 #############
+maze1 = """
+.#.C...##....
+.#..D...####.
+.######......
+......######.
+.#.#..#......
+.#.#.##..#...
+##.#.#>.###.#
+A..#.##..#...
+.B.#.........
+#####.#..####
+......####.#.
+.######E.#.#.
+........F#...
+""".strip()
+
 stages.extend([
     Stage(
         name='Practice training',
@@ -188,7 +207,7 @@ stages.extend([
     ),
     make_env_stage(
         'Practice',
-        maze_str=getattr(mazes, 'maze1'),
+        maze_str=maze1,
         min_success=2,
         max_episodes=5,
         training=True),
@@ -205,7 +224,7 @@ stages.extend([
     ),
     make_env_stage(
         'Practice',
-        maze_str=getattr(mazes, 'maze1'),
+        maze_str=mazes.maze1,
         min_success=1,
         max_episodes=1,
         training=False),
@@ -233,7 +252,7 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze3'),
+        'Maze 1', maze_str=mazes.maze3,
         min_success=20, max_episodes=30, training=True),
     Stage(
         name='Evaluation on Maze 1',
@@ -248,16 +267,16 @@ stages.extend([
     #    'Maze 1', 'maze3_open',
     #    min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze3_open2'),
+        'Maze 1', maze_str=mazes.maze3_open2,
         min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze3_onpath'),
+        'Maze 1', maze_str=mazes.maze3_onpath,
         min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze3_onpath_shortcut'),
+        'Maze 1', maze_str=mazes.maze3_onpath_shortcut,
         min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze3_offpath_shortcut'),
+        'Maze 1', maze_str=mazes.maze3_offpath_shortcut,
         min_success=1, max_episodes=1, training=False),
 ])
 
@@ -270,7 +289,7 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze5'),
+        'Maze 1', maze_str=mazes.maze5,
         min_success=20, max_episodes=30, training=True),
     Stage(
         name='Evaluation on Maze 2',
@@ -280,6 +299,6 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', maze_str=getattr(mazes, 'maze5'),
+        'Maze 1', maze_str=mazes.maze5,
         min_success=1, max_episodes=1, training=False),
 ])

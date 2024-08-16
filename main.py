@@ -235,14 +235,6 @@ async def index(request: Request):
     basic_javascript_file = nicewebrl.basic_javascript_file()
     with open(basic_javascript_file) as f:
         ui.add_body_html('<script>' + f.read() + '</script>')
-    ui.add_body_html('''
-      <script>
-      function isFullscreen() {
-          return document.fullscreenElement !== null;
-      }
-      </script>
-      ''')
-
 
     card = ui.card(align_items=['center']).classes('fixed-center')
     with card:
