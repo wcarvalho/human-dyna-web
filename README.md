@@ -28,12 +28,22 @@ I followed [these instructions](https://github.com/zauberzeug/nicegui/wiki/fly.i
 ### Custom urls for custom experiments
 
 Right now, `main.py` accepts different experiment settings via environment variable `EXP`. We can leverage this to have custom URLs per experiments as follows:
+```sh
+# create app
+flyctl launch \
+--dockerfile Dockerfile \
+--name ${name} \
+--config configs/${name}.toml \
+--env EXP=${exp}
 
-1. `flyctl launch --name ${app_name} --config configs/${app_name}.toml --env EXP=${exp} --dockerfile Dockerfile`.
-   1. use `--name` to name the app. using same name for the config file is easier for tracking.
-   2. 1. use `--env` to set environment variables for the app
+# deploy online
+flyctl deploy --config ${name}.toml
 
-examples:
+```
+1. use `--name` to name the app. using same name for the config file is easier for tracking.
+2. 1. use `--env` to set environment variables for the app
+
+some examples:
 ```sh
 # test experiment
 flyctl launch \
