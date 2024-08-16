@@ -6,11 +6,11 @@ import nicewebrl
 import nicewebrl.nicejax
 import nicewebrl.stages
 import nicewebrl.utils
+from fastapi import Request
 from tortoise import Tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
 import os
 
-##import experiment_1s
 import gcs
 import nicewebrl
 from nicewebrl.stages import ExperimentData
@@ -18,21 +18,21 @@ from nicewebrl.stages import ExperimentData
 
 load_dotenv()
 
-APP_TITLE = 'Human Dyna Test'
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 DEBUG = int(os.environ.get('DEBUG', 0))
 EXPERIMENT = int(os.environ.get('EXP', 1))
 
 if EXPERIMENT == 0:
   import experiment_test as experiment
+  APP_TITLE = 'Human Dyna Test'
 elif EXPERIMENT == 1:
   import experiment_1 as experiment
+  APP_TITLE = 'Human Dyna 1'
 else:
    raise NotImplementedError
-   
+stages = experiment.stages
 
 DATABASE_FILE = f'{DATABASE_FILE}_exp{EXPERIMENT}_debug{DEBUG}'
-stages = experiment.stages
 #####################################
 # Consent Form
 #####################################
@@ -146,13 +146,16 @@ async def save_data():
         data).model_dump() for data in user_experiment_data]
 
     user_seed = app.storage.user['seed']
-    user_data_file = f'data/user={user_seed}_exp={EXPERIMENT}_debug={DEBUG}.json'
+    user_data_file = f'data/data_user={user_seed}_exp={EXPERIMENT}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:
       json.dump(data_dicts, f)
-    print(f'saved: {user_data_file}')
-    save_to_gcs(user_data=data_dicts, filename=user_data_file)
 
-def save_to_gcs(user_data, filename):
+    await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+
+    # Now delete the data from the database
+    await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
+
+async def save_to_gcs(user_data, filename):
     bucket = gcs.initialize_storage_client()
     blob = bucket.blob(filename)
     blob.upload_from_string(data=json.dumps(
@@ -204,27 +207,37 @@ def footer(card):
         ui.label().bind_text_from(
             app.storage.user, 'session_duration',
             lambda v: f"minutes passed: {int(v)}.")
+    ui.button(
+        'Toggle fullscreen', icon='fullscreen',
+        on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
 
 @ui.page('/')
-async def index():
+async def index(request: Request):
     nicewebrl.initialize_user(debug=DEBUG)
+
+    ################
+    # Get user data and save to GCS
+    ################
+    user_info = dict(
+        worker_id=request.query_params.get('workerId', 'default_worker'),
+        hit_id=request.query_params.get('hitId', 'default_hit'),
+        assignment_id=request.query_params.get(
+            'assignmentId', 'default_assignment')
+    )
+    user_seed = app.storage.user['seed']
+    await save_to_gcs(
+        user_data=user_info,
+        filename=f'data/info_user={user_seed}_exp={EXPERIMENT}_debug={DEBUG}.json')
+
+    ################
+    # Start experiment
+    ################
     basic_javascript_file = nicewebrl.basic_javascript_file()
     with open(basic_javascript_file) as f:
         ui.add_body_html('<script>' + f.read() + '</script>')
-    ui.add_body_html('''
-      <script>
-      function isFullscreen() {
-          return document.fullscreenElement !== null;
-      }
-      </script>
-      ''')
-
 
     card = ui.card(align_items=['center']).classes('fixed-center')
     with card:
-      ui.button(
-         'Toggle fullscreen', icon='fullscreen',
-          on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
       stage_container = ui.column()
       button_container = ui.column()
       with ui.column() as meta_container:

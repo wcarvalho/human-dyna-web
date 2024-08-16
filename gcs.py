@@ -36,10 +36,10 @@ def main():
     bucket = initialize_storage_client()
 
     ## List files in the bucket
-    #list_files(bucket)
+    list_files(bucket)
 
     # Download files from the bucket
-    download_files(bucket, 'google_cloud_data')
+    #download_files(bucket, 'google_cloud_data')
 
 if __name__ == "__main__":
     main()
