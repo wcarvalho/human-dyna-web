@@ -5,16 +5,26 @@ Web experiments for studying Human Dyna experiments
 ## Install
 
 ```
-mamba create -n human-dyna-web python=3.10 pip wheel -y
-mamba activate human-dyna-web
+conda create -n human-dyna-web python=3.10 pip wheel -y
+conda activate human-dyna-web
 # optionally add   --no-deps if just need library and dependencies already installed
+
+# if developing sublibraries, load the submodules and install from there
 pip install -e libraries/housemaze -e libraries/fast-web-rl
+
+# otherwise, use github installs
+pip install git+https://github.com/wcarvalho/JaxHouseMaze.git git+https://github.com/wcarvalho/nicewebrl -r requirements.txt
 
 ```
 
 ## Testing locally
 ```
 python main.py
+```
+
+If you want to change an experiment, set `EXP=$number`. for debugging with a constant seed and max 1 episode per stage, set `DEBUG=1`. example:
+```
+DEBUG=1 EXP=2 python main.py 
 ```
 
 
