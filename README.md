@@ -24,26 +24,44 @@ I followed [these instructions](https://github.com/zauberzeug/nicegui/wiki/fly.i
 
 1. Install [flyctl](https://fly.io/docs/flyctl/install/), the command line interface (CLI) to administer your fly.io deployment. I used `brew`, i.e. `brew install flyctl` with a mac.
 2. Create an account. With the terminal, you can use command `fly auth signup` or login with `fly auth login`.
-3. Run `fly launch --no-deploy` to create the `fly.toml`.
-4. Run `fly deploy` to deploy changes.
 
 ### Custom urls for custom experiments
 
-Right now, I `main.py` accepts different experiment settings via environment variable `EXP`. We can leverage this to have custom URLs per experiments as follows:
+Right now, `main.py` accepts different experiment settings via environment variable `EXP`. We can leverage this to have custom URLs per experiments as follows:
 
-1. `flyctl launch --name human-dyna-test-3 --env EXP=0`.
-   1. use `--name` to name the app
-   2. use `--no-deploy` to just create
+1. `flyctl launch --name ${app_name} --config configs/${app_name}.toml --env EXP=${exp} --dockerfile Dockerfile`.
+   1. use `--name` to name the app. using same name for the config file is easier for tracking.
+   2. 1. use `--env` to set environment variables for the app
 
+examples:
+```sh
+# test experiment
+flyctl launch \
+--dockerfile Dockerfile \
+--name human-dyna-test \
+--config configs/human-dyna-test.toml \
+--env EXP=0
+
+flyctl deploy --config configs/human-dyna-test.toml
+
+# experiment 1
+flyctl launch \
+--dockerfile Dockerfile \
+--name human-dyna-1 \
+--config configs/human-dyna-1.toml \
+--env EXP=1 \
+--vm-size 'shared-cpu-4x'
+
+flyctl deploy --config configs/human-dyna-1.toml
 ```
-flyctl apps create you-app-name; flyctl secrets set EXP=number -a your-app-name; flyctl deploy -a your-app-name
 
-# examples
-flyctl launch --name human-dyna-test --no-deploy --env EXP=0
+### Deleting apps
 
-; flyctl secrets set  -a human-dyna-test; flyctl deploy -a human-dyna-test
+```sh
+flyctl apps destroy $name --yes
 
-flyctl apps create human-dyna-1; flyctl secrets set EXP=1 -a human-dyna-1; flyctl deploy -a human-dyna-1
+# example
+flyctl apps destroy human-dyna-test --yes
 ```
 
 

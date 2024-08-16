@@ -1,3 +1,28 @@
+# flyctl launch added from .gitignore
+**/__pycache__
+**/*.egg-info
+**/.*.swp
+**/dist
+test.py
+demo.py
+**/*.pickle
+**/tests/screenshots
+**/.venv
+**/.pytest_cache
+**/.coverage
+**/.git
+**/.mypy_cache
+**/.nicegui
+
+# flyctl launch added from .pytest_cache/.gitignore
+# Created by pytest automatically.
+.pytest_cache/**/*
+
+# flyctl launch added from tests/.pytest_cache/.gitignore
+# Created by pytest automatically.
+tests/.pytest_cache/**/*
+
+
 # Byte-compiled / optimized / DLL files
 data
 .github

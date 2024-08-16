@@ -24,7 +24,6 @@ from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 num_rooms = 3
 num_pairs_for_exp = 1
 char2key, group_set, task_objects = mazes.get_group_set(num_rooms)
-#task_objects = group_set[:1].reshape(-1)
 image_data = utils.load_image_dict()
 
 task_runner = env.TaskRunner(task_objects=task_objects)
@@ -132,7 +131,7 @@ def env_stage_display_fn(stage, container, timestep):
 
 def make_env_stage(
         name,
-        maze_name,
+        maze_str,
         max_episodes=1,
         min_success=1,
         training=True):
@@ -142,9 +141,7 @@ def make_env_stage(
         web_env=web_env,
         action_to_key=action_to_key,
         action_to_name=action_to_name,
-        env_params=make_train_params(
-            getattr(mazes, maze_name)
-        ).replace(
+        env_params=make_train_params(maze_str).replace(
           training=False,
           # if training sample_train=1.0
           # if testing, sample_train=0.0
@@ -191,7 +188,7 @@ stages.extend([
     ),
     make_env_stage(
         'Practice',
-        'maze1',
+        maze_str=getattr(mazes, 'maze1'),
         min_success=2,
         max_episodes=5,
         training=True),
@@ -208,7 +205,7 @@ stages.extend([
     ),
     make_env_stage(
         'Practice',
-        'maze1',
+        maze_str=getattr(mazes, 'maze1'),
         min_success=1,
         max_episodes=1,
         training=False),
@@ -236,7 +233,7 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', 'maze3',
+        'Maze 1', maze_str=getattr(mazes, 'maze3'),
         min_success=20, max_episodes=30, training=True),
     Stage(
         name='Evaluation on Maze 1',
@@ -251,16 +248,16 @@ stages.extend([
     #    'Maze 1', 'maze3_open',
     #    min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', 'maze3_open2',
+        'Maze 1', maze_str=getattr(mazes, 'maze3_open2'),
         min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', 'maze3_onpath',
+        'Maze 1', maze_str=getattr(mazes, 'maze3_onpath'),
         min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', 'maze3_onpath_shortcut',
+        'Maze 1', maze_str=getattr(mazes, 'maze3_onpath_shortcut'),
         min_success=1, max_episodes=1, training=False),
     make_env_stage(
-        'Maze 1', 'maze3_offpath_shortcut',
+        'Maze 1', maze_str=getattr(mazes, 'maze3_offpath_shortcut'),
         min_success=1, max_episodes=1, training=False),
 ])
 
@@ -273,7 +270,7 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', 'maze5',
+        'Maze 1', maze_str=getattr(mazes, 'maze5'),
         min_success=20, max_episodes=30, training=True),
     Stage(
         name='Evaluation on Maze 2',
@@ -283,6 +280,6 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', 'maze5',
+        'Maze 1', maze_str=getattr(mazes, 'maze5'),
         min_success=1, max_episodes=1, training=False),
 ])
