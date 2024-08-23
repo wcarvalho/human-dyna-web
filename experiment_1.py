@@ -322,6 +322,8 @@ if not DEBUG:
 # Manipulation 1: Shortcut
 ##########################
 reversals = [(False, False), (True, False), (False, True), (True, True)]
+if DEBUG:
+    reversals = [(False, False)]*4
 
 for reversal in reversals[:2]:
     block_groups, block_char2idx = permute_groups(groups)
@@ -362,7 +364,7 @@ for reversal in reversals[:2]:
     metadata=dict(
         manipulation=1,
         desc="shortcut",
-        long=f"A shortcut is introduced. reverse h = {reversal[0]}, v = {reversal[1]}")
+        long=f"A shortcut is introduced")
     )
     all_blocks.append(block0)
     if DEBUG: break
@@ -414,8 +416,6 @@ for reversal in reversals[2:]:
         desc="faster when on-path but further than off-path but closer",
         long=f"""
         In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
-
-        reverse h = {reversal[0]}, v = {reversal[1]}
         """))
     all_blocks.append(block1)
     if DEBUG: break
@@ -458,7 +458,6 @@ for reversal in reversals:
         desc="reusing longer of two paths matching training path",
         long=f"""
         Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
-        reverse h = {reversal[0]}, v = {reversal[1]}
         """))
     all_blocks.append(block2)
     if DEBUG: break
@@ -514,7 +513,6 @@ for reversal in reversals[:-1]:
             long=f"""
             At test time, we'll change the location of the off-task object so it's equidistant from path during training.
             We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
-            reverse h = {reversal[0]}, v = {reversal[1]}
             """
             ))
     all_blocks.append(block3)
