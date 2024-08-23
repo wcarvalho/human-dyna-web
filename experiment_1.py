@@ -387,7 +387,9 @@ block3 = Block([
     metadata=dict(
         manipulation=4,
         desc="probing for planning near goal",
-        long="""At test time, we'll change the location of the off-task object so it's equidistant from path during training.
+        long="""
+        At test time, we'll change the location of the off-task object so it's equidistant from path during training.
+        We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
         """
         ))
 all_blocks.append(block3)
