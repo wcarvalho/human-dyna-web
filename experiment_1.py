@@ -75,6 +75,8 @@ jax_env = utils.AutoResetWrapper(jax_env)
 
 
 def permute_groups(groups):
+    if DEBUG:
+        return groups, char2idx
     # Flatten the groups
     flattened = groups.flatten()
 
