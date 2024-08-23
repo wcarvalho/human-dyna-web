@@ -200,8 +200,9 @@ def make_env_stage(
         min_success=1,
         train_objects=True,
         force_room=False,
-        metadata=dict(),
+        metadata=None,
         ):
+    metadata = metadata or {}
     metadata.update(eval=not train_objects)
     return EnvStage(
         name=name,
@@ -437,7 +438,8 @@ for reversal in reversals:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 2', maze_str=mazes.reverse(mazes.maze5, *reversal),
+            'Maze 2',
+            maze_str=mazes.reverse(mazes.maze5, *reversal),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
             groups=block_groups,
@@ -451,13 +453,16 @@ for reversal in reversals:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 2', maze_str=mazes.reverse(mazes.maze5, *reversal),
-            min_success=1, max_episodes=1,
+            'Maze 2',
+            maze_str=mazes.reverse(mazes.maze5, *reversal),
+            min_success=1,
+            max_episodes=1,
             groups=block_groups,
-            char2idx=block_char2idx, train_objects=False),
+            char2idx=block_char2idx,
+            train_objects=False),
     ], metadata=dict(
         manipulation=3,
-        desc="reusing longer of two paths matching training path",
+        desc="reusing longer of two paths which matches training path",
         long=f"""
         Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
         """))
