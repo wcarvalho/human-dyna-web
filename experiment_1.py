@@ -1,4 +1,5 @@
 import dataclasses
+import random
 from typing import List
 from functools import partial
 
@@ -8,6 +9,7 @@ from housemaze.human_dyna import env
 from housemaze.human_dyna import utils
 from housemaze.human_dyna import env as maze
 from housemaze.human_dyna import mazes
+import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -23,12 +25,24 @@ from nicewebrl import stages
 from nicewebrl.stages import Stage, EnvStage, make_image_html, Block
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 
-min_success_train = 10
 num_rooms = 3          # number of pairs to recognize interaction for
-num_pairs_train = 1  # number of objects to be train
-num_pairs_test = 1  # number of objects to be train
-char2key, group_set, task_objects = mazes.get_group_set(num_rooms)
+num_pairs_train = 3  # number of objects to be train
+num_pairs_test = 3  # number of objects to be train
+
+min_success_train = 10*num_pairs_train
+max_episodes_train = 30*num_pairs_train
+
 image_data = utils.load_image_dict()
+image_keys = image_data['keys']
+group_set = [
+    [image_keys.index('orange'), image_keys.index('potato')],
+    [image_keys.index('knife'), image_keys.index('spoon')],
+    [image_keys.index('tomato'), image_keys.index('lettuce')],
+]
+group_set = np.array(group_set, dtype=np.int32)
+char2idx, group_set, task_objects = mazes.get_group_set(
+    num_rooms, group_set=group_set)
+
 
 task_runner = env.TaskRunner(task_objects=task_objects)
 keys = image_data['keys']
@@ -41,17 +55,34 @@ jax_env = env.HouseMaze(
 jax_env = utils.AutoResetWrapper(jax_env)
 
 
-def make_params(maze_str, train_objects: bool = True):
+def permute_char2key(char2key, n=6):
+    if DEBUG:
+        return char2key
+
+    # Get the first n items from the dictionary
+    items = list(char2key.items())[:n]
+
+    # Extract the values
+    values = [item[1] for item in items]
+
+    # Shuffle the values
+    random.shuffle(values)
+
+    # Create a new dictionary with permuted values
+    permuted_dict = {k: v for (k, _), v in zip(items, values)}
+
+    return permuted_dict
+
+
+def make_params(maze_str, char2idx, train_objects: bool = True):
   num_pairs = num_pairs_train if train_objects else num_pairs_test
   return mazes.get_maze_reset_params(
       group_set=group_set[:num_pairs],
-      char2key=char2key,
+      char2key=char2idx,
       maze_str=maze_str,
       label=jnp.array(0),
       make_env_params=True,
-  ).replace(
-        terminate_with_done=jnp.array(2),
-  )
+  ).replace(terminate_with_done=jnp.array(2))
 
 
 def render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
@@ -82,7 +113,8 @@ action_to_name = {
 
 web_env = JaxWebEnv(jax_env)
 # Call this function to pre-compile jax functions before experiment starsts.
-dummy_env_params = make_params(mazes.maze0)
+dummy_env_params = make_params(mazes.maze0, char2idx)
+dummy_timestep = web_env.reset(jax.random.PRNGKey(42), dummy_env_params)
 web_env.precompile(dummy_env_params=dummy_env_params)
 vmap_render_fn = web_env.precompile_vmap_render_fn(
     render_fn, dummy_env_params)
@@ -118,8 +150,7 @@ def env_stage_display_fn(
     with container.style('align-items: center;'):
         container.clear()
         ui.markdown(f"## {stage.name}")
-        #ui.markdown(f"#### {stage.instruction}")
-        ui.markdown(f"#### Please obtain the {category}")
+        ui.markdown(f"#### Please retrieve the {category}")
         with ui.row():
             with ui.element('div').classes('p-2 bg-blue-100'):
                 ui.label().bind_text_from(
@@ -136,6 +167,7 @@ def env_stage_display_fn(
 def make_env_stage(
         name,
         maze_str,
+        char2idx,
         max_episodes=1,
         min_success=1,
         train_objects=True,
@@ -148,7 +180,10 @@ def make_env_stage(
         web_env=web_env,
         action_to_key=action_to_key,
         action_to_name=action_to_name,
-        env_params=make_params(maze_str, train_objects=train_objects).replace(
+        env_params=make_params(
+            maze_str, 
+            char2idx=char2idx,
+            train_objects=train_objects).replace(
           training=False,
           # if training sample train objects w prob =1.0
           # if testing, sample train objects w prob=0.0
@@ -224,6 +259,7 @@ practice_block = Block(stages=[
         maze_str=maze1,
         min_success=2,
         max_episodes=5,
+        char2idx=char2idx,
         train_objects=True),
     Stage(
         name='Practice evaluation',
@@ -241,6 +277,7 @@ practice_block = Block(stages=[
         maze_str=mazes.maze1,
         min_success=1,
         max_episodes=1,
+        char2idx=char2idx,
         train_objects=False),
 ], metadata=dict(desc="practice"))
 all_blocks.append(practice_block)
@@ -248,151 +285,190 @@ all_blocks.append(practice_block)
 ##########################
 # Manipulation 1: Shortcut
 ##########################
-block0 = Block(stages=[
-    Stage(
-        name='Training on Maze 1',
-        body="""
-    Please learn to obtain the objects. You need to succeed 10 times.
-    """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3,
-        metadata=dict(desc="training"),
-        min_success=min_success_train, max_episodes=30, train_objects=True),
-    Stage(
-        name='Evaluation on Maze 1',
-        body="""
-    The following are evaluaton tasks. You will get 1 chance each time.
+reversals = [(False, False), (True, False), (False, True), (True, True)]
 
-    **Note that some parts of the maze may have changed**.
-    """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3_open2,
-        metadata=dict(desc="'hard' shortcut"),
-        min_success=1, max_episodes=1, train_objects=False),
-], metadata=dict(
-    manipulation=1,
-    desc="shortcut",
-    long="""A shortcut is introduced."""))
-all_blocks.append(block0)
+for reversal in reversals[:2]:
+    block_char2idx = permute_char2key(char2idx)
+    block0 = Block([
+        Stage(
+            name='Training on Maze 1',
+            body="""
+        Please learn to obtain the objects. You need to succeed 10 times.
+        """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 1', 
+            maze_str=mazes.reverse(mazes.maze3, *reversal),
+            metadata=dict(desc="training"),
+            min_success=min_success_train,
+            max_episodes=max_episodes_train,
+            char2idx=block_char2idx,
+            train_objects=True),
+        Stage(
+            name='Evaluation on Maze 1',
+            body="""
+        The following are evaluaton tasks. You will get 1 chance each time.
+
+        **Note that some parts of the maze may have changed**.
+        """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 1', 
+            maze_str=mazes.reverse(mazes.maze3_open2, *reversal),
+            metadata=dict(desc="'not obvious' shortcut"),
+            min_success=1, max_episodes=1,
+            char2idx=block_char2idx, train_objects=False),
+    ],
+    metadata=dict(
+        manipulation=1,
+        desc="shortcut",
+        long=f"A shortcut is introduced. reverse h = {reversal[0]}, v = {reversal[1]}")
+    )
+    all_blocks.append(block0)
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
 ##########################
 
-block1 = Block(stages=[
-    Stage(
-        name='Training on Maze 1',
-        body="""
-        Please learn to obtain the objects. You need to succeed 10 times.
-        """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3,
-        metadata=dict(desc="training"),
-        min_success=min_success_train, max_episodes=30, train_objects=True),
-    Stage(
-        name='Evaluation on Maze 1',
-        body="""
-        The following are evaluaton tasks. You will get 1 chance each time.
+for reversal in reversals[2:]:
+    block_char2idx = permute_char2key(char2idx)
+    block1 = Block(stages=[
+        Stage(
+            name='Training on Maze 1',
+            body="""
+            Please learn to obtain the objects. You need to succeed 10 times.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 1', maze_str=mazes.reverse(mazes.maze3, *reversal),
+            metadata=dict(desc="training"),
+            min_success=min_success_train, 
+            max_episodes=max_episodes_train,
+            char2idx=block_char2idx, train_objects=True),
+        Stage(
+            name='Evaluation on Maze 1',
+            body="""
+            The following are evaluaton tasks. You will get 1 chance each time.
 
-        **Note that some parts of the maze may have changed**.
-        """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3_onpath_shortcut,
-        metadata=dict(desc="Map changed, new location, on path"),
-        min_success=1, max_episodes=1, train_objects=False),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3_offpath_shortcut,
-        metadata=dict(desc="Map changed, new location, off-path"),
-        min_success=1, max_episodes=1, train_objects=False),
-], metadata=dict(
-    manipulation=2,
-    desc="faster when on-path but further than off-path but closer",
-    long="""
-    In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
-    """))
-all_blocks.append(block1)
+            **Note that some parts of the maze may have changed**.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 1', maze_str=mazes.reverse(mazes.maze3_onpath_shortcut, *reversal),
+            metadata=dict(desc="Map changed, new location, on path"),
+            min_success=1, max_episodes=1,
+            char2idx=block_char2idx, train_objects=False),
+        make_env_stage(
+            'Maze 1', maze_str=mazes.reverse(mazes.maze3_offpath_shortcut, *reversal),
+            metadata=dict(desc="Map changed, new location, off-path"),
+            min_success=1, max_episodes=1,
+            char2idx=block_char2idx, train_objects=False),
+    ], metadata=dict(
+        manipulation=2,
+        desc="faster when on-path but further than off-path but closer",
+        long=f"""
+        In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
+
+        reverse h = {reversal[0]}, v = {reversal[1]}
+        """))
+    all_blocks.append(block1)
 
 
 ##########################
 # Manipulation 3: reusing longer of two paths matching training path
 ##########################
-block2 = Block([
-    Stage(
-        name='Training on Maze 2',
-        body="""
-        Please learn to obtain the objects. You need to succeed 10 times.
-        """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 2', maze_str=mazes.maze5,
-        min_success=min_success_train, max_episodes=30, train_objects=True),
-    Stage(
-        name='Evaluation on Maze 2',
-        body="""
-        The following are evaluaton tasks. You will get 1 chance each time.
-        """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 2', maze_str=mazes.maze5,
-        min_success=1, max_episodes=1, train_objects=False),
-], metadata=dict(
-    manipulation=3,
-    desc="reusing longer of two paths matching training path",
-    long="""
-    Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
-    """))
-all_blocks.append(block2)
+for reversal in reversals:
+    block_char2idx = permute_char2key(char2idx)
+    block2 = Block([
+        Stage(
+            name='Training on Maze 2',
+            body="""
+            Please learn to obtain the objects. You need to succeed 10 times.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 2', maze_str=mazes.reverse(mazes.maze5, *reversal),
+            min_success=min_success_train,
+            max_episodes=max_episodes_train,
+            char2idx=block_char2idx,
+            train_objects=True),
+        Stage(
+            name='Evaluation on Maze 2',
+            body="""
+            The following are evaluaton tasks. You will get 1 chance each time.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 2', maze_str=mazes.reverse(mazes.maze5, *reversal),
+            min_success=1, max_episodes=1,
+            char2idx=block_char2idx, train_objects=False),
+    ], metadata=dict(
+        manipulation=3,
+        desc="reusing longer of two paths matching training path",
+        long=f"""
+        Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
+        reverse h = {reversal[0]}, v = {reversal[1]}
+        """))
+    all_blocks.append(block2)
 
 
 ##########################
 # Manipulation 4: Planning Near Goal
 ##########################
-block3 = Block([
-    Stage(
-        name='Training on Maze 3',
-        body="""
-        Please learn to obtain the objects. You need to succeed 10 times.
-        """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 3', maze_str=mazes.maze6,
-        metadata=dict(desc="training"),
-        min_success=min_success_train, max_episodes=30, train_objects=True),
-    Stage(
-        name='Evaluation on Maze 3',
-        body="""
-        The following are evaluaton tasks. You will get 1 chance each time.
-        """,
-        display_fn=stage_display_fn,
-    ),
-    make_env_stage(
-        'Maze 3', maze_str=mazes.maze6,
-        metadata=dict(desc="off-task object regular"),
-        min_success=1, max_episodes=1, train_objects=False),
-    make_env_stage(
-        'Maze 3', maze_str=mazes.maze6_flipped_offtask,
-        metadata=dict(desc="off-task object flipped"),
-        min_success=1, max_episodes=1, train_objects=False)],
-    metadata=dict(
-        manipulation=4,
-        desc="probing for planning near goal",
-        long="""
-        At test time, we'll change the location of the off-task object so it's equidistant from path during training.
-        We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
-        """
-        ))
-all_blocks.append(block3)
+# last option, is full reverse.
+# we built maze6 by doing a full reverse of maze 3. so don't want to re-use it.
+for reversal in reversals[:-1]:
+    block_char2idx = permute_char2key(char2idx)
+    block3 = Block([
+        Stage(
+            name='Training on Maze 3',
+            body="""
+            Please learn to obtain the objects. You need to succeed 10 times.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 3', maze_str=mazes.reverse(mazes.maze6, *reversal),
+            metadata=dict(desc="training"),
+            min_success=min_success_train,
+            max_episodes=max_episodes_train,
+            char2idx=block_char2idx,
+            train_objects=True),
+        Stage(
+            name='Evaluation on Maze 3',
+            body="""
+            The following are evaluaton tasks. You will get 1 chance each time.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            'Maze 3', maze_str=mazes.reverse(mazes.maze6, *reversal),
+            metadata=dict(desc="off-task object regular"),
+            min_success=1, max_episodes=1,
+            char2idx=block_char2idx,
+            train_objects=False),
+        make_env_stage(
+            'Maze 3', maze_str=mazes.reverse(mazes.maze6_flipped_offtask, *reversal),
+            metadata=dict(desc="off-task object flipped"),
+            min_success=1, max_episodes=1,
+            char2idx=block_char2idx,
+            train_objects=False)],
+        metadata=dict(
+            manipulation=4,
+            desc="probing for planning near goal",
+            long=f"""
+            At test time, we'll change the location of the off-task object so it's equidistant from path during training.
+            We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
+            reverse h = {reversal[0]}, v = {reversal[1]}
+            """
+            ))
+    all_blocks.append(block3)
 
 all_stages = stages.prepare_blocks(all_blocks)
 

@@ -7,6 +7,7 @@ from nicewebrl import nicejax
 from housemaze.human_dyna import env as maze
 import jax
 import numpy as np
+import experiment_1 as experiment
 
 def compute_reaction_time(image_seen_time: str, action_taken_time: str) -> float:
     # Convert string timestamps to datetime objects
@@ -28,16 +29,20 @@ def load_experiment_data(file_path: str):
     data_dicts = [row for row in data_dicts if not 'practice' in row['metadata']['block_metadata']['desc']]
     datum = data_dicts[0]
 
-    action_taken = datum['action_idx']
-    image_seen_time = datum['image_seen_time']
-    action_taken_time = datum['action_taken_time']
-    reaction_time = compute_reaction_time(image_seen_time, action_taken_time)
+    action_taken: int = datum['action_idx']
+    image_seen_time: str = datum['image_seen_time']
+    action_taken_time: str = datum['action_taken_time']
+    reaction_time: float = compute_reaction_time(image_seen_time, action_taken_time)
 
     print(f"Reaction time: {reaction_time:.3f} seconds")
 
 
     # as long as you give it the right class, it will deserialize it correctly
     timestep = nicejax.deserialize_bytes(cls=maze.TimeStep, encoded_data=datum['data'])
+
+    # `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
+    timestep = nicejax.match_types(
+        example=experiment.dummy_timestep, data=timestep)
 
     # convert all jax arrays to numpy arrays
     timestep = jax.tree_map(lambda x: np.asarray(x), timestep)

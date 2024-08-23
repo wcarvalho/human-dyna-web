@@ -73,8 +73,9 @@ async def start_experiment(
 
 async def handle_key_press(e, meta_container, stage_container, button_container):
   if not await nicewebrl.utils.check_fullscreen():
-    ui.notify('Please enter fullscreen mode to continue experiment',
-              type='negative')
+    ui.notify(
+       'Please enter fullscreen mode to continue experiment',
+       type='negative', timeout=10)
     return
   stage = all_stages[app.storage.user['stage_idx']]
   await stage.handle_key_press(e, stage_container)

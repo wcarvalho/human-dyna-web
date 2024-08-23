@@ -33,7 +33,7 @@ jax_env = utils.AutoResetWrapper(jax_env)
 def make_train_params(maze_str):
   return mazes.get_maze_reset_params(
       group_set=group_set,
-      char2key=char2key,
+      char2idx=char2key,
       maze_str=maze_str,
       label=jnp.array(0),
       make_env_params=True,
