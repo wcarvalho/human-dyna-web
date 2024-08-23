@@ -197,6 +197,7 @@ def make_env_stage(
         max_episodes=1,
         min_success=1,
         train_objects=True,
+        force_room=False,
         metadata=dict(),
         ):
     metadata.update(eval=not train_objects)
@@ -212,7 +213,7 @@ def make_env_stage(
             char2idx=char2idx).replace(
           training=False,
           # if eval, always force to room 0 (where we target manipualtion)
-          force_room=jnp.array(not train_objects),
+          force_room=jnp.array(force_room or not train_objects),
           default_room=jnp.array(0),
           # if training sample train objects w prob =1.0
           # if testing, sample train objects w prob=0.0
@@ -291,6 +292,7 @@ practice_block = Block(stages=[
         max_episodes=5,
         groups=groups,
         char2idx=char2idx,
+        force_room=True,
         train_objects=True),
     Stage(
         name='Practice evaluation',
@@ -310,6 +312,7 @@ practice_block = Block(stages=[
         max_episodes=1,
         groups=groups,
         char2idx=char2idx,
+        force_room=True,
         train_objects=False),
 ], metadata=dict(desc="practice"))
 if not DEBUG:
