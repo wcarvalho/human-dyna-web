@@ -57,7 +57,8 @@ async def start_experiment(
       meta_container,
       stage_container,
       button_container):
-  ui.run_javascript('document.documentElement.requestFullscreen()')
+  if DEBUG == 0:
+    ui.run_javascript('document.documentElement.requestFullscreen()')
   app.storage.user['experiment_started'] = True
 
   if app.storage.user.get('experiment_finished', False):
@@ -72,7 +73,7 @@ async def start_experiment(
   await load_stage(meta_container, stage_container, button_container)
 
 async def handle_key_press(e, meta_container, stage_container, button_container):
-  if not await nicewebrl.utils.check_fullscreen():
+  if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
     ui.notify(
        'Please enter fullscreen mode to continue experiment',
        type='negative', timeout=10)
@@ -84,7 +85,7 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
     await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, **kwargs):
-  if not await nicewebrl.utils.check_fullscreen():
+  if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
@@ -226,6 +227,7 @@ def initalize_user():
 async def index(request: Request):
     initalize_user()
 
+    ui.run_javascript(f'window.debug = {DEBUG}')
     ################
     # Get user data and save to GCS
     ################

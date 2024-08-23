@@ -19,71 +19,96 @@ import os
 load_dotenv()
 
 DEBUG = int(os.environ.get('DEBUG', 0))
+USE_DONE = DEBUG > 0
 
 from nicegui import ui
 from nicewebrl import stages
 from nicewebrl.stages import Stage, EnvStage, make_image_html, Block
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 
-num_rooms = 3          # number of pairs to recognize interaction for
-num_pairs_train = 3  # number of objects to be train
-num_pairs_test = 3  # number of objects to be train
+# number of rooms to user for tasks (1st n)
+num_rooms = 2
 
-min_success_train = 10*num_pairs_train
-max_episodes_train = 30*num_pairs_train
+min_success_train = 10*num_rooms
+max_episodes_train = 30*num_rooms if DEBUG == 0 else min_success_train
 
 image_data = utils.load_image_dict()
 image_keys = image_data['keys']
-group_set = [
+groups = [
+    # room 1
     [image_keys.index('orange'), image_keys.index('potato')],
+    # room 2
     [image_keys.index('knife'), image_keys.index('spoon')],
+    # room 3
     [image_keys.index('tomato'), image_keys.index('lettuce')],
 ]
-group_set = np.array(group_set, dtype=np.int32)
-char2idx, group_set, task_objects = mazes.get_group_set(
-    num_rooms, group_set=group_set)
+groups = np.array(groups, dtype=np.int32)
+task_objects = groups.reshape(-1)
+
+# can auto-generate this from group_set
+# with mazes.groups_to_char2key(groups)
+char2idx = {
+    # room 1
+    'A': np.int32(image_keys.index('orange')),
+    'B': np.int32(image_keys.index('potato')),
+    # room 2
+    'C': np.int32(image_keys.index('knife')),
+    'D': np.int32(image_keys.index('spoon')),
+    # room 3
+    'E': np.int32(image_keys.index('tomato')),
+    'F': np.int32(image_keys.index('lettuce')),
+}
+# same thing
+char2idx = mazes.groups_to_char2key(groups)
 
 
+# shared across all tasks
 task_runner = env.TaskRunner(task_objects=task_objects)
 keys = image_data['keys']
 
 jax_env = env.HouseMaze(
     task_runner=task_runner,
     num_categories=len(keys),
-    use_done=True,
+    use_done=USE_DONE,
 )
 jax_env = utils.AutoResetWrapper(jax_env)
 
 
-def permute_char2key(char2key, n=6):
-    if DEBUG:
-        return char2key
+def permute_groups(groups):
+    # Flatten the groups
+    flattened = groups.flatten()
 
-    # Get the first n items from the dictionary
-    items = list(char2key.items())[:n]
+    # Create a random permutation
+    permutation = np.random.permutation(len(flattened))
 
-    # Extract the values
-    values = [item[1] for item in items]
+    # Apply the permutation
+    permuted_flat = flattened[permutation]
 
-    # Shuffle the values
-    random.shuffle(values)
+    # Reshape back to the original shape
+    new_groups = permuted_flat.reshape(groups.shape)
 
-    # Create a new dictionary with permuted values
-    permuted_dict = {k: v for (k, _), v in zip(items, values)}
+    # Create a new char2idx mapping
+    new_char2idx = mazes.groups_to_char2key(new_groups)
 
-    return permuted_dict
+    return new_groups, new_char2idx
 
-
-def make_params(maze_str, char2idx, train_objects: bool = True):
-  num_pairs = num_pairs_train if train_objects else num_pairs_test
+def make_params(maze_str, groups, char2idx):
+  if num_rooms < 3:
+      if num_rooms == 1:
+          # use room 0 (manipulation room only)
+          groups = groups[:1]
+      elif num_rooms == 2:
+          # use room 0 (maipulation room) and 1st or 2nd room
+          groups = np.array([groups[0], groups[np.random.randint(1, 3)]])
+      # else: groups remains unchanged (all rooms)
   return mazes.get_maze_reset_params(
-      group_set=group_set[:num_pairs],
+      groups=groups,
       char2key=char2idx,
       maze_str=maze_str,
       label=jnp.array(0),
       make_env_params=True,
-  ).replace(terminate_with_done=jnp.array(2))
-
+  ).replace(
+      terminate_with_done=jnp.array(2) if USE_DONE else jnp.array(0))
 
 def render_fn(timestep: maze.TimeStep) -> jnp.ndarray:
     image = renderer.create_image_from_grid(
@@ -113,7 +138,7 @@ action_to_name = {
 
 web_env = JaxWebEnv(jax_env)
 # Call this function to pre-compile jax functions before experiment starsts.
-dummy_env_params = make_params(mazes.maze0, char2idx)
+dummy_env_params = make_params(mazes.maze0, groups, char2idx)
 dummy_timestep = web_env.reset(jax.random.PRNGKey(42), dummy_env_params)
 web_env.precompile(dummy_env_params=dummy_env_params)
 vmap_render_fn = web_env.precompile_vmap_render_fn(
@@ -167,6 +192,7 @@ def env_stage_display_fn(
 def make_env_stage(
         name,
         maze_str,
+        groups,
         char2idx,
         max_episodes=1,
         min_success=1,
@@ -182,9 +208,12 @@ def make_env_stage(
         action_to_name=action_to_name,
         env_params=make_params(
             maze_str, 
-            char2idx=char2idx,
-            train_objects=train_objects).replace(
+            groups=groups,
+            char2idx=char2idx).replace(
           training=False,
+          # if eval, always force to room 0 (where we target manipualtion)
+          force_room=jnp.array(not train_objects),
+          default_room=jnp.array(0),
           # if training sample train objects w prob =1.0
           # if testing, sample train objects w prob=0.0
           p_test_sample_train=float(train_objects),
@@ -194,8 +223,8 @@ def make_env_stage(
         display_fn=env_stage_display_fn,
         evaluate_success_fn=evaluate_success_fn,
         state_cls=EnvStageState,
-        max_episodes=1 if DEBUG else max_episodes,
-        min_success=1 if DEBUG else min_success,
+        max_episodes=1 if DEBUG == 1 else max_episodes,
+        min_success=1 if DEBUG == 1 else min_success,
         metadata=metadata,
     )
 
@@ -221,7 +250,8 @@ instruct_block = Block([
         display_fn=stage_display_fn,
     ),
 ])
-all_blocks.append(instruct_block)
+if not DEBUG:
+    all_blocks.append(instruct_block)
 
 ##########################
 # Practice
@@ -259,6 +289,7 @@ practice_block = Block(stages=[
         maze_str=maze1,
         min_success=2,
         max_episodes=5,
+        groups=groups,
         char2idx=char2idx,
         train_objects=True),
     Stage(
@@ -277,10 +308,12 @@ practice_block = Block(stages=[
         maze_str=mazes.maze1,
         min_success=1,
         max_episodes=1,
+        groups=groups,
         char2idx=char2idx,
         train_objects=False),
 ], metadata=dict(desc="practice"))
-all_blocks.append(practice_block)
+if not DEBUG:
+    all_blocks.append(practice_block)
 
 ##########################
 # Manipulation 1: Shortcut
@@ -288,7 +321,7 @@ all_blocks.append(practice_block)
 reversals = [(False, False), (True, False), (False, True), (True, True)]
 
 for reversal in reversals[:2]:
-    block_char2idx = permute_char2key(char2idx)
+    block_groups, block_char2idx = permute_groups(groups)
     block0 = Block([
         Stage(
             name='Training on Maze 1',
@@ -303,6 +336,7 @@ for reversal in reversals[:2]:
             metadata=dict(desc="training"),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
+            groups=block_groups,
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
@@ -310,7 +344,7 @@ for reversal in reversals[:2]:
             body="""
         The following are evaluaton tasks. You will get 1 chance each time.
 
-        **Note that some parts of the maze may have changed**.
+        <p style="color: red;"><strong>Note that some parts of the maze may have changed</strong>.</p>
         """,
             display_fn=stage_display_fn,
         ),
@@ -319,6 +353,7 @@ for reversal in reversals[:2]:
             maze_str=mazes.reverse(mazes.maze3_open2, *reversal),
             metadata=dict(desc="'not obvious' shortcut"),
             min_success=1, max_episodes=1,
+            groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
     ],
     metadata=dict(
@@ -327,13 +362,14 @@ for reversal in reversals[:2]:
         long=f"A shortcut is introduced. reverse h = {reversal[0]}, v = {reversal[1]}")
     )
     all_blocks.append(block0)
+    if DEBUG: break
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
 ##########################
 
 for reversal in reversals[2:]:
-    block_char2idx = permute_char2key(char2idx)
+    block_groups, block_char2idx = permute_groups(groups)
     block1 = Block(stages=[
         Stage(
             name='Training on Maze 1',
@@ -347,13 +383,14 @@ for reversal in reversals[2:]:
             metadata=dict(desc="training"),
             min_success=min_success_train, 
             max_episodes=max_episodes_train,
+            groups=block_groups,
             char2idx=block_char2idx, train_objects=True),
         Stage(
             name='Evaluation on Maze 1',
             body="""
             The following are evaluaton tasks. You will get 1 chance each time.
 
-            **Note that some parts of the maze may have changed**.
+            <p style="color: red;"><strong>Note that some parts of the maze may have changed</strong>.</p>
             """,
             display_fn=stage_display_fn,
         ),
@@ -361,11 +398,13 @@ for reversal in reversals[2:]:
             'Maze 1', maze_str=mazes.reverse(mazes.maze3_onpath_shortcut, *reversal),
             metadata=dict(desc="Map changed, new location, on path"),
             min_success=1, max_episodes=1,
+            groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
         make_env_stage(
             'Maze 1', maze_str=mazes.reverse(mazes.maze3_offpath_shortcut, *reversal),
             metadata=dict(desc="Map changed, new location, off-path"),
             min_success=1, max_episodes=1,
+            groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
     ], metadata=dict(
         manipulation=2,
@@ -376,13 +415,14 @@ for reversal in reversals[2:]:
         reverse h = {reversal[0]}, v = {reversal[1]}
         """))
     all_blocks.append(block1)
+    if DEBUG: break
 
 
 ##########################
 # Manipulation 3: reusing longer of two paths matching training path
 ##########################
 for reversal in reversals:
-    block_char2idx = permute_char2key(char2idx)
+    block_groups, block_char2idx = permute_groups(groups)
     block2 = Block([
         Stage(
             name='Training on Maze 2',
@@ -395,6 +435,7 @@ for reversal in reversals:
             'Maze 2', maze_str=mazes.reverse(mazes.maze5, *reversal),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
+            groups=block_groups,
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
@@ -407,6 +448,7 @@ for reversal in reversals:
         make_env_stage(
             'Maze 2', maze_str=mazes.reverse(mazes.maze5, *reversal),
             min_success=1, max_episodes=1,
+            groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
     ], metadata=dict(
         manipulation=3,
@@ -416,6 +458,7 @@ for reversal in reversals:
         reverse h = {reversal[0]}, v = {reversal[1]}
         """))
     all_blocks.append(block2)
+    if DEBUG: break
 
 
 ##########################
@@ -424,7 +467,7 @@ for reversal in reversals:
 # last option, is full reverse.
 # we built maze6 by doing a full reverse of maze 3. so don't want to re-use it.
 for reversal in reversals[:-1]:
-    block_char2idx = permute_char2key(char2idx)
+    block_groups, block_char2idx = permute_groups(groups)
     block3 = Block([
         Stage(
             name='Training on Maze 3',
@@ -438,6 +481,7 @@ for reversal in reversals[:-1]:
             metadata=dict(desc="training"),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
+            groups=block_groups,
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
@@ -451,12 +495,14 @@ for reversal in reversals[:-1]:
             'Maze 3', maze_str=mazes.reverse(mazes.maze6, *reversal),
             metadata=dict(desc="off-task object regular"),
             min_success=1, max_episodes=1,
+            groups=block_groups,
             char2idx=block_char2idx,
             train_objects=False),
         make_env_stage(
             'Maze 3', maze_str=mazes.reverse(mazes.maze6_flipped_offtask, *reversal),
             metadata=dict(desc="off-task object flipped"),
             min_success=1, max_episodes=1,
+            groups=block_groups,
             char2idx=block_char2idx,
             train_objects=False)],
         metadata=dict(
@@ -469,6 +515,7 @@ for reversal in reversals[:-1]:
             """
             ))
     all_blocks.append(block3)
+    if DEBUG: break
 
 all_stages = stages.prepare_blocks(all_blocks)
 
