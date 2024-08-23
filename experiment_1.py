@@ -248,14 +248,6 @@ all_blocks.append(practice_block)
 ##########################
 # Manipulation 1: Shortcut
 ##########################
-"""
-Manipulation 1: shortcut
----
-Shortcut introduction (need to higlight open sections somehow)
-  - train: maze3
-  - test1: maze3_open2
-"""
-
 block0 = Block(stages=[
     Stage(
         name='Training on Maze 1',
@@ -281,20 +273,15 @@ block0 = Block(stages=[
         'Maze 1', maze_str=mazes.maze3_open2,
         metadata=dict(desc="'hard' shortcut"),
         min_success=1, max_episodes=1, train_objects=False),
-], metadata=dict(manipulation=1, desc="shortcut"))
+], metadata=dict(
+    manipulation=1,
+    desc="shortcut",
+    long="""A shortcut is introduced."""))
 all_blocks.append(block0)
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
 ##########################
-"""
-Manpulation 2: Faster when on-path but further than off-path but closer
----
-Change starting location (maybe need to highlight map changes?)
-  - test: maze3_onpath
-  - test: maze3_onpath_shortcut
-  - test: maze3_offpath_shortcut
-"""
 
 block1 = Block(stages=[
     Stage(
@@ -326,18 +313,14 @@ block1 = Block(stages=[
         metadata=dict(desc="Map changed, new location, off-path"),
         min_success=1, max_episodes=1, train_objects=False),
 ], metadata=dict(
-    manipulation=2, desc="faster when on-path but further than off-path but closer"))
+    manipulation=2,
+    desc="faster when on-path but further than off-path but closer",
+    long="""
+    In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
+    """))
 all_blocks.append(block1)
 
 
-
-"""
-Manipulation 3: Reusing longer of two paths if training path
----
-Shortcut introduction (need to higlight open sections somehow)
-  - train: maze5
-  - test: maze5
-"""
 ##########################
 # Manipulation 3: reusing longer of two paths matching training path
 ##########################
@@ -362,16 +345,15 @@ block2 = Block([
     make_env_stage(
         'Maze 2', maze_str=mazes.maze5,
         min_success=1, max_episodes=1, train_objects=False),
-], metadata=dict(manipulation=3, desc="reusing longer of two paths matching training path"))
+], metadata=dict(
+    manipulation=3,
+    desc="reusing longer of two paths matching training path",
+    long="""
+    Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
+    """))
 all_blocks.append(block2)
 
-"""
-Manipulation 4: probing for planning near goal
----
-At test time, change the location of the off-task object so it's equidistant from path during training.
-  - train: maze6
-  - test: maze6_flipped_offtask
-"""
+
 ##########################
 # Manipulation 4: Planning Near Goal
 ##########################
@@ -402,7 +384,12 @@ block3 = Block([
         'Maze 3', maze_str=mazes.maze6_flipped_offtask,
         metadata=dict(desc="off-task object flipped"),
         min_success=1, max_episodes=1, train_objects=False)],
-    metadata=dict(manipulation=4, desc="probing for planning near goal"))
+    metadata=dict(
+        manipulation=4,
+        desc="probing for planning near goal",
+        long="""At test time, we'll change the location of the off-task object so it's equidistant from path during training.
+        """
+        ))
 all_blocks.append(block3)
 
 all_stages = stages.prepare_blocks(all_blocks)
