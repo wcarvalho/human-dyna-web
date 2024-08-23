@@ -1,3 +1,5 @@
+import dataclasses
+from typing import List
 from functools import partial
 
 from housemaze import renderer
@@ -17,11 +19,14 @@ load_dotenv()
 DEBUG = int(os.environ.get('DEBUG', 0))
 
 from nicegui import ui
-from nicewebrl.stages import Stage, EnvStage, make_image_html
+from nicewebrl import stages
+from nicewebrl.stages import Stage, EnvStage, make_image_html, Block
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 
+min_success_train = 10
 num_rooms = 3          # number of pairs to recognize interaction for
-num_pairs_for_exp = 1  # number of objects to be train
+num_pairs_train = 1  # number of objects to be train
+num_pairs_test = 1  # number of objects to be train
 char2key, group_set, task_objects = mazes.get_group_set(num_rooms)
 image_data = utils.load_image_dict()
 
@@ -36,9 +41,10 @@ jax_env = env.HouseMaze(
 jax_env = utils.AutoResetWrapper(jax_env)
 
 
-def make_train_params(maze_str):
+def make_params(maze_str, train_objects: bool = True):
+  num_pairs = num_pairs_train if train_objects else num_pairs_test
   return mazes.get_maze_reset_params(
-      group_set=group_set[:num_pairs_for_exp],
+      group_set=group_set[:num_pairs],
       char2key=char2key,
       maze_str=maze_str,
       label=jnp.array(0),
@@ -76,7 +82,7 @@ action_to_name = {
 
 web_env = JaxWebEnv(jax_env)
 # Call this function to pre-compile jax functions before experiment starsts.
-dummy_env_params = make_train_params(mazes.maze0)
+dummy_env_params = make_params(mazes.maze0)
 web_env.precompile(dummy_env_params=dummy_env_params)
 vmap_render_fn = web_env.precompile_vmap_render_fn(
     render_fn, dummy_env_params)
@@ -132,18 +138,21 @@ def make_env_stage(
         maze_str,
         max_episodes=1,
         min_success=1,
-        training=True):
+        train_objects=True,
+        metadata=dict(),
+        ):
+    metadata.update(eval=not train_objects)
     return EnvStage(
         name=name,
         instruction='Please obtain the goal object',
         web_env=web_env,
         action_to_key=action_to_key,
         action_to_name=action_to_name,
-        env_params=make_train_params(maze_str).replace(
+        env_params=make_params(maze_str, train_objects=train_objects).replace(
           training=False,
-          # if training sample_train=1.0
-          # if testing, sample_train=0.0
-          p_test_sample_train=float(training),
+          # if training sample train objects w prob =1.0
+          # if testing, sample train objects w prob=0.0
+          p_test_sample_train=float(train_objects),
           ),
         render_fn=render_fn,
         vmap_render_fn=vmap_render_fn,
@@ -152,26 +161,36 @@ def make_env_stage(
         state_cls=EnvStageState,
         max_episodes=1 if DEBUG else max_episodes,
         min_success=1 if DEBUG else min_success,
+        metadata=metadata,
     )
 
-stages = [
+
+all_blocks = []
+
+##########################
+# Instructions
+##########################
+instruct_block = Block([
     Stage(
         name='Experiment instructions',
         body="""
-        This is an experiment to test a person's ability to remember how to do a task that they could have done but didn't do.
-
-        In the experiment, you'll control a red triangle in a maze. 
-
-        During training you'll need to get an object. At evaluation, we'll test your ability to get a different object.
-
+        This experiment tests how people solve new tasks.
+        Br  
+        In the experiment, you'll control a red triangle in a maze.
+        <br>
+        <br>
+        We will first give you some training scenarios, where we ask to retrieve an object from the maze. After that, we will ask you to retrieve different objects.
+        <br>
         Press the button when you're ready to begin.
         """,
         display_fn=stage_display_fn,
     ),
-]
-#############
+])
+all_blocks.append(instruct_block)
+
+##########################
 # Practice
-#############
+##########################
 maze1 = """
 .#.C...##....
 .#..D...####.
@@ -188,15 +207,14 @@ A..#.##..#...
 ........F#...
 """.strip()
 
-stages.extend([
+practice_block = Block(stages=[
     Stage(
         name='Practice training',
         body="""
-        Here you'll practice learning a task in the environment.
-
-        You can control the red triangle with the arrow keys on your keyboard.
-        Your goal is to move it to the goal object. 
-
+        Here you'll get some experience in a practice maze.
+        You can control the red triangle to move around the maze with the arrow keys on your keyboard. Your goal is to move to the goal object shown on screen.
+        <br>
+        <br>
         Press the button when you're ready to continue.
         """,
         display_fn=stage_display_fn,
@@ -206,7 +224,7 @@ stages.extend([
         maze_str=maze1,
         min_success=2,
         max_episodes=5,
-        training=True),
+        train_objects=True),
     Stage(
         name='Practice evaluation',
         body="""
@@ -223,33 +241,73 @@ stages.extend([
         maze_str=mazes.maze1,
         min_success=1,
         max_episodes=1,
-        training=False),
-])
+        train_objects=False),
+], metadata=dict(desc="practice"))
+all_blocks.append(practice_block)
+
+##########################
+# Manipulation 1: Shortcut
+##########################
 """
-Experiments Will be
-1. Shortcut introduction (need to higlight open sections somehow)
+Manipulation 1: shortcut
+---
+Shortcut introduction (need to higlight open sections somehow)
   - train: maze3
   - test1: maze3_open2
-2. Change starting location (need to highlight map changes)
-  - test: maze3_onpath
-  - test: maze3_onpath_shortcut
-  - test: maze3_offpath_shortcut
-
-3. closer/further object:
-  - train: maze5
-  - test: maze5
 """
-stages.extend([
+
+block0 = Block(stages=[
     Stage(
         name='Training on Maze 1',
         body="""
-        Please learn to obtain the objects. You need to succeed 20 times.
+    Please learn to obtain the objects. You need to succeed 10 times.
+    """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 1', maze_str=mazes.maze3,
+        metadata=dict(desc="training"),
+        min_success=min_success_train, max_episodes=30, train_objects=True),
+    Stage(
+        name='Evaluation on Maze 1',
+        body="""
+    The following are evaluaton tasks. You will get 1 chance each time.
+
+    **Note that some parts of the maze may have changed**.
+    """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 1', maze_str=mazes.maze3_open2,
+        metadata=dict(desc="'hard' shortcut"),
+        min_success=1, max_episodes=1, train_objects=False),
+], metadata=dict(manipulation=1, desc="shortcut"))
+all_blocks.append(block0)
+
+##########################
+# Manipulation 2: Faster when on-path but further than off-path but closer
+##########################
+"""
+Manpulation 2: Faster when on-path but further than off-path but closer
+---
+Change starting location (maybe need to highlight map changes?)
+  - test: maze3_onpath
+  - test: maze3_onpath_shortcut
+  - test: maze3_offpath_shortcut
+"""
+
+block1 = Block(stages=[
+    Stage(
+        name='Training on Maze 1',
+        body="""
+        Please learn to obtain the objects. You need to succeed 10 times.
         """,
         display_fn=stage_display_fn,
     ),
     make_env_stage(
         'Maze 1', maze_str=mazes.maze3,
-        min_success=20, max_episodes=30, training=True),
+        metadata=dict(desc="training"),
+        min_success=min_success_train, max_episodes=30, train_objects=True),
     Stage(
         name='Evaluation on Maze 1',
         body="""
@@ -259,34 +317,41 @@ stages.extend([
         """,
         display_fn=stage_display_fn,
     ),
-    #make_env_stage(
-    #    'Maze 1', 'maze3_open',
-    #    min_success=1, max_episodes=1, training=False),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3_open2,
-        min_success=1, max_episodes=1, training=False),
-    make_env_stage(
-        'Maze 1', maze_str=mazes.maze3_onpath,
-        min_success=1, max_episodes=1, training=False),
     make_env_stage(
         'Maze 1', maze_str=mazes.maze3_onpath_shortcut,
-        min_success=1, max_episodes=1, training=False),
+        metadata=dict(desc="Map changed, new location, on path"),
+        min_success=1, max_episodes=1, train_objects=False),
     make_env_stage(
         'Maze 1', maze_str=mazes.maze3_offpath_shortcut,
-        min_success=1, max_episodes=1, training=False),
-])
+        metadata=dict(desc="Map changed, new location, off-path"),
+        min_success=1, max_episodes=1, train_objects=False),
+], metadata=dict(
+    manipulation=2, desc="faster when on-path but further than off-path but closer"))
+all_blocks.append(block1)
 
-stages.extend([
+
+
+"""
+Manipulation 3: Reusing longer of two paths if training path
+---
+Shortcut introduction (need to higlight open sections somehow)
+  - train: maze5
+  - test: maze5
+"""
+##########################
+# Manipulation 3: reusing longer of two paths matching training path
+##########################
+block2 = Block([
     Stage(
         name='Training on Maze 2',
         body="""
-        Please learn to obtain the objects. You need to succeed 20 times.
+        Please learn to obtain the objects. You need to succeed 10 times.
         """,
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', maze_str=mazes.maze5,
-        min_success=20, max_episodes=30, training=True),
+        'Maze 2', maze_str=mazes.maze5,
+        min_success=min_success_train, max_episodes=30, train_objects=True),
     Stage(
         name='Evaluation on Maze 2',
         body="""
@@ -295,6 +360,61 @@ stages.extend([
         display_fn=stage_display_fn,
     ),
     make_env_stage(
-        'Maze 1', maze_str=mazes.maze5,
-        min_success=1, max_episodes=1, training=False),
-])
+        'Maze 2', maze_str=mazes.maze5,
+        min_success=1, max_episodes=1, train_objects=False),
+], metadata=dict(manipulation=3, desc="reusing longer of two paths matching training path"))
+all_blocks.append(block2)
+
+"""
+Manipulation 4: probing for planning near goal
+---
+At test time, change the location of the off-task object so it's equidistant from path during training.
+  - train: maze6
+  - test: maze6_flipped_offtask
+"""
+##########################
+# Manipulation 4: Planning Near Goal
+##########################
+block3 = Block([
+    Stage(
+        name='Training on Maze 3',
+        body="""
+        Please learn to obtain the objects. You need to succeed 10 times.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 3', maze_str=mazes.maze6,
+        metadata=dict(desc="training"),
+        min_success=min_success_train, max_episodes=30, train_objects=True),
+    Stage(
+        name='Evaluation on Maze 3',
+        body="""
+        The following are evaluaton tasks. You will get 1 chance each time.
+        """,
+        display_fn=stage_display_fn,
+    ),
+    make_env_stage(
+        'Maze 3', maze_str=mazes.maze6,
+        metadata=dict(desc="off-task object regular"),
+        min_success=1, max_episodes=1, train_objects=False),
+    make_env_stage(
+        'Maze 3', maze_str=mazes.maze6_flipped_offtask,
+        metadata=dict(desc="off-task object flipped"),
+        min_success=1, max_episodes=1, train_objects=False)],
+    metadata=dict(manipulation=4, desc="probing for planning near goal"))
+all_blocks.append(block3)
+
+all_stages = stages.prepare_blocks(all_blocks)
+
+
+
+def generate_stage_order(rng_key):
+    """Take blocks defined above, flatten all their stages, and generate an order where the (1) blocks are randomized, and (2) stages within blocks are randomized if they're consecutive eval stages."""
+    randomized_blocks = list(all_blocks[2:])
+    fixed_blocks = jnp.array([0, 1])  # instruct_block, practice_block
+    random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + 2
+    block_order = jnp.concatenate([fixed_blocks, random_order])
+
+    stage_order = stages.generate_stage_order(all_blocks, block_order, rng_key)
+    return stage_order

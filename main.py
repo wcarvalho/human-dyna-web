@@ -1,6 +1,7 @@
 
 from dotenv import load_dotenv
 import json
+import jax.numpy as jnp
 from nicegui import app, ui
 import nicewebrl
 import nicewebrl.nicejax
@@ -20,6 +21,7 @@ load_dotenv()
 
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 DEBUG = int(os.environ.get('DEBUG', 0))
+DEBUG_SEED = int(os.environ.get('DEBUG_SEED', 42))
 EXPERIMENT = int(os.environ.get('EXP', 1))
 
 if EXPERIMENT == 0:
@@ -30,7 +32,7 @@ elif EXPERIMENT == 1:
   APP_TITLE = 'Human Dyna 1'
 else:
    raise NotImplementedError
-stages = experiment.stages
+all_stages = experiment.all_stages
 
 DATABASE_FILE = f'{DATABASE_FILE}_exp{EXPERIMENT}_debug{DEBUG}'
 #####################################
@@ -74,7 +76,7 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
-  stage = stages[app.storage.user['stage_idx']]
+  stage = all_stages[app.storage.user['stage_idx']]
   await stage.handle_key_press(e, stage_container)
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
@@ -85,7 +87,7 @@ async def handle_button_press(*args, **kwargs):
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
-  stage = stages[app.storage.user['stage_idx']]
+  stage = all_stages[app.storage.user['stage_idx']]
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
@@ -94,11 +96,11 @@ async def handle_button_press(*args, **kwargs):
 
 async def load_stage(meta_container, stage_container, button_container):
     """Default behavior for progressing through stages."""
-    if app.storage.user['stage_idx'] >= len(stages):
+    if app.storage.user['stage_idx'] >= len(all_stages):
         await finish_experiment(meta_container, stage_container, button_container)
         return
 
-    stage = stages[app.storage.user['stage_idx']]
+    stage = all_stages[app.storage.user['stage_idx']]
     with stage_container.style('align-items: center;'):
       await stage.activate(stage_container)
 
@@ -211,9 +213,17 @@ def footer(card):
         'Toggle fullscreen', icon='fullscreen',
         on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
 
+def initalize_user():
+  nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
+  if 'stage_order' not in app.storage.user:
+    init_rng_key = jnp.array(
+        app.storage.user['init_rng_key'], dtype=jnp.uint32)
+    stage_order = experiment.generate_stage_order(init_rng_key)
+    app.storage.user['stage_order'] = stage_order
+
 @ui.page('/')
 async def index(request: Request):
-    nicewebrl.initialize_user(debug=DEBUG)
+    initalize_user()
 
     ################
     # Get user data and save to GCS
@@ -242,7 +252,7 @@ async def index(request: Request):
       button_container = ui.column()
       with ui.column() as meta_container:
         # Run every 5 minutes
-        episode_limit = 1 if DEBUG else 60
+        episode_limit = 60 if DEBUG else 60
         ui.timer(
            1,  # check every minute
            lambda: check_if_over(
