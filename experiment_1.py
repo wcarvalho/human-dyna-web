@@ -19,6 +19,7 @@ import os
 load_dotenv()
 
 DEBUG = int(os.environ.get('DEBUG', 0))
+REVERSAL = int(os.environ.get('REVERSAL', 0))
 USE_DONE = DEBUG > 0
 
 from nicegui import ui
@@ -94,7 +95,8 @@ def permute_groups(groups):
 
     return new_groups, new_char2idx
 
-def make_params(maze_str, groups, char2idx):
+
+def make_params(maze_str, groups, char2idx, randomize_agent: bool = False):
   if num_rooms < 3:
       if num_rooms == 1:
           # use room 0 (manipulation room only)
@@ -109,6 +111,7 @@ def make_params(maze_str, groups, char2idx):
       maze_str=maze_str,
       label=jnp.array(0),
       make_env_params=True,
+      randomize_agent=randomize_agent,
   ).replace(
       terminate_with_done=jnp.array(2) if USE_DONE else jnp.array(0))
 
@@ -201,9 +204,13 @@ def make_env_stage(
         train_objects=True,
         force_room=False,
         metadata=None,
+        randomize_agent: bool = False,
         ):
     metadata = metadata or {}
-    metadata.update(eval=not train_objects)
+    eval = not train_objects
+    metadata.update(eval=eval)
+
+    randomize_agent = randomize_agent and train_objects
     return EnvStage(
         name=name,
         instruction='Please obtain the goal object',
@@ -213,14 +220,17 @@ def make_env_stage(
         env_params=make_params(
             maze_str, 
             groups=groups,
-            char2idx=char2idx).replace(
-          training=False,
-          # if eval, always force to room 0 (where we target manipualtion)
-          force_room=jnp.array(force_room or not train_objects),
-          default_room=jnp.array(0),
-          # if training sample train objects w prob =1.0
-          # if testing, sample train objects w prob=0.0
-          p_test_sample_train=float(train_objects),
+            char2idx=char2idx,
+            randomize_agent=randomize_agent).replace(
+                randomize_agent=randomize_agent,
+                randomization_radius=7 if train_objects else 0,
+                training=False,
+                # if eval, always force to room 0 (where we target manipualtion)
+                force_room=jnp.array(force_room or not train_objects),
+                default_room=jnp.array(0),
+                # if training sample train objects w prob =1.0
+                # if testing, sample train objects w prob=0.0
+                p_test_sample_train=float(train_objects),
           ),
         render_fn=render_fn,
         vmap_render_fn=vmap_render_fn,
@@ -370,7 +380,7 @@ for reversal in reversals[:2]:
         long=f"A shortcut is introduced")
     )
     all_blocks.append(block0)
-    if DEBUG: break
+    if DEBUG or not REVERSAL: break
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
@@ -378,6 +388,12 @@ for reversal in reversals[:2]:
 
 for reversal in reversals[2:]:
     block_groups, block_char2idx = permute_groups(groups)
+
+
+    train_maze = mazes.reverse(mazes.maze3)
+    eval_maze1 = mazes.reverse(mazes.maze3_onpath_shortcut)
+    eval_maze2 = mazes.reverse(mazes.maze3_offpath_shortcut)
+
     block1 = Block(stages=[
         Stage(
             name='Training on Maze 1',
@@ -387,7 +403,7 @@ for reversal in reversals[2:]:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 1', maze_str=mazes.reverse(mazes.maze3, *reversal),
+            'Maze 1', maze_str=mazes.reverse(train_maze, *reversal),
             metadata=dict(desc="training"),
             min_success=min_success_train, 
             max_episodes=max_episodes_train,
@@ -403,13 +419,13 @@ for reversal in reversals[2:]:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 1', maze_str=mazes.reverse(mazes.maze3_onpath_shortcut, *reversal),
+            'Maze 1', maze_str=mazes.reverse(eval_maze1, *reversal),
             metadata=dict(desc="Map changed, new location, on path"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
         make_env_stage(
-            'Maze 1', maze_str=mazes.reverse(mazes.maze3_offpath_shortcut, *reversal),
+            'Maze 1', maze_str=mazes.reverse(eval_maze2, *reversal),
             metadata=dict(desc="Map changed, new location, off-path"),
             min_success=1, max_episodes=1,
             groups=block_groups,
@@ -421,7 +437,7 @@ for reversal in reversals[2:]:
         In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
         """))
     all_blocks.append(block1)
-    if DEBUG: break
+    if DEBUG or not REVERSAL: break
 
 
 ##########################
@@ -467,7 +483,7 @@ for reversal in reversals:
         Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
         """))
     all_blocks.append(block2)
-    if DEBUG: break
+    if DEBUG or not REVERSAL: break
 
 
 ##########################
@@ -523,7 +539,7 @@ for reversal in reversals[:-1]:
             """
             ))
     all_blocks.append(block3)
-    if DEBUG: break
+    if DEBUG or not REVERSAL: break
 
 all_stages = stages.prepare_blocks(all_blocks)
 
