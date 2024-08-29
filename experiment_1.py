@@ -18,20 +18,28 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+GIVE_INSTRUCTIONS = int(os.environ.get('INST', 1))
 DEBUG = int(os.environ.get('DEBUG', 0))
-REVERSAL = int(os.environ.get('REVERSAL', 0))
+SHORT = int(os.environ.get('SHORT', 0))  # only use 1 block
+
+USE_REVERSALS = int(os.environ.get('REV', 0))
 USE_DONE = DEBUG > 0
 
 from nicegui import ui
 from nicewebrl import stages
-from nicewebrl.stages import Stage, EnvStage, make_image_html, Block
+from nicewebrl.stages import Stage, EnvStage, Block
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
 
-min_success_train = 10*num_rooms
-max_episodes_train = 30*num_rooms if DEBUG == 0 else min_success_train
+if DEBUG == 0:
+    min_success_train = 5*num_rooms
+    max_episodes_train = 30*num_rooms
+elif DEBUG == 1:
+    min_success_train = 2
+    max_episodes_train = 2
+
 
 image_data = utils.load_image_dict()
 image_keys = image_data['keys']
@@ -168,6 +176,15 @@ def stage_display_fn(stage, container):
         ui.markdown(f"## {stage.name}")
         ui.markdown(f"{stage.body}")
 
+
+def make_image_html(src):
+    html = '''
+    <div id="stateImageContainer" style="display: flex; justify-content: center; align-items: center; height: 100%;">
+        <img id="stateImage" src="{src}" style="max-width: 300px; max-height: 300px; object-fit: contain;">
+    </div>
+    '''.format(src=src)
+    return html
+
 def env_stage_display_fn(
         stage,
         container,
@@ -204,7 +221,7 @@ def make_env_stage(
         train_objects=True,
         force_room=False,
         metadata=None,
-        randomize_agent: bool = False,
+        randomize_agent: bool = True,
         ):
     metadata = metadata or {}
     eval = not train_objects
@@ -223,7 +240,7 @@ def make_env_stage(
             char2idx=char2idx,
             randomize_agent=randomize_agent).replace(
                 randomize_agent=randomize_agent,
-                randomization_radius=7 if train_objects else 0,
+                randomization_radius=5 if train_objects else 0,
                 training=False,
                 # if eval, always force to room 0 (where we target manipualtion)
                 force_room=jnp.array(force_room or not train_objects),
@@ -237,8 +254,8 @@ def make_env_stage(
         display_fn=env_stage_display_fn,
         evaluate_success_fn=evaluate_success_fn,
         state_cls=EnvStageState,
-        max_episodes=1 if DEBUG == 1 else max_episodes,
-        min_success=1 if DEBUG == 1 else min_success,
+        max_episodes=max_episodes,
+        min_success=min_success,
         metadata=metadata,
     )
 
@@ -253,7 +270,7 @@ instruct_block = Block([
         name='Experiment instructions',
         body="""
         This experiment tests how people solve new tasks.
-        Br  
+        <br> 
         In the experiment, you'll control a red triangle in a maze.
         <br>
         <br>
@@ -264,7 +281,7 @@ instruct_block = Block([
         display_fn=stage_display_fn,
     ),
 ])
-if not DEBUG:
+if GIVE_INSTRUCTIONS:
     all_blocks.append(instruct_block)
 
 ##########################
@@ -328,15 +345,16 @@ practice_block = Block(stages=[
         force_room=True,
         train_objects=False),
 ], metadata=dict(desc="practice"))
-if not DEBUG:
+if GIVE_INSTRUCTIONS:
     all_blocks.append(practice_block)
 
 ##########################
 # Manipulation 1: Shortcut
 ##########################
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-if DEBUG:
+if DEBUG > 0:
     reversals = [(False, False)]*4
+
 
 for reversal in reversals[:2]:
     block_groups, block_char2idx = permute_groups(groups)
@@ -380,7 +398,7 @@ for reversal in reversals[:2]:
         long=f"A shortcut is introduced")
     )
     all_blocks.append(block0)
-    if DEBUG or not REVERSAL: break
+    if SHORT or not USE_REVERSALS: break
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
@@ -403,7 +421,7 @@ for reversal in reversals[2:]:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 1', maze_str=mazes.reverse(train_maze, *reversal),
+            'Maze 2', maze_str=mazes.reverse(train_maze, *reversal),
             metadata=dict(desc="training"),
             min_success=min_success_train, 
             max_episodes=max_episodes_train,
@@ -419,13 +437,13 @@ for reversal in reversals[2:]:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 1', maze_str=mazes.reverse(eval_maze1, *reversal),
+            'Maze 2', maze_str=mazes.reverse(eval_maze1, *reversal),
             metadata=dict(desc="Map changed, new location, on path"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
         make_env_stage(
-            'Maze 1', maze_str=mazes.reverse(eval_maze2, *reversal),
+            'Maze 2', maze_str=mazes.reverse(eval_maze2, *reversal),
             metadata=dict(desc="Map changed, new location, off-path"),
             min_success=1, max_episodes=1,
             groups=block_groups,
@@ -437,7 +455,7 @@ for reversal in reversals[2:]:
         In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
         """))
     all_blocks.append(block1)
-    if DEBUG or not REVERSAL: break
+    if SHORT or not USE_REVERSALS: break
 
 
 ##########################
@@ -454,7 +472,7 @@ for reversal in reversals:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 2',
+            'Maze 3',
             maze_str=mazes.reverse(mazes.maze5, *reversal),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
@@ -469,7 +487,7 @@ for reversal in reversals:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 2',
+            'Maze 3',
             maze_str=mazes.reverse(mazes.maze5, *reversal),
             min_success=1,
             max_episodes=1,
@@ -482,8 +500,9 @@ for reversal in reversals:
         long=f"""
         Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
         """))
+    if SHORT: break
     all_blocks.append(block2)
-    if DEBUG or not REVERSAL: break
+    if not USE_REVERSALS: break
 
 
 ##########################
@@ -502,7 +521,7 @@ for reversal in reversals[:-1]:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 3', maze_str=mazes.reverse(mazes.maze6, *reversal),
+            'Maze 4', maze_str=mazes.reverse(mazes.maze6, *reversal),
             metadata=dict(desc="training"),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
@@ -517,14 +536,14 @@ for reversal in reversals[:-1]:
             display_fn=stage_display_fn,
         ),
         make_env_stage(
-            'Maze 3', maze_str=mazes.reverse(mazes.maze6, *reversal),
+            'Maze 4', maze_str=mazes.reverse(mazes.maze6, *reversal),
             metadata=dict(desc="off-task object regular"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx,
             train_objects=False),
         make_env_stage(
-            'Maze 3', maze_str=mazes.reverse(mazes.maze6_flipped_offtask, *reversal),
+            'Maze 4', maze_str=mazes.reverse(mazes.maze6_flipped_offtask, *reversal),
             metadata=dict(desc="off-task object flipped"),
             min_success=1, max_episodes=1,
             groups=block_groups,
@@ -538,8 +557,9 @@ for reversal in reversals[:-1]:
             We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
             """
             ))
+    if SHORT: break
     all_blocks.append(block3)
-    if DEBUG or not REVERSAL: break
+    if not USE_REVERSALS: break
 
 all_stages = stages.prepare_blocks(all_blocks)
 
@@ -547,8 +567,12 @@ all_stages = stages.prepare_blocks(all_blocks)
 
 def generate_stage_order(rng_key):
     """Take blocks defined above, flatten all their stages, and generate an order where the (1) blocks are randomized, and (2) stages within blocks are randomized if they're consecutive eval stages."""
-    randomized_blocks = list(all_blocks[2:])
-    fixed_blocks = jnp.array([0, 1])  # instruct_block, practice_block
+    randomized_blocks = list(all_blocks[2:]) if not SHORT else []
+    fixed_blocks = []
+    if GIVE_INSTRUCTIONS:
+        # instruct_block, practice_block
+        fixed_blocks.extend([0, 1])  
+    fixed_blocks = jnp.array(fixed_blocks)
     random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + 2
     block_order = jnp.concatenate([fixed_blocks, random_order])
 

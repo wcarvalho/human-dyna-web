@@ -46,8 +46,43 @@ def make_consent_form(
   ui.markdown('Please agree to this experiment.')
   ui.checkbox(
     'I agree to participate.',
-    on_change=lambda: start_experiment(
+    on_change=lambda: collect_demographic_info(
        meta_container, stage_container, button_container))
+
+
+def collect_demographic_info(meta_container, stage_container, button_container):
+    # Create a markdown title for the section
+    meta_container.clear()
+    with meta_container:
+      ui.markdown('## Demographic Info')
+      ui.markdown('Please fill out the following information.')
+
+      with ui.column():
+        with ui.column():
+          ui.label('Biological Sex')
+          sex_input = ui.radio(['Male', 'Female'], value='Male').props('inline')
+
+        # Collect age with a textbox input
+        age_input = ui.input('Age')
+
+
+      # Button to submit and store the data
+      async def submit():
+          age = age_input.value
+          sex = sex_input.value
+
+          # Validation for age input
+          if not age.isdigit() or not (0 < int(age) < 100):
+              ui.notify(
+                  "Please enter a valid age between 1 and 99.", type="warning")
+              return
+          app.storage.user['age'] = int(age)
+          app.storage.user['sex'] = sex
+
+          await start_experiment(meta_container, stage_container, button_container)
+
+      ui.button('Submit', on_click=submit)
+
 
 #####################################
 # Start/load experiment
@@ -82,6 +117,7 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
   await stage.handle_key_press(e, stage_container)
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
+    stage_state = stage.get_user_data('stage_state')
     await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, **kwargs):
@@ -95,6 +131,16 @@ async def handle_button_press(*args, **kwargs):
     app.storage.user['stage_idx'] += 1
     await load_stage(*args, **kwargs)
 
+async def save_on_new_block():
+    prior_stage = all_stages[app.storage.user['stage_idx'] - 1]
+    stage = all_stages[app.storage.user['stage_idx']]
+    prior_block = prior_stage.metadata['block_metadata']['desc']
+    block = stage.metadata['block_metadata']['desc']
+
+    if block != prior_block:
+       print("-"*10)
+       print(f"Just finished block {prior_block}")
+       await save_data(delete_data=False)
 
 async def load_stage(meta_container, stage_container, button_container):
     """Default behavior for progressing through stages."""
@@ -102,6 +148,7 @@ async def load_stage(meta_container, stage_container, button_container):
         await finish_experiment(meta_container, stage_container, button_container)
         return
 
+    await save_on_new_block()
     stage = all_stages[app.storage.user['stage_idx']]
     with stage_container.style('align-items: center;'):
       await stage.activate(stage_container)
@@ -128,7 +175,12 @@ async def finish_experiment(meta_container, stage_container, button_container):
         ui.markdown(f"## Saving data. Please wait")
         ui.markdown(
            "**Once the data is uploaded, this app will automatically move to the next screen**")
-      await save_data()
+      
+      print("-"*10)
+      print(f"Finished experiment")
+
+      # when over, delete user data.
+      await save_data(delete_data=True)
       app.storage.user['data_saved'] = True
 
     with meta_container:
@@ -138,7 +190,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
         ui.markdown("#### You may close the browser")
 
 
-async def save_data():
+async def save_data(delete_data=True):
     # Create a Pydantic model from your Tortoise model
     ExperimentDataPydantic = pydantic_model_creator(ExperimentData)
     ExperimentDataPydantic.model_config['from_attributes'] = True
@@ -157,7 +209,8 @@ async def save_data():
     await save_to_gcs(user_data=data_dicts, filename=user_data_file)
 
     # Now delete the data from the database
-    await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
+    if delete_data:
+      await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
 
 async def save_to_gcs(user_data, filename):
     bucket = gcs.initialize_storage_client()
@@ -249,13 +302,14 @@ async def index(request: Request):
     with open(basic_javascript_file) as f:
         ui.add_body_html('<script>' + f.read() + '</script>')
 
-    card = ui.card(align_items=['center']).classes('fixed-center')
+    card = ui.card(align_items=['center']).classes('fixed-center').style(
+        'max-width: 90vw; max-height: 90vh; overflow: auto;')
     with card:
       stage_container = ui.column()
       button_container = ui.column()
       with ui.column() as meta_container:
         # Run every 5 minutes
-        episode_limit = 60 if DEBUG else 60
+        episode_limit = 120
         ui.timer(
            1,  # check every minute
            lambda: check_if_over(
