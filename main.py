@@ -22,6 +22,7 @@ from google.auth.exceptions import TransportError
 load_dotenv()
 
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
+NAME = os.environ.get('NAME', 'exp')
 DEBUG = int(os.environ.get('DEBUG', 0))
 DEBUG_SEED = int(os.environ.get('SEED', 42))
 EXPERIMENT = int(os.environ.get('EXP', 1))
@@ -36,7 +37,8 @@ else:
    raise NotImplementedError
 all_stages = experiment.all_stages
 
-DATABASE_FILE = f'{DATABASE_FILE}_exp{EXPERIMENT}_debug{DEBUG}'
+DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}'
+
 #####################################
 # Consent Form
 #####################################
@@ -209,8 +211,11 @@ async def finish_experiment(meta_container, stage_container, button_container):
 
     with meta_container:
         meta_container.clear()
-        ui.markdown("## Experiment over")
-        ui.markdown("### Data saved")
+        ui.markdown("# Experiment over")
+        ui.markdown("## Data saved")
+        ui.markdown("### Please record the following code which you will need to provide for compensation")
+        ui.markdown(
+            "### 'gershman_dyna'")
         ui.markdown("#### You may close the browser")
 
 
@@ -226,7 +231,7 @@ async def save_data(delete_data=True):
         data).model_dump() for data in user_experiment_data]
 
     user_seed = app.storage.user['seed']
-    user_data_file = f'data/data_user={user_seed}_exp={EXPERIMENT}_debug={DEBUG}.json'
+    user_data_file = f'data/data_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:
       json.dump(data_dicts, f)
 
@@ -346,7 +351,7 @@ async def index(request: Request):
     user_seed = app.storage.user['seed']
     await save_to_gcs(
         user_data=user_info,
-        filename=f'data/info_user={user_seed}_exp={EXPERIMENT}_debug={DEBUG}.json')
+        filename=f'data/info_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json')
 
     ################
     # Start experiment
