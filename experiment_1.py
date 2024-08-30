@@ -197,7 +197,8 @@ def env_stage_display_fn(
     stage_state = stage.get_user_data('stage_state')
     with container.style('align-items: center;'):
         container.clear()
-        ui.markdown(f"## {stage.name}")
+        block_idx = app.storage.user['block_idx'] + 1
+        ui.markdown(f"## Maze {block_idx}")
         ui.markdown(f"#### Please retrieve the {category}")
         with ui.row():
             with ui.element('div').classes('p-2 bg-blue-100'):
@@ -355,17 +356,16 @@ if GIVE_INSTRUCTIONS:
 # Manipulation 1: Shortcut
 ##########################
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-if DEBUG > 0:
-    reversals = [(False, False)]*4
-
 
 for reversal in reversals[:2]:
     block_groups, block_char2idx = permute_groups(groups)
     block0 = Block([
         Stage(
             name='Training',
-            body="""
-        Please learn to obtain the objects. You need to succeed 10 times.
+            body=f"""
+        Please learn to obtain the objects. You need to succeed {min_success_train} times.
+
+        If you retrieve the wrong object, the episode terminates early.
         """,
             display_fn=stage_display_fn,
         ),
@@ -418,8 +418,10 @@ for reversal in reversals[2:]:
     block1 = Block(stages=[
         Stage(
             name='Training',
-            body="""
-            Please learn to obtain the objects. You need to succeed 10 times.
+            body=f"""
+            Please learn to obtain the objects. You need to succeed {min_success_train} times.
+
+            If you retrieve the wrong object, the episode terminates early.
             """,
             display_fn=stage_display_fn,
         ),
@@ -469,8 +471,10 @@ for reversal in reversals:
     block2 = Block([
         Stage(
             name='Training',
-            body="""
-            Please learn to obtain the objects. You need to succeed 10 times.
+            body=f"""
+            Please learn to obtain the objects. You need to succeed {min_success_train} times.
+
+            If you retrieve the wrong object, the episode terminates early.
             """,
             display_fn=stage_display_fn,
         ),
@@ -520,8 +524,10 @@ for reversal in reversals[:-1]:
     block3 = Block([
         Stage(
             name='Training',
-            body="""
-            Please learn to obtain the objects. You need to succeed 10 times.
+            body=f"""
+            Please learn to obtain the objects. You need to succeed {min_success_train} times.
+
+            If you retrieve the wrong object, the episode terminates early.
             """,
             display_fn=stage_display_fn,
         ),

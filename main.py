@@ -1,3 +1,4 @@
+import asyncio
 
 from dotenv import load_dotenv
 import json
@@ -102,11 +103,12 @@ def get_block_idx(stage):
 
   # for 3, I'd want to get but 2.
   # how do we get that?
-  block_idx = app.storage.user['block_order_to_idx'][block_order]
+  block_idx = app.storage.user['block_order_to_idx'][str(block_order)]
   return block_idx
 
 def block_progress():
-   return float(app.storage.user.get('block_idx')+1)/len(experiment.all_blocks)
+   """Return a 2-digit rounded decimal of the progress."""
+   return float(f"{(app.storage.user.get('block_idx')+1)/len(experiment.all_blocks):.2f}")
 
 async def start_experiment(
       meta_container,
@@ -159,8 +161,8 @@ async def save_on_new_block():
 
     if block != prior_block:
        print("-"*10)
-       print(f"Just finished block: `{prior_block}`")
-       await save_data(delete_data=False)
+       print(f"Saving results from block: `{prior_block}`")
+       asyncio.create_task(save_data(delete_data=False))
 
 async def load_stage(meta_container, stage_container, button_container):
     """Default behavior for progressing through stages."""
@@ -253,7 +255,7 @@ def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()
    if minutes_passed > episode_limit:
       print(f"experiment timed out after {minutes_passed} minutes")
-      app.storage.user['stage_idx'] = 1000
+      app.storage.user['stage_idx'] = len(all_stages)
       finish_experiment(*args, **kwargs)
 
 #####################################
@@ -308,7 +310,7 @@ def initalize_user():
   nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
   app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
   app.storage.user['block_idx'] = app.storage.user.get('block_idx', 0)
-  app.storage.user['block_progress'] = app.storage.user.get('block_progress', 0)
+  app.storage.user['block_progress'] = app.storage.user.get('block_progress', 0.)
 
   stage_order = app.storage.user.get('stage_order', None)
   block_order_to_idx = app.storage.user.get('block_order_to_idx', None)
@@ -320,10 +322,11 @@ def initalize_user():
     # [e.g., 0, 1, 3, 2]
 
     block_order, stage_order = experiment.generate_block_stage_order(init_rng_key)
-    block_order_to_idx = {int(i): int(idx) for idx, i in enumerate(block_order)}
-  app.storage.user['stage_order'] = stage_order
+    block_order_to_idx = {str(i): int(idx) for idx, i in enumerate(block_order)}
 
+  app.storage.user['stage_order'] = stage_order
   # this will be used to track which block you're currently in
+  
   app.storage.user['block_order_to_idx'] = block_order_to_idx
 
 @ui.page('/')
