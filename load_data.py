@@ -133,13 +133,24 @@ def get_block_stage_description(datum):
         eval=datum['metadata']['eval'],
     )
 
-def compute_reaction_time(datum) -> float:
+
+def time_diff(t1, t2) -> float:
     # Convert string timestamps to datetime objects
-    image_seen_datetime = datetime.strptime(datum['image_seen_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
-    action_taken_datetime = datetime.strptime(datum['action_taken_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
+    t1 = datetime.strptime(t1, '%Y-%m-%dT%H:%M:%S.%fZ')
+    t2 = datetime.strptime(t2, '%Y-%m-%dT%H:%M:%S.%fZ')
 
     # Calculate the time difference
-    time_difference = action_taken_datetime - image_seen_datetime
+    time_difference = t2 - t1
+
+    # Convert the time difference to milliseconds
+    reaction_time_milliseconds = time_difference.total_seconds() * 1000
+
+    return reaction_time_milliseconds
+
+
+def compute_reaction_time(datum) -> float:
+    # Calculate the time difference
+    time_difference = time_diff(datum['image_seen_time'], datum['action_taken_time'])
 
     # Convert the time difference to milliseconds
     reaction_time_milliseconds = time_difference.total_seconds() * 1000

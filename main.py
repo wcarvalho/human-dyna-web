@@ -16,12 +16,13 @@ import gcs
 import nicewebrl
 from nicewebrl.stages import ExperimentData
 
+from google.auth.exceptions import TransportError
 
 load_dotenv()
 
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 DEBUG = int(os.environ.get('DEBUG', 0))
-DEBUG_SEED = int(os.environ.get('DEBUG_SEED', 42))
+DEBUG_SEED = int(os.environ.get('SEED', 42))
 EXPERIMENT = int(os.environ.get('EXP', 1))
 
 if EXPERIMENT == 0:
@@ -43,7 +44,9 @@ def make_consent_form(
     meta_container, stage_container, button_container
 ):
   ui.markdown('## Consent Form')
-  ui.markdown('Please agree to this experiment.')
+  with open('consent.md', 'r') as consent_file:
+      consent_text = consent_file.read()
+  ui.markdown(consent_text)
   ui.checkbox(
     'I agree to participate.',
     on_change=lambda: collect_demographic_info(
@@ -87,6 +90,23 @@ def collect_demographic_info(meta_container, stage_container, button_container):
 #####################################
 # Start/load experiment
 #####################################
+def get_stage(stage_idx):
+   stage_order = app.storage.user['stage_order']
+   stage_idx = stage_order[stage_idx]
+   return all_stages[stage_idx]
+
+def get_block_idx(stage):
+  # says which current block we're in
+  # e.g. 3. from [0, 1, 3, 2]
+  block_order = stage.metadata['block_metadata']['idx']
+
+  # for 3, I'd want to get but 2.
+  # how do we get that?
+  block_idx = app.storage.user['block_order_to_idx'][block_order]
+  return block_idx
+
+def block_progress():
+   return float(app.storage.user.get('block_idx')+1)/len(experiment.all_blocks)
 
 async def start_experiment(
       meta_container,
@@ -113,11 +133,10 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
        'Please enter fullscreen mode to continue experiment',
        type='negative', timeout=10)
     return
-  stage = all_stages[app.storage.user['stage_idx']]
+  stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_key_press(e, stage_container)
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
-    stage_state = stage.get_user_data('stage_state')
     await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, **kwargs):
@@ -125,21 +144,22 @@ async def handle_button_press(*args, **kwargs):
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
-  stage = all_stages[app.storage.user['stage_idx']]
+  stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
     await load_stage(*args, **kwargs)
 
 async def save_on_new_block():
-    prior_stage = all_stages[app.storage.user['stage_idx'] - 1]
-    stage = all_stages[app.storage.user['stage_idx']]
+    if app.storage.user['block_idx'] == 0: return
+    prior_stage = get_stage(app.storage.user['stage_idx']-1)
+    stage = get_stage(app.storage.user['stage_idx'])
     prior_block = prior_stage.metadata['block_metadata']['desc']
     block = stage.metadata['block_metadata']['desc']
 
     if block != prior_block:
        print("-"*10)
-       print(f"Just finished block {prior_block}")
+       print(f"Just finished block: `{prior_block}`")
        await save_data(delete_data=False)
 
 async def load_stage(meta_container, stage_container, button_container):
@@ -149,7 +169,9 @@ async def load_stage(meta_container, stage_container, button_container):
         return
 
     await save_on_new_block()
-    stage = all_stages[app.storage.user['stage_idx']]
+    stage = get_stage(app.storage.user['stage_idx'])
+    app.storage.user['block_idx'] = get_block_idx(stage)
+    app.storage.user['block_progress'] = block_progress()
     with stage_container.style('align-items: center;'):
       await stage.activate(stage_container)
 
@@ -213,11 +235,18 @@ async def save_data(delete_data=True):
       await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
 
 async def save_to_gcs(user_data, filename):
-    bucket = gcs.initialize_storage_client()
-    blob = bucket.blob(filename)
-    blob.upload_from_string(data=json.dumps(
-        user_data), content_type='application/json')
-    print(f'Saved {filename} in bucket {bucket.name}')
+    try:
+      bucket = gcs.initialize_storage_client()
+      blob = bucket.blob(filename)
+      blob.upload_from_string(data=json.dumps(
+          user_data), content_type='application/json')
+      print(f'Saved {filename} in bucket {bucket.name}')
+    except TransportError as te:
+       print(te)
+       print("No internet connection maybe?")
+    except Exception as e:
+       raise e
+       
 
 
 def check_if_over(*args, episode_limit=60, ** kwargs):
@@ -264,17 +293,38 @@ def footer(card):
         ui.label().bind_text_from(
             app.storage.user, 'session_duration',
             lambda v: f"minutes passed: {int(v)}.")
+        ui.label()
+        ui.label().bind_text_from(
+            app.storage.user, 'block_idx',
+            lambda v: f"block: {int(v)+1}/{len(experiment.all_blocks)}.")
+
+    ui.linear_progress(
+      value=block_progress()).bind_value_from(app.storage.user, 'block_progress')
     ui.button(
         'Toggle fullscreen', icon='fullscreen',
         on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
 
 def initalize_user():
   nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
-  if 'stage_order' not in app.storage.user:
+  app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
+  app.storage.user['block_idx'] = app.storage.user.get('block_idx', 0)
+  app.storage.user['block_progress'] = app.storage.user.get('block_progress', 0)
+
+  stage_order = app.storage.user.get('stage_order', None)
+  block_order_to_idx = app.storage.user.get('block_order_to_idx', None)
+
+  if not stage_order:
     init_rng_key = jnp.array(
         app.storage.user['init_rng_key'], dtype=jnp.uint32)
-    stage_order = experiment.generate_stage_order(init_rng_key)
-    app.storage.user['stage_order'] = stage_order
+    # example block order
+    # [e.g., 0, 1, 3, 2]
+
+    block_order, stage_order = experiment.generate_block_stage_order(init_rng_key)
+    block_order_to_idx = {int(i): int(idx) for idx, i in enumerate(block_order)}
+  app.storage.user['stage_order'] = stage_order
+
+  # this will be used to track which block you're currently in
+  app.storage.user['block_order_to_idx'] = block_order_to_idx
 
 @ui.page('/')
 async def index(request: Request):

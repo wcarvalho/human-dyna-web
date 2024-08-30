@@ -25,7 +25,7 @@ SHORT = int(os.environ.get('SHORT', 0))  # only use 1 block
 USE_REVERSALS = int(os.environ.get('REV', 0))
 USE_DONE = DEBUG > 0
 
-from nicegui import ui
+from nicegui import ui, app
 from nicewebrl import stages
 from nicewebrl.stages import Stage, EnvStage, Block
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage
@@ -173,7 +173,8 @@ class EnvStageState:
 def stage_display_fn(stage, container):
     with container.style('align-items: center;'):
         container.clear()
-        ui.markdown(f"## {stage.name}")
+        block_idx = app.storage.user['block_idx'] + 1
+        ui.markdown(f"## {stage.name}, Maze {block_idx}")
         ui.markdown(f"{stage.body}")
 
 
@@ -323,7 +324,8 @@ practice_block = Block(stages=[
         groups=groups,
         char2idx=char2idx,
         force_room=True,
-        train_objects=True),
+        train_objects=True,
+        metadata={'maze': 'maze1'}),
     Stage(
         name='Practice evaluation',
         body="""
@@ -343,7 +345,8 @@ practice_block = Block(stages=[
         groups=groups,
         char2idx=char2idx,
         force_room=True,
-        train_objects=False),
+        train_objects=False,
+        metadata={'maze': 'maze1'}),
 ], metadata=dict(desc="practice"))
 if GIVE_INSTRUCTIONS:
     all_blocks.append(practice_block)
@@ -360,7 +363,7 @@ for reversal in reversals[:2]:
     block_groups, block_char2idx = permute_groups(groups)
     block0 = Block([
         Stage(
-            name='Training on Maze 1',
+            name='Training',
             body="""
         Please learn to obtain the objects. You need to succeed 10 times.
         """,
@@ -369,14 +372,14 @@ for reversal in reversals[:2]:
         make_env_stage(
             'Maze 1', 
             maze_str=mazes.reverse(mazes.maze3, *reversal),
-            metadata=dict(desc="training"),
+            metadata=dict(desc="training", maze="maze3"),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
             groups=block_groups,
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
-            name='Evaluation on Maze 1',
+            name='Evaluation',
             body="""
         The following are evaluaton tasks. You will get 1 chance each time.
 
@@ -387,7 +390,7 @@ for reversal in reversals[:2]:
         make_env_stage(
             'Maze 1', 
             maze_str=mazes.reverse(mazes.maze3_open2, *reversal),
-            metadata=dict(desc="'not obvious' shortcut"),
+            metadata=dict(desc="'not obvious' shortcut", maze="maze3_open2"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
@@ -414,7 +417,7 @@ for reversal in reversals[2:]:
 
     block1 = Block(stages=[
         Stage(
-            name='Training on Maze 1',
+            name='Training',
             body="""
             Please learn to obtain the objects. You need to succeed 10 times.
             """,
@@ -422,13 +425,13 @@ for reversal in reversals[2:]:
         ),
         make_env_stage(
             'Maze 2', maze_str=mazes.reverse(train_maze, *reversal),
-            metadata=dict(desc="training"),
+            metadata=dict(desc="training", maze="maze3"),
             min_success=min_success_train, 
             max_episodes=max_episodes_train,
             groups=block_groups,
             char2idx=block_char2idx, train_objects=True),
         Stage(
-            name='Evaluation on Maze 1',
+            name='Evaluation',
             body="""
             The following are evaluaton tasks. You will get 1 chance each time.
 
@@ -438,13 +441,13 @@ for reversal in reversals[2:]:
         ),
         make_env_stage(
             'Maze 2', maze_str=mazes.reverse(eval_maze1, *reversal),
-            metadata=dict(desc="Map changed, new location, on path"),
+            metadata=dict(desc="Map changed, new location, on path", maze="maze3_onpath_shortcut"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
         make_env_stage(
             'Maze 2', maze_str=mazes.reverse(eval_maze2, *reversal),
-            metadata=dict(desc="Map changed, new location, off-path"),
+            metadata=dict(desc="Map changed, new location, off-path", maze="maze3_offpath_shortcut"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx, train_objects=False),
@@ -465,7 +468,7 @@ for reversal in reversals:
     block_groups, block_char2idx = permute_groups(groups)
     block2 = Block([
         Stage(
-            name='Training on Maze 2',
+            name='Training',
             body="""
             Please learn to obtain the objects. You need to succeed 10 times.
             """,
@@ -478,9 +481,10 @@ for reversal in reversals:
             max_episodes=max_episodes_train,
             groups=block_groups,
             char2idx=block_char2idx,
-            train_objects=True),
+            train_objects=True,
+            metadata={'maze': 'maze5'}),
         Stage(
-            name='Evaluation on Maze 2',
+            name='Evaluation',
             body="""
             The following are evaluaton tasks. You will get 1 chance each time.
             """,
@@ -493,7 +497,8 @@ for reversal in reversals:
             max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx,
-            train_objects=False),
+            train_objects=False,
+            metadata={'maze': 'maze5'}),
     ], metadata=dict(
         manipulation=3,
         desc="reusing longer of two paths which matches training path",
@@ -514,7 +519,7 @@ for reversal in reversals[:-1]:
     block_groups, block_char2idx = permute_groups(groups)
     block3 = Block([
         Stage(
-            name='Training on Maze 3',
+            name='Training',
             body="""
             Please learn to obtain the objects. You need to succeed 10 times.
             """,
@@ -522,14 +527,14 @@ for reversal in reversals[:-1]:
         ),
         make_env_stage(
             'Maze 4', maze_str=mazes.reverse(mazes.maze6, *reversal),
-            metadata=dict(desc="training"),
+            metadata=dict(desc="training", maze="maze6"),
             min_success=min_success_train,
             max_episodes=max_episodes_train,
             groups=block_groups,
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
-            name='Evaluation on Maze 3',
+            name='Evaluation',
             body="""
             The following are evaluaton tasks. You will get 1 chance each time.
             """,
@@ -537,14 +542,14 @@ for reversal in reversals[:-1]:
         ),
         make_env_stage(
             'Maze 4', maze_str=mazes.reverse(mazes.maze6, *reversal),
-            metadata=dict(desc="off-task object regular"),
+            metadata=dict(desc="off-task object regular", maze="maze6"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx,
             train_objects=False),
         make_env_stage(
             'Maze 4', maze_str=mazes.reverse(mazes.maze6_flipped_offtask, *reversal),
-            metadata=dict(desc="off-task object flipped"),
+            metadata=dict(desc="off-task object flipped", maze="maze6_flipped_offtask"),
             min_success=1, max_episodes=1,
             groups=block_groups,
             char2idx=block_char2idx,
@@ -565,16 +570,22 @@ all_stages = stages.prepare_blocks(all_blocks)
 
 
 
-def generate_stage_order(rng_key):
+def generate_block_stage_order(rng_key):
     """Take blocks defined above, flatten all their stages, and generate an order where the (1) blocks are randomized, and (2) stages within blocks are randomized if they're consecutive eval stages."""
-    randomized_blocks = list(all_blocks[2:]) if not SHORT else []
     fixed_blocks = []
+    offset = 0
     if GIVE_INSTRUCTIONS:
-        # instruct_block, practice_block
-        fixed_blocks.extend([0, 1])  
+        offset = 2
+    # fix ordering of instruct_block, practice_block
+    fixed_blocks.extend(list(range(offset)))
     fixed_blocks = jnp.array(fixed_blocks)
-    random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + 2
-    block_order = jnp.concatenate([fixed_blocks, random_order])
+
+    # blocks afterward are randomized
+    randomized_blocks = list(all_blocks[offset:])
+    random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + offset
+    block_order = jnp.concatenate([fixed_blocks, random_order]).astype(jnp.int32)
+    block_order = block_order.tolist()
 
     stage_order = stages.generate_stage_order(all_blocks, block_order, rng_key)
-    return stage_order
+
+    return block_order, stage_order
