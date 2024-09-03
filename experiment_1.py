@@ -330,9 +330,9 @@ practice_block = Block(stages=[
     Stage(
         name='Practice evaluation',
         body="""
-        Here you'll experience the task of getting an object that was nearby the other object you could have achieved.
+        Here you'll experience the task of getting an object that was nearby one of the training objects.
 
-        During the evaluation phase, you will only have 1 try. If you get this stage correct, you will double your earnings.
+        During the evaluation phase, you will only have 1 try.
 
         Press the button when you're ready to continue.
         """,
@@ -381,7 +381,7 @@ for reversal in reversals[:2]:
         Stage(
             name='Evaluation',
             body="""
-        The following are evaluaton tasks. You will get 1 chance each time.
+        The following are evaluaton tasks. You will get 1 chance each time. Your performance will count towards your bonus payment. Try to retrieve the goal object as quickly as you can.
 
         <p style="color: red;"><strong>Note that some parts of the maze may have changed</strong>.</p>
         """,
