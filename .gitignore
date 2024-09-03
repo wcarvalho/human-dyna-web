@@ -28,6 +28,7 @@ data
 .github
 __pycache__/
 *.py[cod]
+example.ipynb
 *$py.class
 .sesskey
 db.*

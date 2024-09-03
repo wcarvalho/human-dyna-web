@@ -28,6 +28,9 @@ if EXPERIMENT == 0:
 elif EXPERIMENT == 1:
   import experiment_1 as experiment
   APP_TITLE = 'Human Dyna 1'
+elif EXPERIMENT == 2:
+  import experiment_2 as experiment
+  APP_TITLE = 'Human Dyna 2'
 else:
    raise NotImplementedError
 stages = experiment.stages
@@ -242,7 +245,7 @@ async def index(request: Request):
       button_container = ui.column()
       with ui.column() as meta_container:
         # Run every 5 minutes
-        episode_limit = 1 if DEBUG else 60
+        episode_limit = 60 if DEBUG else 60
         ui.timer(
            1,  # check every minute
            lambda: check_if_over(
