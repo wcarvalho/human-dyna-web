@@ -1,22 +1,22 @@
 Please carefully read this consent agreement before deciding whether to participate in this experiment.
 
-**Purpose of the research:** To understand how people estimate a number of items.
+**Purpose of the research:** To understand how people learn and make decisions.
 
-**What you will do in this research:** You will be shown images with dots and you will be asked to estimate the number of dots in each image. The task is simple and you will be provided with clear instructions.
+**What you will do in this research:** You will move around a virtual maze, navigating to different locations on screen to retrieve different objects. The task is simple and you will be provided with clear instructions.
 
-**Time required:** This experiment will take about 40 minutes to complete.
+**Time required:** This experiment will take about 15 minutes to complete.
 
 **Risks:** There are no anticipated risks associated with participating in this study. The effects of participating should be comparable to those you would experience from viewing a computer monitor, clicking with the mouse, and pressing buttons on the keyboard for the duration of the experiment.
 
-**Benefits:** The study provides important information about the nature of perception and decision making.
+**Benefits:** The study provides important information about the nature of learning and decision making.
 
-**Compensation:** You will receive $3$ base pay for completing the experiment + $4-8 bonus based on your performance on the task ($6$ on average).
+**Compensation:** You will receive $2$ base pay for completing the experiment + a bonus of $1-3 based on your performance ($2$ on average).
 
 **Confidentiality:** Your participation in this study will remain confidential. No personally identifiable information will be associated with your data. Your de-identified data may be shared with other researchers and used in future projects.
 
 **Participation and withdrawal:** Your participation in this study is completely voluntary and you may refuse to participate or you may choose to withdraw at any time without penalty or loss of benefits to which you are otherwise entitled.
 
-**How to contact the researcher:** If you have questions or concerns about your participation or payment, please contact Arthur Prat-Carrabin, arthurpc@g.harvard.edu.
+**How to contact the researcher:** If you have questions or concerns about your participation or payment, please contact sam_hall-mcmaster@fas.harvard.edu or wcarvalho@g.harvard.edu.
 
 Whom to contact about your rights in this research: For questions, concerns, suggestions, or complaints that have not been or cannot be addressed by the researcher, or to report research-related harm, please contact the Committee on the Use of Human Subjects in Research at Harvard University, 1414 Massachusetts Avenue, Second Floor, Cambridge, MA 02138. Phone: 617-496-2847. Email: cuhs@fas.harvard.edu. Please print or save a copy of this form for your records.
 

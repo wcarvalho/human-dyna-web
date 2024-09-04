@@ -33,6 +33,9 @@ if EXPERIMENT == 0:
 elif EXPERIMENT == 1:
   import experiment_1 as experiment
   APP_TITLE = 'Human Dyna 1'
+elif EXPERIMENT == 2:
+  import experiment_2 as experiment
+  APP_TITLE = 'Human Dyna 2'
 else:
    raise NotImplementedError
 all_stages = experiment.all_stages
