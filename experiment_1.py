@@ -38,6 +38,7 @@ from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
 
+
 min_success_task = 5
 min_success_train = min_success_task*num_rooms
 max_episodes_train = 30*num_rooms

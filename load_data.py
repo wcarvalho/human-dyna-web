@@ -143,19 +143,13 @@ def time_diff(t1, t2) -> float:
     time_difference = t2 - t1
 
     # Convert the time difference to milliseconds
-    reaction_time_milliseconds = time_difference.total_seconds() * 1000
-
-    return reaction_time_milliseconds
+    return time_difference.total_seconds() * 1000
 
 
 def compute_reaction_time(datum) -> float:
     # Calculate the time difference
-    time_difference = time_diff(datum['image_seen_time'], datum['action_taken_time'])
+    return time_diff(datum['image_seen_time'], datum['action_taken_time'])
 
-    # Convert the time difference to milliseconds
-    reaction_time_milliseconds = time_difference.total_seconds() * 1000
-
-    return reaction_time_milliseconds
 
 def load_experiment_data(file_path: str):
     with open(file_path, 'r') as f:

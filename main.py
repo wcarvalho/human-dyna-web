@@ -222,7 +222,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
         ui.markdown("## Data saved")
         ui.markdown("### Please record the following code which you will need to provide for compensation")
         ui.markdown(
-            "### 'gershman_dyna'")
+            '### "gershman_dyna"')
         ui.markdown("#### You may close the browser")
 
 
