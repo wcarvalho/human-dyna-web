@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import matplotlib.pyplot as plt
 from nicewebrl import nicejax
-from housemaze.human_dyna import env as maze
+from housemaze.human_dyna import multitask_env as maze
 import jax
 import jax.numpy as jnp
 import numpy as np

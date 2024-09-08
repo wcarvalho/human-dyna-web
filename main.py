@@ -12,6 +12,7 @@ from fastapi import Request
 from tortoise import Tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
 import os
+import random
 
 import gcs
 import nicewebrl
@@ -33,9 +34,9 @@ if EXPERIMENT == 0:
 elif EXPERIMENT == 1:
   import experiment_1 as experiment
   APP_TITLE = 'Human Dyna 1'
-elif EXPERIMENT == 2:
-  import experiment_2 as experiment
-  APP_TITLE = 'Human Dyna 2'
+#elif EXPERIMENT == 2:
+#  import experiment_2 as experiment
+#  APP_TITLE = 'Human Dyna 2'
 else:
    raise NotImplementedError
 all_stages = experiment.all_stages
@@ -146,16 +147,17 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
     app.storage.user['stage_idx'] += 1
     await load_stage(meta_container, stage_container, button_container)
 
-async def handle_button_press(*args, **kwargs):
+async def handle_button_press(*args, button_container, **kwargs):
   if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
+  button_container.clear()
   stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
-    await load_stage(*args, **kwargs)
+    await load_stage(*args, button_container=button_container, **kwargs)
 
 async def save_on_new_block():
     if app.storage.user['block_idx'] == 0: return
@@ -186,7 +188,9 @@ async def load_stage(meta_container, stage_container, button_container):
       button_container.clear()
       ui.button('Next page',
                 on_click=lambda: handle_button_press(
-                    meta_container, stage_container, button_container)
+                    meta_container=meta_container,
+                    stage_container=stage_container,
+                    button_container=button_container)
                 ).bind_visibility_from(stage, 'next_button')
 
 
@@ -256,15 +260,14 @@ async def save_to_gcs(user_data, filename):
        print("No internet connection maybe?")
     except Exception as e:
        raise e
-       
 
-
-def check_if_over(*args, episode_limit=60, ** kwargs):
+async def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()
+   minutes_passed = app.storage.user['session_duration']
    if minutes_passed > episode_limit:
       print(f"experiment timed out after {minutes_passed} minutes")
       app.storage.user['stage_idx'] = len(all_stages)
-      finish_experiment(*args, **kwargs)
+      await finish_experiment(*args, **kwargs)
 
 #####################################
 # Setup database
@@ -315,7 +318,9 @@ def footer(card):
         on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
 
 def initalize_user():
+
   nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
+  print(f"Initialized user: {app.storage.user['seed']}")
   app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
   app.storage.user['block_idx'] = app.storage.user.get('block_idx', 0)
   app.storage.user['block_progress'] = app.storage.user.get('block_progress', 0.)
@@ -323,6 +328,8 @@ def initalize_user():
   stage_order = app.storage.user.get('stage_order', None)
   block_order_to_idx = app.storage.user.get('block_order_to_idx', None)
 
+  print(f"Loaded block: {app.storage.user['block_idx']}")
+  print(f"Loaded stage: {app.storage.user['stage_idx']}")
   if not stage_order:
     init_rng_key = jnp.array(
         app.storage.user['init_rng_key'], dtype=jnp.uint32)
@@ -340,6 +347,7 @@ def initalize_user():
 @ui.page('/')
 async def index(request: Request):
     initalize_user()
+    ui.on('ping', lambda e: print(e.args))
 
     ui.run_javascript(f'window.debug = {DEBUG}')
     ################
@@ -364,21 +372,24 @@ async def index(request: Request):
         ui.add_body_html('<script>' + f.read() + '</script>')
 
     card = ui.card(align_items=['center']).classes('fixed-center').style(
-        'max-width: 90vw; max-height: 90vh; overflow: auto;')
+        'max-width: 90vw;'
+        'max-height: 90vh;'
+        'overflow: auto;'
+        'justify-content: center;'
+        'align-items: center;'
+        )
     with card:
+      episode_limit = 120
+      ui.timer(
+        1,  # check every minute
+        lambda: check_if_over(
+            episode_limit=episode_limit,
+            meta_container=meta_container, 
+            stage_container=stage_container,
+            button_container=button_container))
       stage_container = ui.column()
       button_container = ui.column()
       with ui.column() as meta_container:
-        # Run every 5 minutes
-        episode_limit = 120
-        ui.timer(
-           1,  # check every minute
-           lambda: check_if_over(
-               episode_limit=episode_limit,
-               meta_container=meta_container, 
-               stage_container=stage_container,
-               button_container=button_container))
-
         if app.storage.user.get('experiment_started', False):
           await start_experiment(
              meta_container, stage_container, button_container)
@@ -386,6 +397,8 @@ async def index(request: Request):
           make_consent_form(
              meta_container, stage_container, button_container)
       footer(card)
+
+
 
 ui.run(
    storage_secret='private key to secure the browser session cookie',

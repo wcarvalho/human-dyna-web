@@ -18,9 +18,13 @@ flyctl launch \
 --env NAME='r0' \
 --vm-size 'shared-cpu-4x'
 
+# set maximum to 10 machines running
+flyctl scale count 5 --config configs/human-dyna-1-r0.toml
+
 # launch the website
 flyctl deploy --config configs/human-dyna-1-r0.toml
 
+# to display status
 
 ##########################################
 # Experiment 1
@@ -36,5 +40,7 @@ flyctl launch \
 --env REV=1 \
 --env NAME='r1' \
 --vm-size 'shared-cpu-4x'
+
+flyctl scale count 10 --config configs/human-dyna-1-r1.toml
 
 flyctl deploy --config configs/human-dyna-1-r1.toml

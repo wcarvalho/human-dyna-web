@@ -3,11 +3,14 @@ import random
 from typing import List
 from functools import partial
 
+from skimage.transform import resize
+
 from housemaze import renderer
-from housemaze.maze import KeyboardActions
-from housemaze.human_dyna import env
+from housemaze.env import KeyboardActions
 from housemaze.human_dyna import utils
-from housemaze.human_dyna import env as maze
+from housemaze.human_dyna import multitask_env as maze
+from housemaze.human_dyna import multitask_env
+from housemaze.human_dyna import web_env
 from housemaze.human_dyna import mazes
 import numpy as np
 
@@ -16,6 +19,8 @@ import jax.numpy as jnp
 from flax import struct
 from dotenv import load_dotenv
 import os
+from experiment_utils import SuccessTrackingAutoResetWrapper
+
 load_dotenv()
 
 GIVE_INSTRUCTIONS = int(os.environ.get('INST', 1))
@@ -33,12 +38,14 @@ from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
 
+min_success_task = 5
+min_success_train = min_success_task*num_rooms
+max_episodes_train = 30*num_rooms
 if DEBUG == 0:
-    min_success_train = 5*num_rooms
-    max_episodes_train = 30*num_rooms
+    pass
 elif DEBUG == 1:
-    min_success_train = 2
-    max_episodes_train = 2
+    min_success_task = 1
+    min_success_train = 1*num_rooms
 
 
 image_data = utils.load_image_dict()
@@ -72,15 +79,18 @@ char2idx = mazes.groups_to_char2key(groups)
 
 
 # shared across all tasks
-task_runner = env.TaskRunner(task_objects=task_objects)
+task_runner = multitask_env.TaskRunner(task_objects=task_objects)
 keys = image_data['keys']
 
-jax_env = env.HouseMaze(
+jax_env = web_env.HouseMaze(
     task_runner=task_runner,
     num_categories=len(keys),
     use_done=USE_DONE,
 )
-jax_env = utils.AutoResetWrapper(jax_env)
+jax_env = SuccessTrackingAutoResetWrapper(
+    jax_env,
+    num_success=min_success_task,
+    )
 
 
 def permute_groups(groups):
@@ -150,7 +160,7 @@ action_to_name = {
 }
 
 web_env = JaxWebEnv(jax_env)
-# Call this function to pre-compile jax functions before experiment starsts.
+# Call this function to pre-compile jax functions before experiment starts.
 dummy_env_params = make_params(mazes.maze0, groups, char2idx)
 dummy_timestep = web_env.reset(jax.random.PRNGKey(42), dummy_env_params)
 web_env.precompile(dummy_env_params=dummy_env_params)
@@ -173,8 +183,8 @@ class EnvStageState:
 def stage_display_fn(stage, container):
     with container.style('align-items: center;'):
         container.clear()
-        block_idx = app.storage.user['block_idx'] + 1
-        ui.markdown(f"## {stage.name}, Maze {block_idx}")
+        #block_idx = app.storage.user['block_idx'] + 1
+        ui.markdown(f"## {stage.name}")
         ui.markdown(f"{stage.body}")
 
 
@@ -185,6 +195,25 @@ def make_image_html(src):
     </div>
     '''.format(src=src)
     return html
+
+
+async def env_reset_display_fn(
+        stage,
+        container,
+        timestep):
+    category = keys[timestep.state.task_object]
+    image = image_data['images'][timestep.state.task_object]
+    image = resize(image, (64, 64, 3),
+                   anti_aliasing=True, preserve_range=True)
+    image = base64_npimage(image)
+
+    with container.style('align-items: center;'):
+        container.clear()
+        ui.markdown(f"#### Please obtain the {category} as quickly as you can")
+        ui.html(make_image_html(src=image))
+        button = ui.button("click to start")
+        await button.clicked()
+
 
 def env_stage_display_fn(
         stage,
@@ -197,13 +226,12 @@ def env_stage_display_fn(
     stage_state = stage.get_user_data('stage_state')
     with container.style('align-items: center;'):
         container.clear()
-        block_idx = app.storage.user['block_idx'] + 1
-        ui.markdown(f"## Maze {block_idx}")
-        ui.markdown(f"#### Please retrieve the {category}")
+        ui.markdown(f"#### Please obtain the {category} as quickly as you can")
         with ui.row():
             with ui.element('div').classes('p-2 bg-blue-100'):
-                ui.label().bind_text_from(
-                    stage_state, 'nsuccesses', lambda n: f"Number of successful episodes: {n}/{stage.min_success}")
+                n = timestep.state.successes.sum()
+                ui.label(
+                    f"Number of successful episodes: {n}/{stage.min_success}")
             with ui.element('div').classes('p-2 bg-green-100'):
                 ui.label().bind_text_from(
                     stage_state, 'nepisodes', lambda n: f"Try: {n}/{stage.max_episodes}")
@@ -243,18 +271,20 @@ def make_env_stage(
             randomize_agent=randomize_agent).replace(
                 randomize_agent=randomize_agent,
                 randomization_radius=5 if train_objects else 0,
-                training=False,
+                training=train_objects,
                 # if eval, always force to room 0 (where we target manipualtion)
                 force_room=jnp.array(force_room or not train_objects),
                 default_room=jnp.array(0),
                 # if training sample train objects w prob =1.0
                 # if testing, sample train objects w prob=0.0
-                p_test_sample_train=float(train_objects),
+                p_test_sample_train=1.0,
           ),
         render_fn=render_fn,
         vmap_render_fn=vmap_render_fn,
+        reset_display_fn=env_reset_display_fn,
         display_fn=env_stage_display_fn,
-        evaluate_success_fn=evaluate_success_fn,
+        evaluate_success_fn=lambda t: int(t.reward > .5),
+        check_finished=lambda t: t.finished,
         state_cls=EnvStageState,
         max_episodes=max_episodes,
         min_success=min_success,
@@ -307,7 +337,7 @@ A..#.##..#...
 
 practice_block = Block(stages=[
     Stage(
-        name='Practice training',
+        name='Practice phase 1',
         body="""
         Here you'll get some experience in a practice maze.
         You can control the red triangle to move around the maze with the arrow keys on your keyboard. Your goal is to move to the goal object shown on screen.
@@ -328,7 +358,7 @@ practice_block = Block(stages=[
         train_objects=True,
         metadata={'maze': 'maze1'}),
     Stage(
-        name='Practice evaluation',
+        name='Practice phase 2',
         body="""
         Here you'll experience the task of getting an object that was nearby one of the training objects.
 
@@ -361,9 +391,9 @@ for reversal in reversals[:2]:
     block_groups, block_char2idx = permute_groups(groups)
     block0 = Block([
         Stage(
-            name='Training',
+            name='Phase 1',
             body=f"""
-        Please learn to obtain the objects. You need to succeed {min_success_train} times.
+        Please learn to obtain the objects. You need to succeed {min_success_train} times per object.
 
         If you retrieve the wrong object, the episode terminates early.
         """,
@@ -379,7 +409,7 @@ for reversal in reversals[:2]:
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
-            name='Evaluation',
+            name='Phase 2',
             body="""
         The following are evaluaton tasks. You will get 1 chance each time. Your performance will count towards your bonus payment. Try to retrieve the goal object as quickly as you can.
 
@@ -417,9 +447,9 @@ for reversal in reversals[2:]:
 
     block1 = Block(stages=[
         Stage(
-            name='Training',
+            name='Phase 1',
             body=f"""
-            Please learn to obtain the objects. You need to succeed {min_success_train} times.
+            Please learn to obtain the objects. You need to succeed {min_success_train} times per object.
 
             If you retrieve the wrong object, the episode terminates early.
             """,
@@ -433,9 +463,9 @@ for reversal in reversals[2:]:
             groups=block_groups,
             char2idx=block_char2idx, train_objects=True),
         Stage(
-            name='Evaluation',
+            name='Phase 2',
             body="""
-            The following are evaluaton tasks. You will get 1 chance each time.
+            The following are evaluaton tasks. You will get 1 chance each time. Your performance will count towards your bonus payment. Try to retrieve the goal object as quickly as you can.
 
             <p style="color: red;"><strong>Note that some parts of the maze may have changed</strong>.</p>
             """,
@@ -470,9 +500,9 @@ for reversal in reversals:
     block_groups, block_char2idx = permute_groups(groups)
     block2 = Block([
         Stage(
-            name='Training',
+            name='Phase 1',
             body=f"""
-            Please learn to obtain the objects. You need to succeed {min_success_train} times.
+            Please learn to obtain the objects. You need to succeed {min_success_train} times per object.
 
             If you retrieve the wrong object, the episode terminates early.
             """,
@@ -488,7 +518,7 @@ for reversal in reversals:
             train_objects=True,
             metadata={'maze': 'maze5'}),
         Stage(
-            name='Evaluation',
+            name='Phase 2',
             body="""
             The following are evaluaton tasks. You will get 1 chance each time.
             """,
@@ -523,9 +553,9 @@ for reversal in reversals[:-1]:
     block_groups, block_char2idx = permute_groups(groups)
     block3 = Block([
         Stage(
-            name='Training',
+            name='Phase 1',
             body=f"""
-            Please learn to obtain the objects. You need to succeed {min_success_train} times.
+            Please learn to obtain the objects. You need to succeed {min_success_train} times per object.
 
             If you retrieve the wrong object, the episode terminates early.
             """,
@@ -540,9 +570,9 @@ for reversal in reversals[:-1]:
             char2idx=block_char2idx,
             train_objects=True),
         Stage(
-            name='Evaluation',
+            name='Phase 2',
             body="""
-            The following are evaluaton tasks. You will get 1 chance each time.
+            The following are evaluaton tasks. You will get 1 chance each time. Your performance will count towards your bonus payment. Try to retrieve the goal object as quickly as you can.
             """,
             display_fn=stage_display_fn,
         ),

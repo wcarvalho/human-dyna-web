@@ -20,6 +20,9 @@ Please carefully read this consent agreement before deciding whether to particip
 
 Whom to contact about your rights in this research: For questions, concerns, suggestions, or complaints that have not been or cannot be addressed by the researcher, or to report research-related harm, please contact the Committee on the Use of Human Subjects in Research at Harvard University, 1414 Massachusetts Avenue, Second Floor, Cambridge, MA 02138. Phone: 617-496-2847. Email: cuhs@fas.harvard.edu. Please print or save a copy of this form for your records.
 
+
 **Agreement:** The nature and purpose of this research have been sufficiently explained and I agree to participate in this study. I understand that I am free to withdraw at any time without incurring any penalty.
+
+<p style="color: red;"><strong>Please note that the session will be restarted if you leave this webpage for more than FIVE (5) minutes.</strong></p>
 
 Please consent by checking the box, then click the button to continue. Otherwise, please exit the study at this time.

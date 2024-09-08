@@ -1,10 +1,10 @@
 from functools import partial
 
 from housemaze import renderer
-from housemaze.maze import KeyboardActions
-from housemaze.human_dyna import env
+from housemaze.env import KeyboardActions
+from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import utils
-from housemaze.human_dyna import env as maze
+from housemaze.human_dyna import multitask_env as maze
 from housemaze.human_dyna import mazes
 from housemaze.human_dyna import experiments
 
@@ -20,10 +20,10 @@ from nicewebrl.nicejax import JaxWebEnv, base64_npimage
 char2key, group_set, task_objects = mazes.get_group_set(3)
 image_data = utils.load_image_dict()
 
-task_runner = env.TaskRunner(task_objects=task_objects)
+task_runner = multitask_env.TaskRunner(task_objects=task_objects)
 keys = image_data['keys']
 
-jax_env = env.HouseMaze(
+jax_env = multitask_env.HouseMaze(
     task_runner=task_runner,
     num_categories=len(keys),
     use_done=True,
