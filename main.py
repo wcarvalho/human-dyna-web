@@ -89,6 +89,8 @@ def collect_demographic_info(meta_container, stage_container, button_container):
           app.storage.user['age'] = int(age)
           app.storage.user['sex'] = sex
 
+          print("started experiment for user:", app.storage.user['seed'])
+          print(f"age: {int(age)}, sex: {sex}")
           await start_experiment(meta_container, stage_container, button_container)
 
       ui.button('Submit', on_click=submit)
