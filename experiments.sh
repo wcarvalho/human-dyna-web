@@ -6,7 +6,7 @@ rm -r data .nicegui;
 # no reversal of blocks
 ##########################################
 # debugging command to test
-INST=0 DEBUG=1 EXP=1 NAME='r0-v2' REV=0 SEED=43 python main.py
+rm -r .nicegui; INST=0 DEBUG=1 NMAN=2 EXP=1 NAME='r0-v2' REV=0 SEED=44 python main.py
 
 # create the config for putting this online
 flyctl launch \

@@ -100,6 +100,8 @@ def collect_demographic_info(meta_container, stage_container, button_container):
 # Start/load experiment
 #####################################
 def get_stage(stage_idx):
+   if app.storage.user.get('experiment_finished', False):
+      return all_stages[-1]
    stage_order = app.storage.user['stage_order']
    stage_idx = stage_order[stage_idx]
    return all_stages[stage_idx]
@@ -201,6 +203,12 @@ async def finish_experiment(meta_container, stage_container, button_container):
     stage_container.clear()
     button_container.clear()
 
+    experiment_finished = app.storage.user.get('experiment_finished', False)
+
+    if experiment_finished:
+      # in case called multiple times
+      return
+
     app.storage.user['experiment_finished'] = True
     app.storage.user['data_saved'] = app.storage.user.get(
         'data_saved', False)
@@ -210,10 +218,9 @@ async def finish_experiment(meta_container, stage_container, button_container):
         ui.markdown(f"## Saving data. Please wait")
         ui.markdown(
            "**Once the data is uploaded, this app will automatically move to the next screen**")
-      
-      print("-"*10)
-      print(f"Finished experiment")
 
+      # wait 5 seconds to make sure data from stages are saved
+      await asyncio.sleep(5)
       # when over, delete user data.
       await save_data(final_save=True)
       app.storage.user['data_saved'] = True
@@ -238,8 +245,9 @@ async def save_data(final_save=True):
 
     data_dicts = [ExperimentDataPydantic.model_validate(
         data).model_dump() for data in user_experiment_data]
+
     if final_save:
-       data_dicts.append(dict(finished=True))
+      data_dicts.append(dict(finished=True))
     user_seed = app.storage.user['seed']
     user_data_file = f'data/data_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:

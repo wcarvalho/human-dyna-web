@@ -46,7 +46,7 @@ if DEBUG == 0:
     pass
 elif DEBUG == 1:
     min_success_task = 1
-    min_success_train = 1*num_rooms
+    min_success_train = 1
 
 
 image_data = utils.load_image_dict()
@@ -77,7 +77,6 @@ char2idx = {
 }
 # same thing
 char2idx = mazes.groups_to_char2key(groups)
-
 
 # shared across all tasks
 task_runner = multitask_env.TaskRunner(task_objects=task_objects)
@@ -228,6 +227,10 @@ def env_stage_display_fn(
     with container.style('align-items: center;'):
         container.clear()
         ui.markdown(f"#### Please obtain the {category} as quickly as you can")
+        if DEBUG:
+            ui.markdown(
+                f"Manipulation: {stage.metadata['block_metadata']['manipulation']}")
+            ui.markdown(f"Episode idx: {stage_state.nepisodes}")
         with ui.row():
             with ui.element('div').classes('p-2 bg-blue-100'):
                 n = timestep.state.successes.sum()
@@ -421,7 +424,7 @@ for reversal in reversals[:2]:
         desc="shortcut",
         long=f"A shortcut is introduced",
         groups=make_serializable(block_groups),
-        char2idx=block_char2idx
+        char2idx=jax.tree_map(int, block_char2idx)
     ))
     manipulation1_blocks.append(block0)
     if not USE_REVERSALS: break
@@ -484,7 +487,7 @@ for reversal in reversals[2:]:
         In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
         """,
         groups=make_serializable(block_groups),
-        char2idx=block_char2idx
+        char2idx=jax.tree_map(int, block_char2idx)
     ))
     manipulation2_blocks.append(block1)
     if not USE_REVERSALS: break
@@ -538,7 +541,7 @@ for reversal in reversals:
         Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
         """,
         groups=make_serializable(block_groups),
-        char2idx=block_char2idx
+        char2idx=jax.tree_map(int, block_char2idx)
     ))
     manipulation3_blocks.append(block2)
     if not USE_REVERSALS: break
@@ -599,7 +602,7 @@ for reversal in reversals[:-1]:
             We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
             """,
             groups=make_serializable(block_groups),
-            char2idx=block_char2idx
+            char2idx=jax.tree_map(int, block_char2idx)
         ))
     manipulation4_blocks.append(block3)
     if not USE_REVERSALS: break
