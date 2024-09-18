@@ -25,7 +25,7 @@ load_dotenv()
 
 GIVE_INSTRUCTIONS = int(os.environ.get('INST', 1))
 DEBUG = int(os.environ.get('DEBUG', 0))
-SHORT = int(os.environ.get('SHORT', 0))  # only use 1 block
+NMAN = int(os.environ.get('NMAN', 4))  # number of manipulations to keep
 
 USE_REVERSALS = int(os.environ.get('REV', 0))
 USE_DONE = DEBUG > 0
@@ -33,7 +33,7 @@ USE_DONE = DEBUG > 0
 from nicegui import ui, app
 from nicewebrl import stages
 from nicewebrl.stages import Stage, EnvStage, Block
-from nicewebrl.nicejax import JaxWebEnv, base64_npimage
+from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
 
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
@@ -320,22 +320,7 @@ if GIVE_INSTRUCTIONS:
 ##########################
 # Practice
 ##########################
-maze1 = """
-.#.C...##....
-.#..D...####.
-.######......
-......######.
-.#.#..#......
-.#.#.##..#...
-##.#.#>.###.#
-A..#.##..#...
-.B.#.........
-#####.#..####
-......####.#.
-.######E.#.#.
-........F#...
-""".strip()
-
+maze1 = mazes.maze1
 practice_block = Block(stages=[
     Stage(
         name='Practice phase 1',
@@ -383,11 +368,16 @@ practice_block = Block(stages=[
 if GIVE_INSTRUCTIONS:
     all_blocks.append(practice_block)
 
+###############################################################
+# Manipulations
+###############################################################
+manipulation_groups = []
+reversals = [(False, False), (True, False), (False, True), (True, True)]
+
 ##########################
 # Manipulation 1: Shortcut
 ##########################
-reversals = [(False, False), (True, False), (False, True), (True, True)]
-
+manipulation1_blocks = []
 for reversal in reversals[:2]:
     block_groups, block_char2idx = permute_groups(groups)
     block0 = Block([
@@ -429,15 +419,18 @@ for reversal in reversals[:2]:
     metadata=dict(
         manipulation=1,
         desc="shortcut",
-        long=f"A shortcut is introduced")
-    )
-    all_blocks.append(block0)
-    if SHORT or not USE_REVERSALS: break
+        long=f"A shortcut is introduced",
+        groups=make_serializable(block_groups),
+        char2idx=block_char2idx
+    ))
+    manipulation1_blocks.append(block0)
+    if not USE_REVERSALS: break
+manipulation_groups.append(manipulation1_blocks)
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
 ##########################
-
+manipulation2_blocks = []
 for reversal in reversals[2:]:
     block_groups, block_char2idx = permute_groups(groups)
 
@@ -489,14 +482,18 @@ for reversal in reversals[2:]:
         desc="faster when on-path but further than off-path but closer",
         long=f"""
         In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
-        """))
-    all_blocks.append(block1)
-    if SHORT or not USE_REVERSALS: break
-
+        """,
+        groups=make_serializable(block_groups),
+        char2idx=block_char2idx
+    ))
+    manipulation2_blocks.append(block1)
+    if not USE_REVERSALS: break
+manipulation_groups.append(manipulation2_blocks)
 
 ##########################
 # Manipulation 3: reusing longer of two paths matching training path
 ##########################
+manipulation3_blocks = []
 for reversal in reversals:
     block_groups, block_char2idx = permute_groups(groups)
     block2 = Block([
@@ -539,17 +536,20 @@ for reversal in reversals:
         desc="reusing longer of two paths which matches training path",
         long=f"""
         Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
-        """))
-    if SHORT: break
-    all_blocks.append(block2)
+        """,
+        groups=make_serializable(block_groups),
+        char2idx=block_char2idx
+    ))
+    manipulation3_blocks.append(block2)
     if not USE_REVERSALS: break
-
+manipulation_groups.append(manipulation3_blocks)
 
 ##########################
 # Manipulation 4: Planning Near Goal
 ##########################
 # last option, is full reverse.
 # we built maze6 by doing a full reverse of maze 3. so don't want to re-use it.
+manipulation4_blocks = []
 for reversal in reversals[:-1]:
     block_groups, block_char2idx = permute_groups(groups)
     block3 = Block([
@@ -597,11 +597,18 @@ for reversal in reversals[:-1]:
             long=f"""
             At test time, we'll change the location of the off-task object so it's equidistant from path during training.
             We'll first query when the off-task object is in the same location as during training. We'll then query again with it being in a different locaiton.
-            """
-            ))
-    if SHORT: break
-    all_blocks.append(block3)
+            """,
+            groups=make_serializable(block_groups),
+            char2idx=block_char2idx
+        ))
+    manipulation4_blocks.append(block3)
     if not USE_REVERSALS: break
+manipulation_groups.append(manipulation4_blocks)
+
+# Select the specified number of manipulation groups and flatten
+manipulations = manipulation_groups[:NMAN]
+for manipulation_blocks in manipulations:
+    all_blocks.extend(manipulation_blocks)
 
 all_stages = stages.prepare_blocks(all_blocks)
 

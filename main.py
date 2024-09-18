@@ -171,7 +171,7 @@ async def save_on_new_block():
     if block != prior_block:
        print("-"*10)
        print(f"Saving results from block: `{prior_block}`")
-       asyncio.create_task(save_data(delete_data=False))
+       asyncio.create_task(save_data(final_save=False))
 
 async def load_stage(meta_container, stage_container, button_container):
     """Default behavior for progressing through stages."""
@@ -215,7 +215,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
       print(f"Finished experiment")
 
       # when over, delete user data.
-      await save_data(delete_data=True)
+      await save_data(final_save=True)
       app.storage.user['data_saved'] = True
 
     with meta_container:
@@ -228,7 +228,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
         ui.markdown("#### You may close the browser")
 
 
-async def save_data(delete_data=True):
+async def save_data(final_save=True):
     # Create a Pydantic model from your Tortoise model
     ExperimentDataPydantic = pydantic_model_creator(ExperimentData)
     ExperimentDataPydantic.model_config['from_attributes'] = True
@@ -238,7 +238,8 @@ async def save_data(delete_data=True):
 
     data_dicts = [ExperimentDataPydantic.model_validate(
         data).model_dump() for data in user_experiment_data]
-
+    if final_save:
+       data_dicts.append(dict(finished=True))
     user_seed = app.storage.user['seed']
     user_data_file = f'data/data_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:
@@ -247,7 +248,7 @@ async def save_data(delete_data=True):
     await save_to_gcs(user_data=data_dicts, filename=user_data_file)
 
     # Now delete the data from the database
-    if delete_data:
+    if final_save:
       await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
 
 async def save_to_gcs(user_data, filename):
