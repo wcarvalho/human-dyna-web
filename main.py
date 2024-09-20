@@ -13,6 +13,8 @@ from tortoise import Tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
 import os
 import random
+from datetime import datetime, timedelta
+
 
 import gcs
 import nicewebrl
@@ -163,6 +165,19 @@ async def handle_button_press(*args, button_container, **kwargs):
     app.storage.user['stage_idx'] += 1
     await load_stage(*args, button_container=button_container, **kwargs)
 
+
+async def handle_timer_finished(*args, button_container, **kwargs):
+  if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
+    ui.notify('Please enter fullscreen mode to continue experiment',
+              type='negative')
+    return
+  button_container.clear()
+  stage = get_stage(app.storage.user['stage_idx'])
+  await stage.handle_button_press()
+  if stage.get_user_data('finished', False):
+    app.storage.user['stage_idx'] += 1
+    await load_stage(*args, button_container=button_container, **kwargs)
+
 async def save_on_new_block():
     if app.storage.user['block_idx'] == 0: return
     prior_stage = get_stage(app.storage.user['stage_idx']-1)
@@ -182,6 +197,10 @@ async def load_stage(meta_container, stage_container, button_container):
         return
 
     await save_on_new_block()
+    #########
+    # Activate new stage
+    #########
+    stage_idx = app.storage.user['stage_idx']
     stage = get_stage(app.storage.user['stage_idx'])
     app.storage.user['block_idx'] = get_block_idx(stage)
     app.storage.user['block_progress'] = block_progress()
@@ -190,12 +209,36 @@ async def load_stage(meta_container, stage_container, button_container):
 
     with button_container.style('align-items: center;'):
       button_container.clear()
+      ####################
+      # Button to go to next page
+      ####################
       ui.button('Next page',
                 on_click=lambda: handle_button_press(
                     meta_container=meta_container,
                     stage_container=stage_container,
                     button_container=button_container)
                 ).bind_visibility_from(stage, 'next_button')
+      
+      ####################
+      # Timer
+      ####################
+      if stage.duration:
+        app.storage.user[f'{stage_idx}_end'] = datetime.now() + timedelta(seconds=stage.duration)
+        with ui.element('div').classes('p-2 bg-orange-100'):
+          countdown_label = ui.label(f"Seconds left: {stage.duration}")
+
+          async def update_countdown():
+            remaining = app.storage.user[f'{stage_idx}_end'] - datetime.now()
+            if remaining.total_seconds() <= 0:
+                await handle_timer_finished(
+                    meta_container=meta_container,
+                    stage_container=stage_container,
+                    button_container=button_container)
+            else:
+                countdown_label.set_text(
+                   f"Seconds left: {remaining.seconds:02d}")
+          ui.timer(0.1, update_countdown)
+
 
 
 async def finish_experiment(meta_container, stage_container, button_container):
@@ -209,22 +252,38 @@ async def finish_experiment(meta_container, stage_container, button_container):
       # in case called multiple times
       return
 
-    app.storage.user['experiment_finished'] = True
+    #########################
+    # Save data
+    #########################
+    async def submit(feedback):
+      app.storage.user['experiment_finished'] = True
+      with meta_container:
+        meta_container.clear()
+        ui.markdown(f"## Saving data. Please wait")
+        ui.markdown(
+          "**Once the data is uploaded, this app will automatically move to the next screen**")
+
+      # wait 5 seconds to make sure data from stages are saved
+      await asyncio.sleep(5)
+      # when over, delete user data.
+      await save_data(final_save=True, feedback=feedback)
+      app.storage.user['data_saved'] = True
+
+
     app.storage.user['data_saved'] = app.storage.user.get(
         'data_saved', False)
     if not app.storage.user['data_saved']:
       with meta_container:
         meta_container.clear()
-        ui.markdown(f"## Saving data. Please wait")
-        ui.markdown(
-           "**Once the data is uploaded, this app will automatically move to the next screen**")
+        ui.markdown("Please provide feedback on the experiment here. For example, please describe if anything went wrong or if you have any suggestions for the experiment.")
+        text = ui.textarea().style('width: 80%;')  # Set width to 80% of the container
+        button = ui.button("Submit")
+        await button.clicked()
+        await submit(text.value)
 
-      # wait 5 seconds to make sure data from stages are saved
-      await asyncio.sleep(5)
-      # when over, delete user data.
-      await save_data(final_save=True)
-      app.storage.user['data_saved'] = True
-
+    #########################
+    # Final screen
+    #########################
     with meta_container:
         meta_container.clear()
         ui.markdown("# Experiment over")
@@ -235,7 +294,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
         ui.markdown("#### You may close the browser")
 
 
-async def save_data(final_save=True):
+async def save_data(final_save=True, feedback=None):
     # Create a Pydantic model from your Tortoise model
     ExperimentDataPydantic = pydantic_model_creator(ExperimentData)
     ExperimentDataPydantic.model_config['from_attributes'] = True
@@ -247,7 +306,10 @@ async def save_data(final_save=True):
         data).model_dump() for data in user_experiment_data]
 
     if final_save:
-      data_dicts.append(dict(finished=True))
+      data_dicts.append(dict(
+         finished=True,
+         feedback=feedback,
+         ))
     user_seed = app.storage.user['seed']
     user_data_file = f'data/data_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:
