@@ -36,9 +36,9 @@ if EXPERIMENT == 0:
 elif EXPERIMENT == 1:
   import experiment_1 as experiment
   APP_TITLE = 'Human Dyna 1'
-#elif EXPERIMENT == 2:
-#  import experiment_2 as experiment
-#  APP_TITLE = 'Human Dyna 2'
+elif EXPERIMENT == 2:
+  import experiment_2 as experiment
+  APP_TITLE = 'Dyna 2'
 else:
    raise NotImplementedError
 all_stages = experiment.all_stages
@@ -445,7 +445,7 @@ async def index(request: Request):
         ui.add_body_html('<script>' + f.read() + '</script>')
 
     card = ui.card(align_items=['center']).classes('fixed-center').style(
-        'max-width: 90vw;'
+        f'max-width: 90vh;'
         'max-height: 90vh;'
         'overflow: auto;'
         'justify-content: center;'
