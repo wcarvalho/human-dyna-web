@@ -232,9 +232,12 @@ async def load_stage(meta_container, stage_container, button_container):
       # Timer
       ####################
       if stage.duration:
-        default_end = datetime.now() + timedelta(seconds=stage.duration)
+        # get ending
+        default_end_time = datetime.now() + timedelta(seconds=stage.duration)
+
+        # either re-use stored end time, or if none, use end time above
         app.storage.user[f'{stage_idx}_end'] = app.storage.user.get(
-           f'{stage_idx}_end', default_end)
+           f'{stage_idx}_end', default_end_time)
         with ui.element('div').classes('p-2 bg-orange-100'):
           countdown_label = ui.label(f"Seconds left: {stage.duration}")
 
