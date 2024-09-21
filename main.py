@@ -127,7 +127,9 @@ async def start_experiment(
       stage_container,
       button_container):
   if DEBUG == 0:
-    ui.run_javascript('document.documentElement.requestFullscreen()')
+    ui.run_javascript(
+       'document.documentElement.requestFullscreen()',
+       timeout=10)
   app.storage.user['experiment_started'] = True
 
   if app.storage.user.get('experiment_finished', False):
@@ -173,7 +175,14 @@ async def handle_timer_finished(*args, button_container, **kwargs):
     return
   button_container.clear()
   stage = get_stage(app.storage.user['stage_idx'])
-  await stage.handle_button_press()
+  notification = ui.notification(
+      'The timer has run out.',
+      position='center', type='info')
+  await stage.finish_stage()
+  with button_container:
+    button = ui.button("click to continue")
+    await button.clicked()
+    notification.dismiss()
   if stage.get_user_data('finished', False):
     app.storage.user['stage_idx'] += 1
     await load_stage(*args, button_container=button_container, **kwargs)
