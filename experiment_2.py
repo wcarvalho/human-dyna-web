@@ -62,7 +62,7 @@ from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
 num_rooms = 2
 
 
-min_success_task = 10
+min_success_task = 8
 min_success_train = min_success_task*num_rooms
 max_episodes_train = 30*num_rooms
 if DEBUG == 0:
@@ -195,7 +195,7 @@ def stage_display_fn(stage, container):
         ui.markdown(f"{remove_extra_spaces(stage.body)}",
                     extras=['cuddled-lists'])
         
-        ui.markdown(f"#### Below are the objects that will define tasks")
+        ui.markdown(f"##### Task objects will be selected from the following set")
         idxs = char2idx.values()
         width = 1
         figsize = (len(idxs)*width, width)
@@ -420,7 +420,7 @@ for reversal in reversals:
         Stage(
             name='Phase 1',
             body=f"""
-            Please learn to obtain the objects. You need to succeed {min_success_task} times per object.
+            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
             If you retrieve the wrong object, the episode terminates early.
             """,
@@ -474,7 +474,7 @@ for reversal in reversals:
         Stage(
             name='Phase 1',
             body=f"""
-            Please learn to obtain the objects. You need to succeed {min_success_task} times per object.
+            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
             If you retrieve the wrong object, the episode terminates early.
             """,
@@ -537,7 +537,7 @@ for reversal in reversals:
         Stage(
             name='Phase 1',
             body=f"""
-            Please learn to obtain the objects. You need to succeed {min_success_task} times per object.
+            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
             If you retrieve the wrong object, the episode terminates early.
             """,
