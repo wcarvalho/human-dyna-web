@@ -4,13 +4,13 @@ Please carefully read this consent agreement before deciding whether to particip
 
 **What you will do in this research:** You will move around a virtual maze, navigating to different locations on screen to retrieve different objects. The task is simple and you will be provided with clear instructions.
 
-**Time required:** This experiment will take about 15 minutes to complete.
+**Time required:** about 30 minutes.
 
 **Risks:** There are no anticipated risks associated with participating in this study. The effects of participating should be comparable to those you would experience from viewing a computer monitor, clicking with the mouse, and pressing buttons on the keyboard for the duration of the experiment.
 
 **Benefits:** The study provides important information about the nature of learning and decision making.
 
-**Compensation:** You will receive $2$ base pay for completing the experiment + a bonus of $1-3 based on your performance ($2$ on average).
+**Compensation:** You will receive $4 base pay for completing the experiment + a bonus of $0-3 based on your performance ($2 on average).
 
 **Confidentiality:** Your participation in this study will remain confidential. No personally identifiable information will be associated with your data. Your de-identified data may be shared with other researchers and used in future projects.
 
@@ -23,6 +23,6 @@ Whom to contact about your rights in this research: For questions, concerns, sug
 
 **Agreement:** The nature and purpose of this research have been sufficiently explained and I agree to participate in this study. I understand that I am free to withdraw at any time without incurring any penalty.
 
-<p style="color: red;"><strong>Please note that the session will be restarted if you leave this webpage for more than FIVE (5) minutes.</strong></p>
+<p style="color: red;"><strong>Please close other tabs to improve the connection. Note that the session will be restarted if you leave this webpage for more than FIVE (5) minutes.</strong></p>
 
 Please consent by checking the box, then click the button to continue. Otherwise, please exit the study at this time.

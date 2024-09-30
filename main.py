@@ -21,6 +21,7 @@ import nicewebrl
 from nicewebrl.stages import ExperimentData
 
 from google.auth.exceptions import TransportError
+from load_data import get_block_stage_description, dict_to_string
 
 load_dotenv()
 
@@ -253,8 +254,6 @@ async def load_stage(meta_container, stage_container, button_container):
                    f"Seconds left: {remaining.seconds:02d}")
           ui.timer(0.1, update_countdown)
 
-
-
 async def finish_experiment(meta_container, stage_container, button_container):
     meta_container.clear()
     stage_container.clear()
@@ -262,7 +261,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
 
     experiment_finished = app.storage.user.get('experiment_finished', False)
 
-    if experiment_finished:
+    if experiment_finished and not DEBUG:
       # in case called multiple times
       return
 
@@ -278,7 +277,8 @@ async def finish_experiment(meta_container, stage_container, button_container):
           "**Once the data is uploaded, this app will automatically move to the next screen**")
 
       # wait 5 seconds to make sure data from stages are saved
-      await asyncio.sleep(5)
+      if not DEBUG:
+        await asyncio.sleep(5)
       # when over, delete user data.
       await save_data(final_save=True, feedback=feedback)
       app.storage.user['data_saved'] = True
@@ -300,15 +300,49 @@ async def finish_experiment(meta_container, stage_container, button_container):
     #########################
     with meta_container:
         meta_container.clear()
+
         ui.markdown("# Experiment over")
         ui.markdown("## Data saved")
         ui.markdown("### Please record the following code which you will need to provide for compensation")
         ui.markdown(
-            '### "gershman_dyna"')
+            f'### "gershman_dyna"')
         ui.markdown("#### You may close the browser")
 
+async def compute_bonus(data_dicts):
 
-async def save_data(final_save=True, feedback=None):
+    train_successes = 0
+    train_episodes = 0
+    eval_successes = 0
+    eval_episodes = 0
+    keys = set()
+    for datum in data_dicts[::-1]:
+       info = get_block_stage_description(datum)
+       desc = dict_to_string(info)
+       if 'practice' in datum['metadata']['block_metadata']['desc']:
+          continue
+       if desc not in keys:
+          keys.add(desc)
+          if datum['metadata']['eval']:
+            eval_successes += datum['metadata']['nsuccesses']
+            eval_episodes += datum['metadata']['episode_idx']
+          else:
+            train_successes += datum['metadata']['nsuccesses']
+            train_episodes += datum['metadata']['episode_idx']
+    #train_sr = (train_successes / max(1, train_episodes))
+    eval_sr = (eval_successes / max(1, eval_episodes))
+    #train_sr = train_sr*(train_sr > .5)
+    #train_bonus = 1*train_sr  # bounded between 0 and 1
+    #eval_bonus = eval_sr*(train_sr > .5)
+    if eval_sr < .25:
+       return 0
+    elif eval_sr < .5:
+       return 1
+    elif eval_sr < .75:
+       return 2
+    else:
+       return 3
+
+async def save_data(final_save=True, feedback=None, **kwargs):
     # Create a Pydantic model from your Tortoise model
     ExperimentDataPydantic = pydantic_model_creator(ExperimentData)
     ExperimentDataPydantic.model_config['from_attributes'] = True
@@ -320,9 +354,12 @@ async def save_data(final_save=True, feedback=None):
         data).model_dump() for data in user_experiment_data]
 
     if final_save:
+      bonus = await compute_bonus(data_dicts)
       data_dicts.append(dict(
          finished=True,
          feedback=feedback,
+         bonus=bonus,
+         **kwargs,
          ))
     user_seed = app.storage.user['seed']
     user_data_file = f'data/data_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json'
@@ -459,12 +496,14 @@ async def index(request: Request):
         ui.add_body_html('<script>' + f.read() + '</script>')
 
     card = ui.card(align_items=['center']).classes('fixed-center').style(
-        f'max-width: 90vh;'
-        'max-height: 90vh;'
-        'overflow: auto;'
-        'justify-content: center;'
+        'max-width: 90vw;'  # Set the max width of the card
+        'max-height: 90vh;'  # Ensure the max height is 90% of the viewport height
+        'overflow: auto;'  # Allow scrolling inside the card if content overflows
+        'display: flex;'  # Use flexbox for centering
+        'flex-direction: column;'  # Stack content vertically
+        'justify-content: flex-start;'
         'align-items: center;'
-        )
+    )
     with card:
       episode_limit = 120
       ui.timer(

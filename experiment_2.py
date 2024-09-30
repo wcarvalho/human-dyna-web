@@ -28,7 +28,7 @@ NMAN = int(os.environ.get('NMAN', 3))  # number of manipulations to keep
 
 USE_REVERSALS = int(os.environ.get('REV', 0))
 EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
-TIMER = int(os.environ.get('TIMER', 30))
+TIMER = int(os.environ.get('TIMER', 60))
 USE_DONE = DEBUG > 0
 
 def remove_extra_spaces(text):
@@ -38,7 +38,7 @@ def remove_extra_spaces(text):
 timer_text = ""
 eval_objects_text = ""
 if TIMER > 0:
-    timer_text = f"* You will have a time-limit of {TIMER} seconds, so you'll want to re-use knowledge from phase 1 as best you can."
+    timer_text = f"* You will have a time-limit of {TIMER} seconds"
 if EVAL_OBJECTS == 0:
     eval_objects_text = "* The object identities will not be visible on the map, so you'll need to learn where they are in phase 1."
 
@@ -46,7 +46,7 @@ if timer_text or eval_objects_text:
     phase_2_text = f"""
 **Note that in phase 2:**
 
-* You will only have 1 try to obtain the goal object.
+* You will only have 1 try.
 {eval_objects_text}
 {timer_text}
 """.strip()
@@ -244,19 +244,26 @@ async def env_reset_display_fn(
         button = ui.button("click to start")
         await button.clicked()
 
-
 def env_stage_display_fn(
         stage,
         container,
         timestep):
-    image = stage.render_fn(timestep)
-    image = base64_npimage(image)
-    category = keys[timestep.state.task_object]
+    state_image = stage.render_fn(timestep)
+    state_image = base64_npimage(state_image)
+    #category = keys[timestep.state.task_object]
+
+    object_image = image_data['images'][timestep.state.task_object]
 
     stage_state = stage.get_user_data('stage_state')
     with container.style('align-items: center;'):
         container.clear()
-        ui.markdown(f"#### Goal object: {category}")
+        #ui.markdown(f"#### Goal object: {category}")
+        with ui.matplotlib(figsize=(1,1)).figure as fig:
+            ax = fig.subplots(1, 1)
+            ax.set_title(f"Goal")
+            ax.imshow(object_image)
+            ax.axis('off')
+            fig.tight_layout()
         if DEBUG:
             ui.markdown(debug_info(stage))
         with ui.row():
@@ -270,7 +277,7 @@ def env_stage_display_fn(
 
         text = f"You must complete at least {stage.min_success} episodes. You have {stage.max_episodes} tries."
         ui.html(text).style('align-items: center;')
-        ui.html(make_image_html(src=image))
+        ui.html(make_image_html(src=state_image))
 
 
 def make_env_stage(
@@ -342,11 +349,9 @@ instruct_block = Block([
     Stage(
         name='Experiment instructions',
         body=f"""
-This experiment tests how well people can reuse their knowledge across related tasks. You'll control a red triangle in a maze. Individial tasks will consist of navigating to objects.
+This experiment tests how people solve new tasks. You'll control a red triangle in a maze. Individual tasks will consist of navigating to objects.
 
-In this experiment, you'll go through a series of blocks, where each block will have two phases. 
-* In the phase 1, you'll learn (a) how to obtain different objects and (b) the general layout of the maze. 
-* In the phase 2, you'll be able to reuse what you learned in phase 1 to more easily obtain other objects. 
+The experiment will consist blocks, each with two phases. In the first phase, you'll learn how to navigate to objects. In the second hase, we will will ask you to navigate to different objects.
 
 {phase_2_text}
 """,
@@ -437,7 +442,7 @@ for reversal in reversals:
         Stage(
             name='Phase 2',
             body=f"""
-        Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
+        Your performance here will count towards your bonus payment. Go as fast as you can.
 
         {phase_2_text}
 
