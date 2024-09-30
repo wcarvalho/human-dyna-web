@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 import gcs
 import nicewebrl
 from nicewebrl.stages import ExperimentData
+from nicewebrl.utils import wait_for_button_or_keypress
 
 from google.auth.exceptions import TransportError
 from load_data import get_block_stage_description, dict_to_string
@@ -220,16 +221,6 @@ async def load_stage(meta_container, stage_container, button_container):
     with button_container.style('align-items: center;'):
       button_container.clear()
       ####################
-      # Button to go to next page
-      ####################
-      ui.button('Next page',
-                on_click=lambda: handle_button_press(
-                    meta_container=meta_container,
-                    stage_container=stage_container,
-                    button_container=button_container)
-                ).bind_visibility_from(stage, 'next_button')
-      
-      ####################
       # Timer
       ####################
       if stage.duration:
@@ -238,7 +229,7 @@ async def load_stage(meta_container, stage_container, button_container):
 
         # either re-use stored end time, or if none, use end time above
         app.storage.user[f'{stage_idx}_end'] = app.storage.user.get(
-           f'{stage_idx}_end', default_end_time)
+            f'{stage_idx}_end', default_end_time)
         with ui.element('div').classes('p-2 bg-orange-100'):
           countdown_label = ui.label(f"Seconds left: {stage.duration}")
 
@@ -251,8 +242,19 @@ async def load_stage(meta_container, stage_container, button_container):
                     button_container=button_container)
             else:
                 countdown_label.set_text(
-                   f"Seconds left: {remaining.seconds:02d}")
+                    f"Seconds left: {remaining.seconds:02d}")
           ui.timer(0.1, update_countdown)
+
+      ####################
+      # Button to go to next page
+      ####################
+      button = ui.button('Next page').bind_visibility_from(stage, 'next_button')
+      if stage.next_button:
+        await wait_for_button_or_keypress(button)
+        await handle_button_press(
+                    meta_container=meta_container,
+                    stage_container=stage_container,
+                    button_container=button_container)
 
 async def finish_experiment(meta_container, stage_container, button_container):
     meta_container.clear()

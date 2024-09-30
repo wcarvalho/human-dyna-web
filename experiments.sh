@@ -7,28 +7,28 @@ rm -r data .nicegui;
 # evaluate objects ARE visible
 ##########################################
 # debugging command to test
-rm -r data/*r0-exp2-obj1-v0* .nicegui; INST=0 DEBUG=1 NMAN=2 EXP=2 REV=0 EVAL_OBJECTS=1 NAME='r0-exp2-obj1-v0' SEED=44 python main.py
+rm -r data/*r0-exp2-obj1-v1* .nicegui; INST=0 DEBUG=1 NMAN=1 EXP=2 REV=0 EVAL_OBJECTS=1 NAME='r0-exp2-obj1-v1' SEED=44 python main.py
 
 # create the config for putting this online
 flyctl launch \
 --dockerfile Dockerfile \
---name human-dyna-r0-exp2-obj1-v0 \
---config configs/human-dyna-r0-exp2-obj1-v0.toml \
+--name human-dyna-r0-exp2-obj1-v1 \
+--config configs/human-dyna-r0-exp2-obj1-v1.toml \
 --env EXP=2 \
 --env EVAL_OBJECTS=1 \
 --env REV=0 \
---env NAME='r0-exp2-obj1-v0' \
+--env NAME='r0-exp2-obj1-v1' \
 --vm-size 'shared-cpu-4x'
 
 
 # launch the website
-flyctl deploy --config configs/human-dyna-r0-exp2-obj1-v0.toml
+flyctl deploy --config configs/human-dyna-r0-exp2-obj1-v1.toml
 
 # set maximum to 5 machines running
-flyctl scale count 5 --config configs/human-dyna-r0-exp2-obj1-v0.toml
+flyctl scale count 5 --config configs/human-dyna-r0-exp2-obj1-v1.toml
 
 # to display status
-flyctl logs --config configs/human-dyna-r0-exp2-obj1-v0.toml
+flyctl logs --config configs/human-dyna-r0-exp2-obj1-v1.toml
 
 
 ########################################################

@@ -3,7 +3,7 @@ from functools import partial
 
 from skimage.transform import resize
 import matplotlib.pyplot as plt
-
+import asyncio
 from housemaze import renderer
 from housemaze.env import KeyboardActions
 from housemaze.human_dyna import utils
@@ -19,6 +19,14 @@ from flax import struct
 from dotenv import load_dotenv
 import os
 from experiment_utils import SuccessTrackingAutoResetWrapper
+
+
+from nicegui import ui, app
+from nicewebrl import stages
+from nicewebrl.stages import Stage, EnvStage, Block
+from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
+from nicewebrl.utils import wait_for_button_or_keypress
+
 
 load_dotenv()
 
@@ -52,11 +60,6 @@ if timer_text or eval_objects_text:
 """.strip()
 else:
     phase_2_text = "Note that in phase 2, you will only have 1 try"
-
-from nicegui import ui, app
-from nicewebrl import stages
-from nicewebrl.stages import Stage, EnvStage, Block
-from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
 
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
@@ -242,7 +245,7 @@ async def env_reset_display_fn(
             ui.markdown(debug_info(stage))
         ui.html(make_image_html(src=image))
         button = ui.button("click to start")
-        await button.clicked()
+        await wait_for_button_or_keypress(button)
 
 def env_stage_display_fn(
         stage,
@@ -327,7 +330,7 @@ def make_env_stage(
           ),
         render_fn=render_fn,
         vmap_render_fn=vmap_render_fn,
-        reset_display_fn=env_reset_display_fn,
+        #reset_display_fn=env_reset_display_fn,
         display_fn=env_stage_display_fn,
         evaluate_success_fn=lambda t: int(t.reward > .5),
         check_finished=lambda t: t.finished,
