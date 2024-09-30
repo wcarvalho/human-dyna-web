@@ -193,4 +193,11 @@ cython_debug/
 #.idea/
 
 # ignore raw data folder
-data_raw
+data_raw/
+
+# keys folder
+keys/
+
+# .DS_Store
+.DS_Store
+*DS_Store
