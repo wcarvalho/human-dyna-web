@@ -443,9 +443,13 @@ def footer(card):
         'Toggle fullscreen', icon='fullscreen',
         on_click=nicewebrl.utils.toggle_fullscreen).props('flat')
 
-def initalize_user():
+
+def initalize_user(user_info):
 
   nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
+
+  app.storage.user['user_id'] = user_info['worker_id'] or app.storage.user['seed']
+
   print(f"Initialized user: {app.storage.user['seed']}")
   app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
   app.storage.user['block_idx'] = app.storage.user.get('block_idx', 0)
@@ -459,9 +463,9 @@ def initalize_user():
   if not stage_order:
     init_rng_key = jnp.array(
         app.storage.user['init_rng_key'], dtype=jnp.uint32)
+
     # example block order
     # [e.g., 0, 1, 3, 2]
-
     block_order, stage_order = experiment.generate_block_stage_order(init_rng_key)
     block_order_to_idx = {str(i): int(idx) for idx, i in enumerate(block_order)}
 
@@ -472,19 +476,19 @@ def initalize_user():
 
 @ui.page('/')
 async def index(request: Request):
-    initalize_user()
+    user_info = dict(
+        worker_id=request.query_params.get('workerId', None),
+        hit_id=request.query_params.get('hitId', None),
+        assignment_id=request.query_params.get(
+            'assignmentId', None)
+    )
+    initalize_user(user_info)
     ui.on('ping', lambda e: print(e.args))
 
     ui.run_javascript(f'window.debug = {DEBUG}')
     ################
     # Get user data and save to GCS
     ################
-    user_info = dict(
-        worker_id=request.query_params.get('workerId', 'default_worker'),
-        hit_id=request.query_params.get('hitId', 'default_hit'),
-        assignment_id=request.query_params.get(
-            'assignmentId', 'default_assignment')
-    )
     user_seed = app.storage.user['seed']
     await save_to_gcs(
         user_data=user_info,

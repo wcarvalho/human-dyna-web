@@ -7,29 +7,31 @@ rm -r data .nicegui;
 # evaluate objects ARE visible
 ##########################################
 # debugging command to test
-rm -r data/*r0-exp2-obj1-v1* .nicegui; INST=0 DEBUG=1 NMAN=1 EXP=2 REV=0 EVAL_OBJECTS=1 NAME='r0-exp2-obj1-v1' SEED=44 python main.py
+rm -r data/*r0-exp2-obj1-v2* .nicegui; INST=0 DEBUG=1 NMAN=1 EXP=2 REV=0 EVAL_OBJECTS=1 NAME='r0-exp2-obj1-v2' SEED=44 python main.py
 
 # create the config for putting this online
 flyctl launch \
 --dockerfile Dockerfile \
---name human-dyna-r0-exp2-obj1-v1 \
---config configs/human-dyna-r0-exp2-obj1-v1.toml \
+--name human-dyna-r0-exp2-obj1-v2 \
+--config configs/human-dyna-r0-exp2-obj1-v2.toml \
 --env EXP=2 \
 --env EVAL_OBJECTS=1 \
 --env REV=0 \
---env NAME='r0-exp2-obj1-v1' \
+--env NAME='r0-exp2-obj1-v2' \
 --vm-size 'shared-cpu-4x'
 
 
 # launch the website
-flyctl deploy --config configs/human-dyna-r0-exp2-obj1-v1.toml
+flyctl deploy --config configs/human-dyna-r0-exp2-obj1-v2.toml
 
-# set maximum to 5 machines running
-flyctl scale count 5 --config configs/human-dyna-r0-exp2-obj1-v1.toml
+# add machine for each retgion
+flyctl scale count 4 --config configs/human-dyna-r0-exp2-obj1-v2.toml --region iad,sea,lax,den
 
 # to display status
-flyctl logs --config configs/human-dyna-r0-exp2-obj1-v1.toml
+flyctl logs --config configs/human-dyna-r0-exp2-obj1-v2.toml
 
+# see machines
+flyctl scale show --config configs/human-dyna-r0-exp2-obj1-v2.toml
 
 ########################################################
 # Experiment 1
@@ -42,7 +44,7 @@ rm -r data .nicegui; INST=0 DEBUG=1 NMAN=1 EXP=1 NAME='r0-v2' REV=0 SEED=44 pyth
 flyctl launch \
 --dockerfile Dockerfile \
 --name human-dyna-r0-v2 \
---config configs/human-dyna-r0-v2.toml \
+--config configs/human-dyna-r0-v3.toml \
 --env EXP=1 \
 --env REV=0 \
 --env NAME='r0-v2' \
@@ -50,13 +52,13 @@ flyctl launch \
 
 
 # launch the website
-flyctl deploy --config configs/human-dyna-r0-v2.toml
+flyctl deploy --config configs/human-dyna-r0-v3.toml
 
 # set maximum to 5 machines running
-flyctl scale count 5 --config configs/human-dyna-r0-v2.toml
+flyctl scale count 5 --config configs/human-dyna-r0-v3.toml
 
 # to display status
-flyctl logs --config configs/human-dyna-r0-v2.toml
+flyctl logs --config configs/human-dyna-r0-v3.toml
 
 ##########################################
 # Experiment 1

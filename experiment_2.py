@@ -135,6 +135,7 @@ def make_params(maze_str, groups, char2idx, randomize_agent: bool = False):
       make_env_params=True,
       randomize_agent=randomize_agent,
   ).replace(
+      time_limit=10_000_000,
       terminate_with_done=jnp.array(2) if USE_DONE else jnp.array(0))
 
 
@@ -226,6 +227,7 @@ def debug_info(stage):
     debug_info = f"**Manipulation**: {stage.metadata['block_metadata'].get('manipulation')}. "
     debug_info += f"**Episode** idx: {stage_state.nepisodes}. "
     debug_info += f"**Eval**: {stage.metadata['eval']}. "
+    debug_info += f"**Step**: {stage_state.nsteps}/{stage.env_params.time_limit}. "
     return debug_info
 
 async def env_reset_display_fn(
@@ -245,7 +247,8 @@ async def env_reset_display_fn(
             ui.markdown(debug_info(stage))
         ui.html(make_image_html(src=image))
         button = ui.button("click to start")
-        await wait_for_button_or_keypress(button)
+        await wait_for_button_or_keypress(
+            button, ignore_recent_press=True)
 
 def env_stage_display_fn(
         stage,
@@ -330,7 +333,7 @@ def make_env_stage(
           ),
         render_fn=render_fn,
         vmap_render_fn=vmap_render_fn,
-        #reset_display_fn=env_reset_display_fn,
+        reset_display_fn=env_reset_display_fn,
         display_fn=env_stage_display_fn,
         evaluate_success_fn=lambda t: int(t.reward > .5),
         check_finished=lambda t: t.finished,
@@ -339,7 +342,7 @@ def make_env_stage(
         min_success=min_success,
         metadata=metadata,
         duration=TIMER if eval else None,
-        notify_success=True if training else False,
+        notify_success=True,
     )
 
 
