@@ -1,6 +1,7 @@
 from typing import List
 from functools import partial
 
+import ipdb.stdout
 from skimage.transform import resize
 import matplotlib.pyplot as plt
 import asyncio
@@ -23,10 +24,11 @@ from experiment_utils import SuccessTrackingAutoResetWrapper
 
 from nicegui import ui, app
 from nicewebrl import stages
-from nicewebrl.stages import Stage, EnvStage, Block
+from nicewebrl.stages import Stage, EnvStage, Block, FeedbackStage
+from nicewebrl.stages import ExperimentData
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
 from nicewebrl.utils import wait_for_button_or_keypress
-
+from nicewebrl import nicejax
 
 load_dotenv()
 
@@ -184,6 +186,25 @@ eval_vmap_render_fn = web_env.precompile_vmap_render_fn(
     eval_render_fn, dummy_env_params)
 
 
+def went_to_junction(timestep, junction):
+    position = timestep.state.agent_pos
+    print(f'position={position}, junction={junction}')
+    match = np.array(junction) == position
+    match = match.sum(-1) == 2  # both x and y matches
+    return match.any()
+
+
+def manip1_data_fn(timestep):
+  old_path = went_to_junction(timestep, junction=(2, 14))
+  return {
+      'old_path': old_path,
+      }
+
+def manip3_data_fn(timestep):
+  return {
+      'old_path': went_to_junction(timestep, junction=(14, 25)),
+      'new_path': went_to_junction(timestep, junction=(3, 11))}
+
 @struct.dataclass
 class EnvStageState:
     timestep: maze.TimeStep = None
@@ -199,15 +220,27 @@ def stage_display_fn(stage, container):
         ui.markdown(f"{remove_extra_spaces(stage.body)}",
                     extras=['cuddled-lists'])
         
-        ui.markdown(f"##### Task objects will be selected from the following set")
-        idxs = char2idx.values()
+        ui.markdown("Task objects will be selected from the set below.")
+        ui.markdown("**We display how much objects will be worth in phase 2**")
+        #phase 2 reward
+        #idxs = char2idx.values()
+        groups = stage.metadata['block_metadata'].get('groups', None)
+        cats = groups[0] + groups[1]
+        eval_prices = [1, 0, 0, 0]
+        key = nicejax.new_rng()
+        order = jax.random.permutation(
+            key, jnp.arange(len(cats)))
+
         width = 1
-        figsize = (len(idxs)*width, width)
+        figsize = (len(cats)*width, width)
         with ui.matplotlib(figsize=figsize).figure as fig:
-            axs = fig.subplots(1, len(idxs))
-            for i, idx in enumerate(idxs):
-                axs[i].imshow(image_data['images'][idx])
-                axs[i].set_title(keys[idx])
+            axs = fig.subplots(1, len(order))
+            for i, idx in enumerate(order):
+                cat = cats[idx]
+                axs[i].imshow(image_data['images'][cat])
+                axs[i].set_title(
+                    f'{keys[cat]}: {eval_prices[idx]}' if eval_prices[idx] == 0 else f'{keys[cat]}: {eval_prices[idx]}',
+                    fontsize=10, color='green' if eval_prices[idx] != 0 else 'black')
                 axs[i].set_xticks([])
                 axs[i].set_yticks([])
                 axs[i].axis("off")
@@ -298,6 +331,8 @@ def make_env_stage(
         randomize_agent: bool = True,
         render_fn=None,
         vmap_render_fn=None,
+        custom_data_fn=None,
+        name='stage',
         ):
     metadata = metadata or {}
     eval = not training
@@ -313,6 +348,7 @@ def make_env_stage(
     if vmap_render_fn is None:
         vmap_render_fn = train_vmap_render_fn if training else eval_vmap_render_fn
     
+
     return EnvStage(
         web_env=web_env,
         action_to_key=action_to_key,
@@ -341,8 +377,10 @@ def make_env_stage(
         max_episodes=max_episodes,
         min_success=min_success,
         metadata=metadata,
+        custom_data_fn=custom_data_fn,
         duration=TIMER if eval else None,
         notify_success=True,
+        name=name,
     )
 
 
@@ -390,7 +428,8 @@ Press the button when you're ready to continue.
         char2idx=char2idx,
         force_room=True,
         training=True,
-        metadata={'maze': 'big_practice_maze'}),
+        metadata={'maze': 'big_practice_maze'},
+        name='big_practice_maze'),
     Stage(
         name='Practice phase 2',
         body=f"""
@@ -410,7 +449,8 @@ Press the button when you're ready to continue.
         char2idx=char2idx,
         force_room=True,
         training=False,
-        metadata={'maze': 'big_practice_maze'}),
+        metadata={'maze': 'big_practice_maze'},
+        name='big_practice_maze'),
 ], metadata=dict(desc="practice"))
 if GIVE_INSTRUCTIONS:
     all_blocks.append(practice_block)
@@ -433,7 +473,7 @@ for reversal in reversals:
             body=f"""
             Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
-            If you retrieve the wrong object, the episode terminates early.
+            If you retrieve the wrong object, the episode ends early.
             """,
             display_fn=stage_display_fn,
         ),
@@ -444,7 +484,8 @@ for reversal in reversals:
             max_episodes=max_episodes_train,
             groups=block_groups,
             char2idx=block_char2idx,
-            training=True),
+            training=True,
+            name='big_m1_maze3'),
         Stage(
             name='Phase 2',
             body=f"""
@@ -460,8 +501,10 @@ for reversal in reversals:
             maze_str=mazes.reverse(mazes.big_m1_maze3_shortcut, *reversal),
             metadata=dict(desc="shortcut", maze="big_m1_maze3_shortcut"),
             min_success=1, max_episodes=1,
+            custom_data_fn=manip1_data_fn,
             groups=block_groups,
-            char2idx=block_char2idx, training=False),
+            char2idx=block_char2idx, training=False,
+            name='big_m1_maze3_shortcut'),
     ],
     metadata=dict(
         manipulation=1,
@@ -487,7 +530,7 @@ for reversal in reversals:
             body=f"""
             Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
-            If you retrieve the wrong object, the episode terminates early.
+            If you retrieve the wrong object, the episode ends early.
             """,
             display_fn=stage_display_fn,
         ),
@@ -497,7 +540,8 @@ for reversal in reversals:
             min_success=min_success_train, 
             max_episodes=max_episodes_train,
             groups=block_groups,
-            char2idx=block_char2idx, training=True),
+            char2idx=block_char2idx, training=True,
+            name='big_m2_maze2'),
         Stage(
             name='Phase 2',
             body=f"""
@@ -513,7 +557,8 @@ for reversal in reversals:
                           maze="big_m2_maze2_offpath"),
             min_success=1, max_episodes=1,
             groups=block_groups,
-            char2idx=block_char2idx, training=False),
+            char2idx=block_char2idx, training=False,
+            name='big_m2_maze2_onpath'),
         make_env_stage(
             maze_str=mazes.reverse(mazes.big_m2_maze2_offpath, *reversal),
             metadata=dict(desc="new location, off-path",
@@ -524,7 +569,7 @@ for reversal in reversals:
             training=False,
             render_fn=train_render_fn,
             vmap_render_fn=train_vmap_render_fn,
-            ),
+            name='big_m2_maze2_offpath'),
     ], metadata=dict(
         manipulation=2,
         desc="faster when on-path but further than off-path but closer",
@@ -550,7 +595,7 @@ for reversal in reversals:
             body=f"""
             Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
-            If you retrieve the wrong object, the episode terminates early.
+            If you retrieve the wrong object, the episode ends early.
             """,
             display_fn=stage_display_fn,
         ),
@@ -561,7 +606,8 @@ for reversal in reversals:
             groups=block_groups,
             char2idx=block_char2idx,
             training=True,
-            metadata={'maze': 'big_m3_maze1'}),
+            metadata={'maze': 'big_m3_maze1'},
+            name='big_m3_maze1'),
         Stage(
             name='Phase 2',
             body=f"""
@@ -578,7 +624,9 @@ for reversal in reversals:
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
-            metadata={'maze': 'big_m3_maze1'}),
+            custom_data_fn=manip3_data_fn,
+            metadata={'maze': 'big_m3_maze1'},
+            name='big_m3_maze1_eval'),
     ], metadata=dict(
         manipulation=3,
         desc="reusing longer of two paths which matches training path",
@@ -592,12 +640,74 @@ for reversal in reversals:
     if not USE_REVERSALS: break
 manipulation_groups.append(manipulation3_blocks)
 
-
 # Select the specified number of manipulation groups and flatten
 manipulations = manipulation_groups[:NMAN]
 for manipulation_blocks in manipulations:
     all_blocks.extend(manipulation_blocks)
 
+
+##########################
+# Feedback Block
+##########################
+async def feedback_display_fn(
+        stage,
+        container,
+        name: str = 'big_m1_maze3_shortcut'):
+    container.clear()
+    user_data = await ExperimentData.filter(
+        session_id=app.storage.browser['id'],
+        name=name,
+    )
+    used_old_path = [d.user_data.get('old_path', False)
+                     for d in user_data]
+    used_old_path = np.array(used_old_path).any()
+
+    if used_old_path is None: 
+        return {'feedback': None}
+
+    if used_old_path:
+        text = f"You used the same path as in Phase 1. Please briefly describe why."
+    else:
+        text = f"You used a different path as in Phase 1. Please briefly describe why."
+    with container.style('align-items: center;'):
+        timestep = user_data[0].data['timestep']
+        timestep = nicejax.deserialize_bytes(maze.TimeStep, timestep)
+        image = render_fn(timestep)
+
+        # Calculate aspect ratio and set figure size
+        height, width = image.shape[:2]
+        aspect_ratio = width / height
+        fig_width = 5
+        fig_height = fig_width / aspect_ratio
+
+        with ui.matplotlib(figsize=(fig_width, fig_height)).figure as fig:
+            ax = fig.subplots(1, 1)
+            ax.imshow(image)
+            ax.axis('off')
+        ui.markdown(f"**{text}**")
+        text = ui.textarea().style('width: 80%;')  # Set width to 80% of the container
+        button = ui.button("Submit")
+        await button.clicked()
+        feedback = text.value
+    return {'feedback': feedback}
+
+feedback_stages = [
+    FeedbackStage(
+        name='maze1_feedback',
+        display_fn=feedback_display_fn,
+        next_button=False,
+    ),
+    FeedbackStage(
+        name='maze3_feedback',
+        display_fn=feedback_display_fn,
+        next_button=False,
+    ),
+]
+feedback_block = Block(
+    stages=feedback_stages,
+    metadata=dict(desc="feedback")
+)
+all_blocks.append(feedback_block)
 all_stages = stages.prepare_blocks(all_blocks)
 
 
@@ -613,9 +723,13 @@ def generate_block_stage_order(rng_key):
     fixed_blocks = jnp.array(fixed_blocks)
 
     # blocks afterward are randomized
-    randomized_blocks = list(all_blocks[offset:])
+    randomized_blocks = list(all_blocks[offset:-1])
     random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + offset
-    block_order = jnp.concatenate([fixed_blocks, random_order]).astype(jnp.int32)
+    block_order = jnp.concatenate([
+        fixed_blocks,  # instruction blocks
+        random_order,  # experiment blocks
+        np.array([len(all_blocks)-1], dtype=np.int32),  # feedback block
+    ]).astype(jnp.int32)
     block_order = block_order.tolist()
 
     stage_order = stages.generate_stage_order(all_blocks, block_order, rng_key)

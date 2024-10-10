@@ -218,11 +218,18 @@ async def load_stage(meta_container, stage_container, button_container):
     with stage_container.style('align-items: center;'):
       await stage.activate(stage_container)
 
+    if stage.get_user_data('finished', False):
+      app.storage.user['stage_idx'] += 1
+      return await load_stage(meta_container, stage_container, button_container)
+
+
     with button_container.style('align-items: center;'):
       button_container.clear()
       ####################
       # Timer
       ####################
+      print(f"stage.name: {stage.name}")
+      print(f"stage.duration: {stage.duration}")
       if stage.duration:
         # get ending
         default_end_time = datetime.now() + timedelta(seconds=stage.duration)
@@ -234,7 +241,10 @@ async def load_stage(meta_container, stage_container, button_container):
           countdown_label = ui.label(f"Seconds left: {stage.duration}")
 
           async def update_countdown():
-            remaining = app.storage.user[f'{stage_idx}_end'] - datetime.now()
+            current_end_time = app.storage.user[f'{stage_idx}_end']
+            if not isinstance(current_end_time, datetime):
+              current_end_time = datetime.fromisoformat(current_end_time)
+            remaining = current_end_time - datetime.now()
             if remaining.total_seconds() <= 0:
                 await handle_timer_finished(
                     meta_container=meta_container,
@@ -318,10 +328,12 @@ async def compute_bonus(data_dicts):
     eval_episodes = 0
     keys = set()
     for datum in data_dicts[::-1]:
-       info = get_block_stage_description(datum)
-       desc = dict_to_string(info)
        if 'practice' in datum['metadata']['block_metadata']['desc']:
           continue
+       if 'feedback' in datum['metadata']['block_metadata']['desc']:
+          continue
+       info = get_block_stage_description(datum)
+       desc = dict_to_string(info)
        if desc not in keys:
           keys.add(desc)
           if datum['metadata']['eval']:
