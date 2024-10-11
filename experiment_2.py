@@ -1,7 +1,6 @@
 from typing import List
 from functools import partial
 
-import ipdb.stdout
 from skimage.transform import resize
 import matplotlib.pyplot as plt
 import asyncio
@@ -38,14 +37,16 @@ NMAN = int(os.environ.get('NMAN', 0))  # number of manipulations to keep
 
 USE_REVERSALS = int(os.environ.get('REV', 0))
 EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
-TIMER = int(os.environ.get('TIMER', 60))
+TIMER = int(os.environ.get('TIMER', 45))
 USE_DONE = DEBUG > 0
 
 def remove_extra_spaces(text):
     """For each line, remove extra space."""
     return "\n".join([i.strip() for i in text.strip().split("\n")])
 
-
+########################################################
+# Experiment Text
+########################################################
 def phase_2_text(time=30):
     timer_text = ""
     eval_objects_text = ""
@@ -63,6 +64,9 @@ def phase_2_text(time=30):
         """.strip()
     else:
         return "Note that in phase 2, you will only have 1 try"
+
+
+########################################################
 
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
@@ -213,6 +217,28 @@ class EnvStageState:
     nsuccesses: int = 0
 
 
+def instruct_display_fn(stage, container):
+    with container.style('align-items: center;'):
+        container.clear()
+        ui.markdown(f"## {stage.name}")
+        ui.markdown(f"{remove_extra_spaces(stage.body)}",
+                    extras=['cuddled-lists'])
+        ui.markdown("Task objects will be selected from the set below.")
+
+        cats = [int(i) for i in char2idx.values()]
+        width = 1
+        figsize = (len(cats)*width, width)
+        with ui.matplotlib(figsize=figsize).figure as fig:
+            axs = fig.subplots(1, len(cats))
+            for i, cat in enumerate(cats):
+                axs[i].imshow(image_data['images'][cat])
+                axs[i].set_title(f'{keys[cat]}')
+                axs[i].set_xticks([])
+                axs[i].set_yticks([])
+                axs[i].axis("off")
+            # Adjust layout
+            fig.tight_layout()
+
 def stage_display_fn(stage, container):
     with container.style('align-items: center;'):
         container.clear()
@@ -221,12 +247,12 @@ def stage_display_fn(stage, container):
                     extras=['cuddled-lists'])
         
         ui.markdown("Task objects will be selected from the set below.")
-        ui.markdown("**We display how much objects will be worth in phase 2**")
+        ui.markdown("**We note objects relevant to phase 2**")
         #phase 2 reward
         #idxs = char2idx.values()
         groups = stage.metadata['block_metadata'].get('groups', None)
         cats = groups[0] + groups[1]
-        eval_prices = [1, 0, 0, 0]
+        eval_prices = [0, 1, 0, 0]
         key = nicejax.new_rng()
         order = jax.random.permutation(
             key, jnp.arange(len(cats)))
@@ -240,7 +266,8 @@ def stage_display_fn(stage, container):
                 axs[i].imshow(image_data['images'][cat])
                 axs[i].set_title(
                     f'{keys[cat]}: {eval_prices[idx]}' if eval_prices[idx] == 0 else f'{keys[cat]}: {eval_prices[idx]}',
-                    fontsize=10, color='green' if eval_prices[idx] != 0 else 'black')
+                    fontsize=10, color='green' if eval_prices[idx] != 0 else 'black',
+                    weight='bold' if eval_prices[idx] != 0 else 'normal')
                 axs[i].set_xticks([])
                 axs[i].set_yticks([])
                 axs[i].axis("off")
@@ -394,15 +421,16 @@ instruct_block = Block([
     Stage(
         name='Experiment instructions',
         body=f"""
-This experiment tests how people solve new tasks. You'll control a red triangle in a maze. Individual tasks will consist of navigating to objects.
+This experiment tests how people navigate maps to objects.
 
-The experiment will consist blocks, each with two phases. In the first phase, you'll learn how to navigate to objects. In the second hase, we will will ask you to navigate to different objects.
+The experiment will consist of blocks with two phases each: one where you navigate to objects, and another where you navigate to other objects.
 
 {phase_2_text()}
 """,
-        display_fn=stage_display_fn,
+        display_fn=instruct_display_fn,
     ),
-])
+],
+metadata=dict(desc="instructions", long="instructions"))
 if GIVE_INSTRUCTIONS:
     all_blocks.append(instruct_block)
 
@@ -423,8 +451,8 @@ practice_block = Block(stages=[
     ),
     make_env_stage(
         maze_str=mazes.big_practice_maze,
-        min_success=num_rooms,
-        max_episodes=5*num_rooms,
+        min_success=3,
+        max_episodes=5,
         groups=groups,
         char2idx=char2idx,
         force_room=True,
@@ -434,7 +462,7 @@ practice_block = Block(stages=[
     Stage(
         name='Practice phase 2',
         body=f"""
-        Here you'll experience the task of getting an object that was nearby one of the training objects.
+        Here you'll get experience navigating to the object indicated originally.
 
         {phase_2_text()}
 
@@ -453,7 +481,11 @@ Press the button when you're ready to continue.
         duration=30 if TIMER else None,
         metadata={'maze': 'big_practice_maze'},
         name='big_practice_maze'),
-], metadata=dict(desc="practice"))
+], metadata=dict(
+    desc="practice",
+    groups=make_serializable(groups),
+    char2idx=jax.tree_map(int, char2idx)
+    ))
 if GIVE_INSTRUCTIONS:
     all_blocks.append(practice_block)
 
@@ -664,8 +696,9 @@ for reversal in reversals:
         ),
         make_env_stage(
             maze_str=mazes.reverse(mazes.big_m4_maze_short, *reversal),
-            min_success=min_success_train,
-            max_episodes=max_episodes_train,
+            min_success=min_success_task,
+            max_episodes=30,
+            force_room=True,
             groups=block_groups,
             char2idx=block_char2idx,
             training=True,
@@ -676,7 +709,7 @@ for reversal in reversals:
             body=f"""
             Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
 
-            {phase_2_text(30)}
+            {phase_2_text(5)}
             """,
             display_fn=stage_display_fn,
         ),
@@ -684,23 +717,26 @@ for reversal in reversals:
             maze_str=mazes.reverse(mazes.big_m4_maze_short_eval_same, *reversal),
             min_success=1,
             max_episodes=1,
-            duration=30 if TIMER else None,
+            duration=5 if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
+            force_room=True,
             metadata={'maze': 'big_m4_maze_short_eval_same'},
             name='big_m4_maze_short_eval_same'),
         make_env_stage(
             maze_str=mazes.reverse(mazes.big_m4_maze_short_eval_diff, *reversal),
             min_success=1,
             max_episodes=1,
-            duration=30 if TIMER else None,
+            duration=5 if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
+            force_room=True,
             metadata={'maze': 'big_m4_maze_short_eval_diff'},
             name='big_m4_maze_short_eval_diff'),
-    ], metadata=dict(
+    ], 
+    metadata=dict(
         manipulation=4,
         setting='short',
         desc="See if faster off train path than planning.",
@@ -733,8 +769,9 @@ for reversal in reversals:
         ),
         make_env_stage(
             maze_str=mazes.reverse(mazes.big_m4_maze_long, *reversal),
-            min_success=min_success_train,
-            max_episodes=max_episodes_train,
+            min_success=min_success_task,
+            max_episodes=30,
+            force_room=True,
             groups=block_groups,
             char2idx=block_char2idx,
             training=True,
@@ -745,7 +782,7 @@ for reversal in reversals:
             body=f"""
             Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
 
-            {phase_2_text(30)}
+            {phase_2_text(15)}
             """,
             display_fn=stage_display_fn,
         ),
@@ -753,20 +790,22 @@ for reversal in reversals:
             maze_str=mazes.reverse(mazes.big_m4_maze_long_eval_same, *reversal),
             min_success=1,
             max_episodes=1,
-            duration=30 if TIMER else None,
+            duration=15 if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
+            force_room=True,
             metadata={'maze': 'big_m4_maze_long_eval_same'},
             name='big_m4_maze_long_eval_same'),
         make_env_stage(
             maze_str=mazes.reverse(mazes.big_m4_maze_long_eval_diff, *reversal),
             min_success=1,
             max_episodes=1,
-            duration=30 if TIMER else None,
+            duration=15 if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
+            force_room=True,
             metadata={'maze': 'big_m4_maze_long_eval_diff'},
             name='big_m4_maze_long_eval_diff'),
     ], metadata=dict(

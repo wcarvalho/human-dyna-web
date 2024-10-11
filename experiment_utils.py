@@ -1,3 +1,4 @@
+
 from nicegui import app
 import jax
 import jax.numpy as jnp
@@ -5,7 +6,6 @@ import numpy as np
 from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import utils
 from housemaze.env import StepType
-
 
 def task_object_mask(objects, possible_task_objects):
     isin = jax.vmap(lambda a, b: a == b, in_axes=(0, None))(
@@ -108,5 +108,4 @@ class SuccessTrackingAutoResetWrapper(utils.AutoResetWrapper):
             lambda: new_timestep
         )
         return new_timestep
-
 

@@ -32,6 +32,7 @@ DEBUG = int(os.environ.get('DEBUG', 0))
 DEBUG_SEED = int(os.environ.get('SEED', 42))
 EXPERIMENT = int(os.environ.get('EXP', 1))
 
+print(f"DEBUG: {DEBUG}")
 if EXPERIMENT == 0:
   import experiment_test as experiment
   APP_TITLE = 'Human Dyna Test'
@@ -41,6 +42,9 @@ elif EXPERIMENT == 1:
 elif EXPERIMENT == 2:
   import experiment_2 as experiment
   APP_TITLE = 'Dyna 2'
+elif EXPERIMENT == 3:
+  import experiment_3 as experiment
+  APP_TITLE = 'Dyna 3'
 else:
    raise NotImplementedError
 all_stages = experiment.all_stages
@@ -130,8 +134,7 @@ async def start_experiment(
       button_container):
   if DEBUG == 0:
     ui.run_javascript(
-       'document.documentElement.requestFullscreen()',
-       timeout=10)
+       'document.documentElement.requestFullscreen()')
   app.storage.user['experiment_started'] = True
 
   if app.storage.user.get('experiment_finished', False):
@@ -143,13 +146,13 @@ async def start_experiment(
   meta_container.clear()
   ui.on('key_pressed', 
         lambda e: handle_key_press(e, meta_container, stage_container, button_container))
-  await load_stage(meta_container, stage_container, button_container)
+  await asyncio.create_task(load_stage(meta_container, stage_container, button_container))
 
 async def handle_key_press(e, meta_container, stage_container, button_container):
   if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
     ui.notify(
        'Please enter fullscreen mode to continue experiment',
-       type='negative', timeout=10)
+       type='negative')
     return
   stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_key_press(e, stage_container)
@@ -166,7 +169,9 @@ async def handle_button_press(*args, button_container, **kwargs):
   stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
+
     app.storage.user['stage_idx'] += 1
+
     await load_stage(*args, button_container=button_container, **kwargs)
 
 
@@ -193,8 +198,10 @@ async def save_on_new_block():
     if app.storage.user['block_idx'] == 0: return
     prior_stage = get_stage(app.storage.user['stage_idx']-1)
     stage = get_stage(app.storage.user['stage_idx'])
-    prior_block = prior_stage.metadata['block_metadata']['desc']
-    block = stage.metadata['block_metadata']['desc']
+    prior_block = prior_stage.metadata['block_metadata'].get('desc', None)
+    block = stage.metadata['block_metadata'].get('desc', None)
+    if block is None or prior_block is None:
+      return
 
     if block != prior_block:
        print("-"*10)
@@ -228,8 +235,6 @@ async def load_stage(meta_container, stage_container, button_container):
       ####################
       # Timer
       ####################
-      print(f"stage.name: {stage.name}")
-      print(f"stage.duration: {stage.duration}")
       if stage.duration:
         # get ending
         default_end_time = datetime.now() + timedelta(seconds=stage.duration)
@@ -241,6 +246,9 @@ async def load_stage(meta_container, stage_container, button_container):
           countdown_label = ui.label(f"Seconds left: {stage.duration}")
 
           async def update_countdown():
+            if stage.get_user_data('finished', False):
+               button_container.clear()
+               return 
             current_end_time = app.storage.user[f'{stage_idx}_end']
             if not isinstance(current_end_time, datetime):
               current_end_time = datetime.fromisoformat(current_end_time)
@@ -328,15 +336,15 @@ async def compute_bonus(data_dicts):
     eval_episodes = 0
     keys = set()
     for datum in data_dicts[::-1]:
-       if 'practice' in datum['metadata']['block_metadata']['desc']:
+       if 'practice' in datum['metadata']['block_metadata'].get('desc', ''):
           continue
-       if 'feedback' in datum['metadata']['block_metadata']['desc']:
+       if 'feedback' in datum['metadata']['block_metadata'].get('desc', ''):
           continue
        info = get_block_stage_description(datum)
        desc = dict_to_string(info)
        if desc not in keys:
           keys.add(desc)
-          if datum['metadata']['eval']:
+          if datum['metadata'].get('eval', False):
             eval_successes += datum['metadata']['nsuccesses']
             eval_episodes += datum['metadata']['episode_idx']
           else:

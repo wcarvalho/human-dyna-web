@@ -2,36 +2,66 @@
 rm -r data .nicegui;
 
 ########################################################
-# Experiment 2
-# no reversal of blocks
-# evaluate objects ARE visible
+# Experiment 3 - launches
 ##########################################
+
+# added planning manipulation
+python launch.py exp2-v3 --env EXP=3 --env NAME=exp3-v1
+
+
+#######################
+# Experiment 3 - testing
+#######################
+# FULL debugging command to test
+rm -r data/*exp3-v1* .nicegui; INST=1 DEBUG=0 NMAN=0 EXP=3 NAME='exp3-v1' SEED=45 python main.py
+
 # debugging command to test
-rm -r data/*r0-exp2-obj1-v2* .nicegui; INST=0 DEBUG=1 NMAN=1 EXP=2 REV=0 EVAL_OBJECTS=1 NAME='r0-exp2-obj1-v2' SEED=44 python main.py
+rm -r data .nicegui; INST=1 DEBUG=1 NMAN=0 EXP=3 NAME='exp3-v1' SEED=44 python main.py
 
 # create the config for putting this online
-flyctl launch \
---dockerfile Dockerfile \
---name human-dyna-r0-exp2-obj1-v2 \
---config configs/human-dyna-r0-exp2-obj1-v2.toml \
---env EXP=2 \
---env EVAL_OBJECTS=1 \
---env REV=0 \
---env NAME='r0-exp2-obj1-v2' \
---vm-size 'shared-cpu-4x'
-
-
-# launch the website
-flyctl deploy --config configs/human-dyna-r0-exp2-obj1-v2.toml
-
-# add machine for each retgion
-flyctl scale count 4 --config configs/human-dyna-r0-exp2-obj1-v2.toml --region iad,sea,lax,den
+# added planning manipulation
+python launch.py exp3-v3 --env EXP=3 --env EVAL_OBJECTS=1 --env REV=0 --env NAME=exp3-v1
 
 # to display status
-flyctl logs --config configs/human-dyna-r0-exp2-obj1-v2.toml
+flyctl logs --config configs/human-dyna-exp3-v3.tom1
 
 # see machines
-flyctl scale show --config configs/human-dyna-r0-exp2-obj1-v2.toml
+flyctl scale show --config configs/human-dyna-exp3-v3.tom1
+
+# delete machines
+flyctl machine destroy --config configs/human-dyna-exp3-v3.tom1
+
+
+
+########################################################
+# Experiment 2 - launches
+##########################################
+
+# added planning manipulation
+python launch.py exp2-v3 --env EXP=2 --env NAME=exp2-v3
+
+
+#######################
+# Experiment 2 - testing
+#######################
+# FULL debugging command to test
+rm -r data/*exp2-v3* .nicegui; INST=1 DEBUG=0 NMAN=0 EXP=2 NAME='exp2-v3' SEED=45 python main.py
+
+# debugging command to test
+rm -r data/*exp2-v3* .nicegui; INST=0 DEBUG=1 NMAN=1 EXP=2 NAME='exp2-v3' SEED=44 python main.py
+
+# create the config for putting this online
+# added planning manipulation
+python launch.py exp2-v3 --env EXP=2 --env EVAL_OBJECTS=1 --env REV=0 --env NAME=exp2-v3
+
+# to display status
+flyctl logs --config configs/human-dyna-exp2-v3.toml
+
+# see machines
+flyctl scale show --config configs/human-dyna-exp2-v3.toml
+
+# delete machines
+flyctl machine destroy --config configs/human-dyna-exp2-v3.toml
 
 ########################################################
 # Experiment 1
