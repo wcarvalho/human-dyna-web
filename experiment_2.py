@@ -34,7 +34,7 @@ load_dotenv()
 
 GIVE_INSTRUCTIONS = int(os.environ.get('INST', 1))
 DEBUG = int(os.environ.get('DEBUG', 0))
-NMAN = int(os.environ.get('NMAN', 3))  # number of manipulations to keep
+NMAN = int(os.environ.get('NMAN', 0))  # number of manipulations to keep
 
 USE_REVERSALS = int(os.environ.get('REV', 0))
 EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
@@ -771,7 +771,7 @@ for reversal in reversals:
             name='big_m4_maze_long_eval_diff'),
     ], metadata=dict(
         manipulation=4,
-        setting='short',
+        setting='long',
         desc="See if faster off train path than planning.",
         long=f"""
         Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
