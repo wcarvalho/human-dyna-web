@@ -37,6 +37,7 @@ NMAN = int(os.environ.get('NMAN', 0))  # number of manipulations to keep
 
 #USE_REVERSALS = int(os.environ.get('REV', 0))
 #EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
+SAY_REUSE = int(os.environ.get('SAY_REUSE', 1))
 TIMER = int(os.environ.get('TIMER', 45))
 USE_DONE = DEBUG > 0
 
@@ -525,11 +526,47 @@ def make_block(
 # Create blocks
 ##############################################
 
-instruct_text = f"""
-        This experiment tests how people learn to navigate maps.
+if SAY_REUSE:
+  instruct_text = f"""
+          This experiment tests how effectively people can learn about goals before direct experience on them.
 
-        It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects.
-"""
+          It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects that you could have learned about previously.
+  """
+  def make_phase_2_text(time=30, include_time=True):
+      time_str = f"of **{time} seconds**" if include_time else ""
+      threshold = int(time*2/3)
+      phase_2_text = f"""
+      You will get a bonus if you complete the task in less than {int(threshold)} seconds. Try to reuse what you learned as best you can.
+
+      If you retrieve the wrong object, the episode ends early.
+
+      **Note that in phase 2:**
+
+          * You have 1 try.
+          * You have a time-limit {time_str}
+      """
+      return phase_2_text
+else:
+  instruct_text = f"""
+          This experiment tests how people learn to navigate maps.
+
+          It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects.
+  """
+  def make_phase_2_text(time=30, include_time=True):
+      time_str = f"of **{time} seconds**" if include_time else ""
+      threshold = int(time*2/3)
+      phase_2_text = f"""
+      You will get a bonus if you complete the task in less than {int(threshold)} seconds.
+
+      If you retrieve the wrong object, the episode ends early.
+
+      **Note that in phase 2:**
+
+          * You have 1 try.
+          * You have a time-limit {time_str}
+      """
+      return phase_2_text
+
 def make_phase_1_text():  
     phase_1_text = f"""
     Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
@@ -538,19 +575,6 @@ def make_phase_1_text():
     """
     return phase_1_text
 
-def make_phase_2_text(time=30, include_time=True):
-    time_str = f"of **{time} seconds**" if include_time else ""
-    phase_2_text = f"""
-    Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
-
-    If you retrieve the wrong object, the episode ends early.
-
-    **Note that in phase 2:**
-
-        * You will only have 1 try.
-        * You will have a time-limit {time_str}
-    """
-    return phase_2_text
 
 
 ####################

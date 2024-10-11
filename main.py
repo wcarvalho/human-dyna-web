@@ -22,7 +22,7 @@ from nicewebrl.stages import ExperimentData
 from nicewebrl.utils import wait_for_button_or_keypress
 
 from google.auth.exceptions import TransportError
-from load_data import get_block_stage_description, dict_to_string
+from load_data import get_block_stage_description, dict_to_string, time_diff
 
 load_dotenv()
 
@@ -320,12 +320,17 @@ async def finish_experiment(meta_container, stage_container, button_container):
     #########################
     with meta_container:
         meta_container.clear()
-
+        key = {
+           0: "Ym3sa",
+           1: "Mja2S",
+           2: "Ujas14",
+           3: "Ukla0j",
+        }[app.storage.user['bonus']]
         ui.markdown("# Experiment over")
         ui.markdown("## Data saved")
         ui.markdown("### Please record the following code which you will need to provide for compensation")
         ui.markdown(
-            f'### "gershman_dyna"')
+            f'### gershman.dyna.{key}')
         ui.markdown("#### You may close the browser")
 
 async def compute_bonus(data_dicts):
@@ -335,6 +340,8 @@ async def compute_bonus(data_dicts):
     eval_successes = 0
     eval_episodes = 0
     keys = set()
+    successes = 0
+    npossible = 0
     for datum in data_dicts[::-1]:
        if 'practice' in datum['metadata']['block_metadata'].get('desc', ''):
           continue
@@ -344,22 +351,32 @@ async def compute_bonus(data_dicts):
        desc = dict_to_string(info)
        if desc not in keys:
           keys.add(desc)
+          user_data = await ExperimentData.filter(
+              session_id=app.storage.browser['id'],
+              name=datum['name'],
+          )
+          first = user_data[0].data['image_seen_time']
+          last = user_data[-1].data['action_taken_time']
+          seconds = time_diff(first, last)/1000
+          timelimit = user_data[0].data['timelimit']
+          if timelimit is not None:
+            successes += seconds < timelimit
+            npossible += 1
           if datum['metadata'].get('eval', False):
             eval_successes += datum['metadata']['nsuccesses']
             eval_episodes += datum['metadata']['episode_idx']
           else:
             train_successes += datum['metadata']['nsuccesses']
             train_episodes += datum['metadata']['episode_idx']
-    #train_sr = (train_successes / max(1, train_episodes))
-    eval_sr = (eval_successes / max(1, eval_episodes))
-    #train_sr = train_sr*(train_sr > .5)
-    #train_bonus = 1*train_sr  # bounded between 0 and 1
-    #eval_bonus = eval_sr*(train_sr > .5)
-    if eval_sr < .25:
+    train_sr = (train_successes / max(1, train_episodes))
+    bonus_sr = successes / npossible
+    bonus_sr = bonus_sr*(train_sr > .5)
+
+    if bonus_sr < .25:
        return 0
-    elif eval_sr < .5:
+    elif bonus_sr < .5:
        return 1
-    elif eval_sr < .75:
+    elif bonus_sr < .75:
        return 2
     else:
        return 3
@@ -375,8 +392,10 @@ async def save_data(final_save=True, feedback=None, **kwargs):
     data_dicts = [ExperimentDataPydantic.model_validate(
         data).model_dump() for data in user_experiment_data]
 
+    bonus = 0
     if final_save:
       bonus = await compute_bonus(data_dicts)
+      app.storage.user['bonus'] = bonus
       data_dicts.append(dict(
          finished=True,
          feedback=feedback,
@@ -393,6 +412,7 @@ async def save_data(final_save=True, feedback=None, **kwargs):
     # Now delete the data from the database
     if final_save:
       await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
+
 
 async def save_to_gcs(user_data, filename):
     try:
