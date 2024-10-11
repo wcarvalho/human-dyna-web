@@ -45,23 +45,24 @@ def remove_extra_spaces(text):
     """For each line, remove extra space."""
     return "\n".join([i.strip() for i in text.strip().split("\n")])
 
-timer_text = ""
-eval_objects_text = ""
-if TIMER > 0:
-    timer_text = f"* You will have a time-limit of {TIMER} seconds"
-if EVAL_OBJECTS == 0:
-    eval_objects_text = "* The object identities will not be visible on the map, so you'll need to learn where they are in phase 1."
 
-if timer_text or eval_objects_text:
-    phase_2_text = f"""
-**Note that in phase 2:**
+def phase_2_text(time=30):
+    timer_text = ""
+    eval_objects_text = ""
+    if TIMER > 0:
+        timer_text = f"* You will have a time-limit of {time} seconds"
+    if EVAL_OBJECTS == 0:
+        eval_objects_text = "* The object identities will not be visible on the map, so you'll need to learn where they are in phase 1."
+    if timer_text or eval_objects_text:
+        return f"""
+        **Note that in phase 2:**
 
-* You will only have 1 try.
-{eval_objects_text}
-{timer_text}
-""".strip()
-else:
-    phase_2_text = "Note that in phase 2, you will only have 1 try"
+        * You will only have 1 try.
+        {eval_objects_text}
+        {timer_text}
+        """.strip()
+    else:
+        return "Note that in phase 2, you will only have 1 try"
 
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
@@ -188,7 +189,6 @@ eval_vmap_render_fn = web_env.precompile_vmap_render_fn(
 
 def went_to_junction(timestep, junction):
     position = timestep.state.agent_pos
-    print(f'position={position}, junction={junction}')
     match = np.array(junction) == position
     match = match.sum(-1) == 2  # both x and y matches
     return match.any()
@@ -332,6 +332,7 @@ def make_env_stage(
         render_fn=None,
         vmap_render_fn=None,
         custom_data_fn=None,
+        duration=None,
         name='stage',
         ):
     metadata = metadata or {}
@@ -378,7 +379,7 @@ def make_env_stage(
         min_success=min_success,
         metadata=metadata,
         custom_data_fn=custom_data_fn,
-        duration=TIMER if eval else None,
+        duration=duration if eval else None,
         notify_success=True,
         name=name,
     )
@@ -397,7 +398,7 @@ This experiment tests how people solve new tasks. You'll control a red triangle 
 
 The experiment will consist blocks, each with two phases. In the first phase, you'll learn how to navigate to objects. In the second hase, we will will ask you to navigate to different objects.
 
-{phase_2_text}
+{phase_2_text()}
 """,
         display_fn=stage_display_fn,
     ),
@@ -412,11 +413,11 @@ practice_block = Block(stages=[
     Stage(
         name='Practice phase 1',
         body="""
-Here you'll get some experience in a practice maze.
+        Here you'll get some experience in a practice maze.
 
-You can control the red triangle to move around the maze with the arrow keys on your keyboard.
+        You can control the red triangle to move around the maze with the arrow keys on your keyboard.
 
-Press the button when you're ready to continue.
+        Press the button when you're ready to continue.
         """,
         display_fn=stage_display_fn,
     ),
@@ -433,9 +434,9 @@ Press the button when you're ready to continue.
     Stage(
         name='Practice phase 2',
         body=f"""
-Here you'll experience the task of getting an object that was nearby one of the training objects.
+        Here you'll experience the task of getting an object that was nearby one of the training objects.
 
-{phase_2_text}
+        {phase_2_text()}
 
 Press the button when you're ready to continue.
         """,
@@ -449,6 +450,7 @@ Press the button when you're ready to continue.
         char2idx=char2idx,
         force_room=True,
         training=False,
+        duration=30 if TIMER else None,
         metadata={'maze': 'big_practice_maze'},
         name='big_practice_maze'),
 ], metadata=dict(desc="practice"))
@@ -461,61 +463,62 @@ if GIVE_INSTRUCTIONS:
 manipulation_groups = []
 reversals = [(False, False), (True, False), (False, True), (True, True)]
 
-##########################
-# Manipulation 1: Shortcut
-##########################
-manipulation1_blocks = []
-for reversal in reversals:
-    block_groups, block_char2idx = permute_groups(groups)
-    block0 = Block([
-        Stage(
-            name='Phase 1',
-            body=f"""
-            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
+###########################
+## Manipulation 1: Shortcut
+###########################
+#manipulation1_blocks = []
+#for reversal in reversals:
+#    block_groups, block_char2idx = permute_groups(groups)
+#    block0 = Block([
+#        Stage(
+#            name='Phase 1',
+#            body=f"""
+#            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
 
-            If you retrieve the wrong object, the episode ends early.
-            """,
-            display_fn=stage_display_fn,
-        ),
-        make_env_stage(
-            maze_str=mazes.reverse(mazes.big_m1_maze3, *reversal),
-            metadata=dict(desc="training", maze="big_m1_maze3"),
-            min_success=min_success_train,
-            max_episodes=max_episodes_train,
-            groups=block_groups,
-            char2idx=block_char2idx,
-            training=True,
-            name='big_m1_maze3'),
-        Stage(
-            name='Phase 2',
-            body=f"""
-        Your performance here will count towards your bonus payment. Go as fast as you can.
+#            If you retrieve the wrong object, the episode ends early.
+#            """,
+#            display_fn=stage_display_fn,
+#        ),
+#        make_env_stage(
+#            maze_str=mazes.reverse(mazes.big_m1_maze3, *reversal),
+#            metadata=dict(desc="training", maze="big_m1_maze3"),
+#            min_success=min_success_train,
+#            max_episodes=max_episodes_train,
+#            groups=block_groups,
+#            char2idx=block_char2idx,
+#            training=True,
+#            name='big_m1_maze3'),
+#        Stage(
+#            name='Phase 2',
+#            body=f"""
+#        Your performance here will count towards your bonus payment. Go as fast as you can.
 
-        {phase_2_text}
+#        {phase_2_text()}
 
-        <p style="color: red;"><strong>Note that some parts of the maze may have changed</strong>.</p>
-        """,
-            display_fn=stage_display_fn,
-        ),
-        make_env_stage(
-            maze_str=mazes.reverse(mazes.big_m1_maze3_shortcut, *reversal),
-            metadata=dict(desc="shortcut", maze="big_m1_maze3_shortcut"),
-            min_success=1, max_episodes=1,
-            custom_data_fn=manip1_data_fn,
-            groups=block_groups,
-            char2idx=block_char2idx, training=False,
-            name='big_m1_maze3_shortcut'),
-    ],
-    metadata=dict(
-        manipulation=1,
-        desc="shortcut",
-        long=f"A shortcut is introduced",
-        groups=make_serializable(block_groups),
-        char2idx=jax.tree_map(int, block_char2idx)
-    ))
-    manipulation1_blocks.append(block0)
-    if not USE_REVERSALS: break
-manipulation_groups.append(manipulation1_blocks)
+#        <p style="color: red;"><strong>Note that some parts of the maze may have changed</strong>.</p>
+#        """,
+#            display_fn=stage_display_fn,
+#        ),
+#        make_env_stage(
+#            maze_str=mazes.reverse(mazes.big_m1_maze3_shortcut, *reversal),
+#            metadata=dict(desc="shortcut", maze="big_m1_maze3_shortcut"),
+#            min_success=1, max_episodes=1,
+#            duration=30 if TIMER else None,
+#            custom_data_fn=manip1_data_fn,
+#            groups=block_groups,
+#            char2idx=block_char2idx, training=False,
+#            name='big_m1_maze3_shortcut'),
+#    ],
+#    metadata=dict(
+#        manipulation=1,
+#        desc="shortcut",
+#        long=f"A shortcut is introduced",
+#        groups=make_serializable(block_groups),
+#        char2idx=jax.tree_map(int, block_char2idx)
+#    ))
+#    manipulation1_blocks.append(block0)
+#    if not USE_REVERSALS: break
+#manipulation_groups.append(manipulation1_blocks)
 
 ##########################
 # Manipulation 2: Faster when on-path but further than off-path but closer
@@ -547,7 +550,7 @@ for reversal in reversals:
             body=f"""
             Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
 
-            {phase_2_text}
+            {phase_2_text()}
             """,
             display_fn=stage_display_fn,
         ),
@@ -556,6 +559,7 @@ for reversal in reversals:
             metadata=dict(desc="new location, on-path",
                           maze="big_m2_maze2_offpath"),
             min_success=1, max_episodes=1,
+            duration=30 if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx, training=False,
             name='big_m2_maze2_onpath'),
@@ -564,6 +568,7 @@ for reversal in reversals:
             metadata=dict(desc="new location, off-path",
                           maze="big_m2_maze2_offpath"),
             min_success=1, max_episodes=1,
+            duration=30 if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
@@ -613,7 +618,7 @@ for reversal in reversals:
             body=f"""
             Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
 
-            {phase_2_text}
+            {phase_2_text(TIMER)}
             """,
             display_fn=stage_display_fn,
         ),
@@ -621,6 +626,7 @@ for reversal in reversals:
             maze_str=mazes.reverse(mazes.big_m3_maze1, *reversal),
             min_success=1,
             max_episodes=1,
+            duration=TIMER if TIMER else None,
             groups=block_groups,
             char2idx=block_char2idx,
             training=False,
@@ -640,8 +646,151 @@ for reversal in reversals:
     if not USE_REVERSALS: break
 manipulation_groups.append(manipulation3_blocks)
 
+##########################
+# Manipulation 4: probing planning, short
+##########################
+manipulation4_blocks = []
+for reversal in reversals:
+    block_groups, block_char2idx = permute_groups(groups)
+    block = Block([
+        Stage(
+            name='Phase 1',
+            body=f"""
+            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
+
+            If you retrieve the wrong object, the episode ends early.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            maze_str=mazes.reverse(mazes.big_m4_maze_short, *reversal),
+            min_success=min_success_train,
+            max_episodes=max_episodes_train,
+            groups=block_groups,
+            char2idx=block_char2idx,
+            training=True,
+            metadata={'maze': 'big_m4_maze_short'},
+            name='big_m4_maze_short'),
+        Stage(
+            name='Phase 2',
+            body=f"""
+            Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
+
+            {phase_2_text(30)}
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            maze_str=mazes.reverse(mazes.big_m4_maze_short_eval_same, *reversal),
+            min_success=1,
+            max_episodes=1,
+            duration=30 if TIMER else None,
+            groups=block_groups,
+            char2idx=block_char2idx,
+            training=False,
+            metadata={'maze': 'big_m4_maze_short_eval_same'},
+            name='big_m4_maze_short_eval_same'),
+        make_env_stage(
+            maze_str=mazes.reverse(mazes.big_m4_maze_short_eval_diff, *reversal),
+            min_success=1,
+            max_episodes=1,
+            duration=30 if TIMER else None,
+            groups=block_groups,
+            char2idx=block_char2idx,
+            training=False,
+            metadata={'maze': 'big_m4_maze_short_eval_diff'},
+            name='big_m4_maze_short_eval_diff'),
+    ], metadata=dict(
+        manipulation=4,
+        setting='short',
+        desc="See if faster off train path than planning.",
+        long=f"""
+        Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
+        """,
+        groups=make_serializable(block_groups),
+        char2idx=jax.tree_map(int, block_char2idx)
+    ))
+    manipulation4_blocks.append(block)
+    if not USE_REVERSALS: break
+manipulation_groups.append(manipulation4_blocks)
+
+
+##########################
+# Manipulation 4: probing planning, long
+##########################
+manipulation4_blocks = []
+for reversal in reversals:
+    block_groups, block_char2idx = permute_groups(groups)
+    block = Block([
+        Stage(
+            name='Phase 1',
+            body=f"""
+            Please learn to obtain these objects. You need to succeed {min_success_task} times per object.
+
+            If you retrieve the wrong object, the episode ends early.
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            maze_str=mazes.reverse(mazes.big_m4_maze_long, *reversal),
+            min_success=min_success_train,
+            max_episodes=max_episodes_train,
+            groups=block_groups,
+            char2idx=block_char2idx,
+            training=True,
+            metadata={'maze': 'big_m4_maze_long'},
+            name='big_m4_maze_long'),
+        Stage(
+            name='Phase 2',
+            body=f"""
+            Your performance here will count towards your bonus payment. Try to reuse what you learned as best you can.
+
+            {phase_2_text(30)}
+            """,
+            display_fn=stage_display_fn,
+        ),
+        make_env_stage(
+            maze_str=mazes.reverse(mazes.big_m4_maze_long_eval_same, *reversal),
+            min_success=1,
+            max_episodes=1,
+            duration=30 if TIMER else None,
+            groups=block_groups,
+            char2idx=block_char2idx,
+            training=False,
+            metadata={'maze': 'big_m4_maze_long_eval_same'},
+            name='big_m4_maze_long_eval_same'),
+        make_env_stage(
+            maze_str=mazes.reverse(mazes.big_m4_maze_long_eval_diff, *reversal),
+            min_success=1,
+            max_episodes=1,
+            duration=30 if TIMER else None,
+            groups=block_groups,
+            char2idx=block_char2idx,
+            training=False,
+            metadata={'maze': 'big_m4_maze_long_eval_diff'},
+            name='big_m4_maze_long_eval_diff'),
+    ], metadata=dict(
+        manipulation=4,
+        setting='short',
+        desc="See if faster off train path than planning.",
+        long=f"""
+        Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
+        """,
+        groups=make_serializable(block_groups),
+        char2idx=jax.tree_map(int, block_char2idx)
+    ))
+    manipulation4_blocks.append(block)
+    if not USE_REVERSALS: break
+manipulation_groups.append(manipulation4_blocks)
+
+##########################
+# Combining all together
+##########################
 # Select the specified number of manipulation groups and flatten
-manipulations = manipulation_groups[:NMAN]
+if NMAN > 0:
+    manipulations = manipulation_groups[:NMAN]
+else:
+    manipulations = manipulation_groups
 for manipulation_blocks in manipulations:
     all_blocks.extend(manipulation_blocks)
 
@@ -654,52 +803,75 @@ async def feedback_display_fn(
         container,
         name: str = 'big_m1_maze3_shortcut'):
     container.clear()
-    user_data = await ExperimentData.filter(
-        session_id=app.storage.browser['id'],
-        name=name,
-    )
-    used_old_path = [d.user_data.get('old_path', False)
-                     for d in user_data]
-    used_old_path = np.array(used_old_path).any()
-
-    if used_old_path is None: 
-        return {'feedback': None}
-
-    if used_old_path:
-        text = f"You used the same path as in Phase 1. Please briefly describe why."
-    else:
-        text = f"You used a different path as in Phase 1. Please briefly describe why."
+    output = {}
     with container.style('align-items: center;'):
+        user_data = await ExperimentData.filter(
+            session_id=app.storage.browser['id'],
+            name=name,
+        )
+        used_old_path = [d.user_data.get('old_path', False)
+                        for d in user_data]
+        used_old_path = np.array(used_old_path).any()
+
+        ########
+        # radio
+        #######
+        groups = user_data[0].metadata['block_metadata'].get('groups', None)
+        phase2_train = keys[groups[0][0]]
+        phase2_test = keys[groups[0][1]]
+        ui.html(f"Did you notice that the phase 2 object ({phase2_test}) was accessible from the path towards the phase 1 object ({phase2_train})?")
+        radio = ui.radio({1: "Yes", 2: "No", 3: "I'm not sure"}, value=3).props('inline')
+        output['noticed_path'] = radio.value
+
+        ########
+        # freeform
+        ########
+        if used_old_path is None: 
+            output['feedback'] = None
+            return output
+
+        if used_old_path:
+            text = f"You used the same path as in Phase 1. Please briefly describe why."
+        else:
+            text = f"You used a different path as in Phase 1. Please briefly describe why. For example, did you re-plan how to get the object?"
         timestep = user_data[0].data['timestep']
         timestep = nicejax.deserialize_bytes(maze.TimeStep, timestep)
-        image = render_fn(timestep)
+        image = train_render_fn(timestep)
 
         # Calculate aspect ratio and set figure size
         height, width = image.shape[:2]
         aspect_ratio = width / height
-        fig_width = 5
+        fig_width = 6
         fig_height = fig_width / aspect_ratio
 
-        with ui.matplotlib(figsize=(fig_width, fig_height)).figure as fig:
+        with ui.matplotlib(
+            figsize=(int(fig_width), int(fig_height))).figure as fig:
             ax = fig.subplots(1, 1)
             ax.imshow(image)
             ax.axis('off')
-        ui.markdown(f"**{text}**")
+        ui.html(f"{text}")
         text = ui.textarea().style('width: 80%;')  # Set width to 80% of the container
         button = ui.button("Submit")
         await button.clicked()
         feedback = text.value
-    return {'feedback': feedback}
+        output['feedback'] = feedback
+    return output
 
 feedback_stages = [
-    FeedbackStage(
-        name='maze1_feedback',
-        display_fn=feedback_display_fn,
-        next_button=False,
-    ),
+    #FeedbackStage(
+    #    name='maze1_feedback',
+    #    display_fn=partial(
+    #        feedback_display_fn,
+    #        name='big_m1_maze3_shortcut',
+    #        ),
+    #    next_button=False,
+    #),
     FeedbackStage(
         name='maze3_feedback',
-        display_fn=feedback_display_fn,
+        display_fn=partial(
+            feedback_display_fn,
+            name='big_m3_maze1_eval',
+            ),
         next_button=False,
     ),
 ]
