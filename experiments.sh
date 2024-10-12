@@ -5,9 +5,14 @@ rm -r data .nicegui;
 # Experiment 3 - launches
 ##########################################
 
-# added planning manipulation
-python launch.py exp2-v3 --env EXP=3 --env NAME=exp3-v1
 
+python launch.py exp3-v1-r1-t45 --env EXP=3 --env SAY_REUSE=1 --env TIMER=45
+
+python launch.py exp3-v1-r0-t45 --env EXP=3 --env SAY_REUSE=0 --env TIMER=45
+
+python launch.py exp3-v1-r1-t30 --env EXP=3 --env SAY_REUSE=1 --env TIMER=30
+
+python launch.py exp3-v1-r0-t30 --env EXP=3 --env SAY_REUSE=0 --env TIMER=30
 
 #######################
 # Experiment 3 - testing
@@ -20,7 +25,7 @@ rm -r data .nicegui; INST=1 DEBUG=1 NMAN=0 EXP=3 NAME='exp3-v1' SEED=44 python m
 
 # create the config for putting this online
 # added planning manipulation
-python launch.py exp3-v3 --env EXP=3 --env EVAL_OBJECTS=1 --env REV=0 --env NAME=exp3-v1
+python launch.py exp3-v3 --env EXP=3 --env EVAL_OBJECTS=1 --env REV=0
 
 # to display status
 flyctl logs --config configs/human-dyna-exp3-v3.tom1

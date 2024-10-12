@@ -29,19 +29,22 @@ load_dotenv()
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 NAME = os.environ.get('NAME', 'exp')
 DEBUG = int(os.environ.get('DEBUG', 0))
+LOCAL = int(os.environ.get('LOCAL', 0))
 DEBUG_SEED = int(os.environ.get('SEED', 42))
 EXPERIMENT = int(os.environ.get('EXP', 1))
 
-print(f"DEBUG: {DEBUG}")
 if EXPERIMENT == 0:
-  import experiment_test as experiment
-  APP_TITLE = 'Human Dyna Test'
+  #import experiment_test as experiment
+  #APP_TITLE = 'Human Dyna Test'
+  pass
 elif EXPERIMENT == 1:
-  import experiment_1 as experiment
-  APP_TITLE = 'Human Dyna 1'
+  #import experiment_1 as experiment
+  #APP_TITLE = 'Human Dyna 1'
+  pass
 elif EXPERIMENT == 2:
-  import experiment_2 as experiment
-  APP_TITLE = 'Dyna 2'
+  #import experiment_2 as experiment
+  #APP_TITLE = 'Dyna 2'
+  pass
 elif EXPERIMENT == 3:
   import experiment_3 as experiment
   APP_TITLE = 'Dyna 3'
@@ -407,7 +410,8 @@ async def save_data(final_save=True, feedback=None, **kwargs):
     with open(user_data_file, 'w') as f:
       json.dump(data_dicts, f)
 
-    await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+    if not LOCAL:
+      await save_to_gcs(user_data=data_dicts, filename=user_data_file)
 
     # Now delete the data from the database
     if final_save:

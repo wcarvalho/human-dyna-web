@@ -209,6 +209,17 @@ def remove_extra_spaces(text):
     """For each line, remove extra space."""
     return "\n".join([i.strip() for i in text.strip().split("\n")])
 
+
+def debug_info(stage):
+    stage_state = stage.get_user_data('stage_state')
+    debug_info = f"**Manipulation**: {stage.metadata['block_metadata'].get('manipulation')}. "
+    if stage_state is not None:
+        debug_info += f"**Eval**: {stage.metadata['eval']}. "
+        debug_info += f"**Episode** idx: {stage_state.nepisodes}. "
+        debug_info += f"**Step**: {stage_state.nsteps}/{stage.env_params.time_limit}. "
+    return debug_info
+
+
 def instruct_display_fn(stage, container):
     with container.style('align-items: center;'):
         container.clear()
@@ -235,6 +246,8 @@ def stage_display_fn(stage, container):
     with container.style('align-items: center;'):
         container.clear()
         ui.markdown(f"## {stage.name}")
+        if DEBUG:
+            ui.markdown(debug_info(stage))
         ui.markdown(f"{remove_extra_spaces(stage.body)}",
                     extras=['cuddled-lists'])
         
@@ -273,14 +286,6 @@ def make_image_html(src):
     </div>
     '''.format(src=src)
     return html
-
-def debug_info(stage):
-    stage_state = stage.get_user_data('stage_state')
-    debug_info = f"**Manipulation**: {stage.metadata['block_metadata'].get('manipulation')}. "
-    debug_info += f"**Episode** idx: {stage_state.nepisodes}. "
-    debug_info += f"**Eval**: {stage.metadata['eval']}. "
-    debug_info += f"**Step**: {stage_state.nsteps}/{stage.env_params.time_limit}. "
-    return debug_info
 
 async def env_reset_display_fn(
         stage,
@@ -533,17 +538,15 @@ if SAY_REUSE:
           It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects that you could have learned about previously.
   """
   def make_phase_2_text(time=30, include_time=True):
-      time_str = f"of **{time} seconds**" if include_time else ""
+      time_str = f' of <span style="color: red; font-weight: bold;">{time}</span> seconds' if include_time else ""
       threshold = int(time*2/3)
       phase_2_text = f"""
-      You will get a bonus if you complete the task in less than {int(threshold)} seconds. Try to reuse what you learned as best you can.
+      You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds. 
+      
+      You have a <span style="color: red; font-weight: bold;">time-limit</span>{time_str}. Try to reuse what you learned as best you can.
 
-      If you retrieve the wrong object, the episode ends early.
+      If you retrieve the wrong object, the episode ends early. You have 1 try.
 
-      **Note that in phase 2:**
-
-          * You have 1 try.
-          * You have a time-limit {time_str}
       """
       return phase_2_text
 else:
@@ -553,17 +556,14 @@ else:
           It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects.
   """
   def make_phase_2_text(time=30, include_time=True):
-      time_str = f"of **{time} seconds**" if include_time else ""
+      time_str = f' of <span style="color: red; font-weight: bold;">{time}</span> seconds' if include_time else ""
       threshold = int(time*2/3)
       phase_2_text = f"""
-      You will get a bonus if you complete the task in less than {int(threshold)} seconds.
+      You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds.
 
-      If you retrieve the wrong object, the episode ends early.
+      You have a <span style="color: red; font-weight: bold;">time-limit</span>{time_str}.
 
-      **Note that in phase 2:**
-
-          * You have 1 try.
-          * You have a time-limit {time_str}
+      If you retrieve the wrong object, the episode ends early. You have 1 try.
       """
       return phase_2_text
 
@@ -584,7 +584,8 @@ def make_phase_1_text():
 block_groups, block_char2idx = permute_groups(block_groups)
 practice_block = make_block(
     eval_duration=30,
-    max_episodes=30,
+    min_success=4 if not DEBUG else 1,
+    max_episodes=10,
     make_env_kwargs=dict(force_room=True),
     phase_1_text=make_phase_1_text(),
     phase_1_maze_name='big_practice_maze',
