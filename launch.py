@@ -8,7 +8,8 @@ def launch_experiment(name, env_vars):
         "--dockerfile", "Dockerfile",
         "--name", f"human-dyna-{name}",
         "--config", f"configs/human-dyna-{name}.toml",
-        "--vm-size", "performance-2x"
+        "--vm-size", "performance-2x",
+        "--yes"
     ]
     launch_cmd.extend(env_vars)
 
@@ -23,7 +24,8 @@ def launch_experiment(name, env_vars):
     scale_cmd = [
         "flyctl", "scale", "count", "4",
         "--config", f"configs/human-dyna-{name}.toml",
-        "--region", "iad,sea,lax,den"
+        "--region", "iad,sea,lax,den",
+        "--yes"
     ]
     subprocess.run(scale_cmd, check=True)
 
@@ -34,7 +36,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    env_vars = ["--env", args.name]
+    env_vars = ["--name", args.name]
+    env_vars = ["--env", f'NAME={args.name}']
     if args.env:
         for env in args.env:
             env_vars.extend(["--env", env])

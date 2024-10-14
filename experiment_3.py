@@ -364,8 +364,8 @@ async def feedback_display_fn(
         phase2_train = keys[groups[0][0]]
         phase2_test = keys[groups[0][1]]
         ui.html(f"Did you notice that the phase 2 object ({phase2_test}) was accessible from the path towards the phase 1 object ({phase2_train})?")
-        radio = ui.radio({1: "Yes", 2: "No", 3: "I'm not sure"}, value=3).props('inline')
-        output['noticed_path'] = radio.value
+        #radio = ui.radio({1: "Yes", 2: "No", 3: "I'm not sure"}, value=3).props('inline')
+        #output['noticed_path'] = radio.value
 
         ########
         # freeform
@@ -378,6 +378,7 @@ async def feedback_display_fn(
             text = f"You used the same path as in Phase 1. Please briefly describe why."
         else:
             text = f"You used a different path as in Phase 1. Please briefly describe why. For example, did you re-plan how to get the object?"
+        output['question'] = text
         timestep = user_data[0].data['timestep']
         timestep = nicejax.deserialize_bytes(maze.TimeStep, timestep)
         image = render_fn(timestep)
@@ -471,7 +472,7 @@ def make_block(
 ):
     def create_stage(name, body):
         return Stage(name=name, body=body, display_fn=stage_display_fn)
-
+    
     make_env_kwargs = make_env_kwargs or {}
     def create_env_stage(name, maze_name, training, min_success, max_episodes, duration=None, **kwargs):
         return make_env_stage(

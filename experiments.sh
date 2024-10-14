@@ -7,12 +7,20 @@ rm -r data .nicegui;
 
 
 python launch.py exp3-v1-r1-t45 --env EXP=3 --env SAY_REUSE=1 --env TIMER=45
+https://exp3-v1-r1-t45.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v1-r1-t45.toml
 
 python launch.py exp3-v1-r0-t45 --env EXP=3 --env SAY_REUSE=0 --env TIMER=45
+https://exp3-v1-r0-t45.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v1-r0-t45.toml
 
 python launch.py exp3-v1-r1-t30 --env EXP=3 --env SAY_REUSE=1 --env TIMER=30
+https://exp3-v1-r1-t30.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v1-r1-t30.toml
 
 python launch.py exp3-v1-r0-t30 --env EXP=3 --env SAY_REUSE=0 --env TIMER=30
+https://exp3-v1-r0-t30.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v1-r0-t30.toml
 
 #######################
 # Experiment 3 - testing
