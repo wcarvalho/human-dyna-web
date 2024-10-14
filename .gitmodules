@@ -7,3 +7,6 @@
 [submodule "libraries/nicewebrl"]
 	path = libraries/nicewebrl
 	url = https://github.com/wcarvalho/nicewebrl.git
+[submodule "libraries/jaxneurorl"]
+	path = libraries/jaxneurorl
+	url = https://github.com/wcarvalho/jaxneurorl

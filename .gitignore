@@ -13,6 +13,7 @@ demo.py
 **/.git
 **/.mypy_cache
 **/.nicegui
+*.DS_Store
 
 # flyctl launch added from .pytest_cache/.gitignore
 # Created by pytest automatically.

@@ -4,13 +4,19 @@ Web experiments for studying Human Dyna experiments
 
 ## Install
 
+**adding submodules**
+```
+git submodule add https://github.com/wcarvalho/jaxneurorl libraries/jaxneurorl
+
+```
+
 ```
 conda create -n human-dyna-web python=3.10 pip wheel -y
 conda activate human-dyna-web
 # optionally add   --no-deps if just need library and dependencies already installed
 
 # if developing sublibraries, load the submodules and install from there
-pip install -e libraries/housemaze -e libraries/fast-web-rl
+pip install -e libraries/housemaze -e libraries/nicewebrl
 
 # otherwise, use github installs
 pip install git+https://github.com/wcarvalho/JaxHouseMaze.git git+https://github.com/wcarvalho/nicewebrl -r requirements.txt
@@ -20,21 +26,8 @@ echo 'exportecho  GOOGLE_CREDENTIALS=keys/datastore-key.json' >> $activation_dir
 
 ```
 
-## Updating code
-**from wilka's branch**
-```
-# step 1: commit your changes
-git add -u; git add ${files}; git commit -m "name changes with something";
 
-# step 2: checkout and pull from wilka's
-git checkout nicegui; git pull
 
-# step 3: go back to your branch and merge wilka's
-git checkout samh; git merge nicegui
-```
-
-**pushing to wilka: do a pull request**
-[github link](https://github.com/wcarvalho/human-dyna-web/compare/nicegui...samh?expand=1)
 
 ## Testing locally
 ```
