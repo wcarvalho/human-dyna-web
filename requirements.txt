@@ -2,3 +2,6 @@ google-cloud-storage
 python-dotenv
 scikit-image
 polars
+joblib
+safetensors
+ipywidgets

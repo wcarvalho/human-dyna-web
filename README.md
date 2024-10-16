@@ -1,28 +1,46 @@
-# human-dyna-web
+# preplay
 Web experiments for studying Human Dyna experiments
 
 
-## Install
+
+
+## Install (Dev)
+
+**add submodules**
+```
+mkdir libraries
+git submodule add https://github.com/wcarvalho/jaxneurorl libraries/jaxneurorl
+git submodule add https://github.com/wcarvalho/JaxHouseMaze libraries/housemaze
+git submodule add https://github.com/wcarvalho/nicewebrl libraries/nicewebrl
+```
+
+**Install**
+```
+mamba create -n preplay python=3.10 pip wheel -y
+mamba activate preplay
+pip install -e libraries/housemaze -e libraries/nicewebrl -e libraries/jaxneurorl -r requirements.txt
+pip install -U jupyterlab matplotlib
+
+# setting up mamba activation
+mkdir -p $CONDA_PREFIX/etc/conda/activate.d/
+echo 'export PYTHONPATH=$PYTHONPATH:`pwd`' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+echo 'export GOOGLE_CREDENTIALS=keys/datastore-key.json' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+```
+
+## Install (regular)
 
 **adding submodules**
-```
-git submodule add https://github.com/wcarvalho/jaxneurorl libraries/jaxneurorl
 
 ```
-
-```
-conda create -n human-dyna-web python=3.10 pip wheel -y
-conda activate human-dyna-web
-# optionally add   --no-deps if just need library and dependencies already installed
-
-# if developing sublibraries, load the submodules and install from there
-pip install -e libraries/housemaze -e libraries/nicewebrl
+conda create -n preplay python=3.10 pip wheel -y
+conda activate preplay
 
 # otherwise, use github installs
-pip install git+https://github.com/wcarvalho/JaxHouseMaze.git git+https://github.com/wcarvalho/nicewebrl -r requirements.txt
+pip install git+https://github.com/wcarvalho/jaxneurorl.git git+https://github.com/wcarvalho/JaxHouseMaze.git git+https://github.com/wcarvalho/nicewebrl.git -r requirements.txt
 
-# activation
-echo 'exportecho  GOOGLE_CREDENTIALS=keys/datastore-key.json' >> $activation_dir/env_vars.sh
+# setting up conda activation
+echo 'export PYTHONPATH=$PYTHONPATH:`pwd`' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+echo 'export GOOGLE_CREDENTIALS=keys/datastore-key.json' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
 
 ```
 
