@@ -492,7 +492,7 @@ def make_block(
             create_env_stage(
               name=phase_1_maze_name,
               maze_name=phase_1_maze_name,
-              metadata=dict(maze=phase_1_maze_name),
+              metadata=dict(maze=phase_1_maze_name, condition=0),
               training=True,
               min_success=min_success or min_success_train,
               max_episodes=max_episodes or max_episodes_train),

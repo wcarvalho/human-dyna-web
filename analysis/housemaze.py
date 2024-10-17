@@ -664,3 +664,6 @@ def plot_reaction_times(group1, group2, label1='group1', label2='group2'):
 
     plt.tight_layout()
     plt.show()
+
+
+

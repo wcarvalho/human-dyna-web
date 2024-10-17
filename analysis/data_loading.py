@@ -296,10 +296,10 @@ def get_block_stage_description(datum):
     ####################
     # stage information
     ####################
-    stage_desc = datum['metadata'].get('desc')
-
     return dict(
-        stage=stage_desc,
+        maze=datum['metadata'].get('maze'),
+        condition=datum['metadata'].get('condition', 0),
+        name=datum['name'],
         block=block_desc,
         manipulation=block_manipulation,
         episode_idx=datum['metadata']['episode_idx'],
