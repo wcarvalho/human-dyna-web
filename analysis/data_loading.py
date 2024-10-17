@@ -1,5 +1,6 @@
 from joblib import Parallel, delayed
 from functools import partial
+from typing import Optional
 import polars as pl
 import json
 import copy
@@ -21,7 +22,7 @@ from housemaze import utils
 from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import mazes
 from nicewebrl import nicejax
-
+from nicewebrl.dataframe import DataFrame
 from jaxneurorl.agents import value_based_basics as vbb
 
 class EpisodeData(NamedTuple):
@@ -336,7 +337,51 @@ def separate_data_by_block_stage(data: List[dict]):
     return grouped_data, infos
 
 
-def make_episode_data(data: List[dict], example_timestep: multitask_env.TimeStep):
+def make_row(
+        datum: dict,
+        timesteps: multitask_env.TimeStep,
+        file: str):
+    """THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
+
+    Args:
+        datum (dict): _description_
+        timesteps (multitask_env.TimeStep): _description_
+        file (str): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    groups = datum['metadata']['block_metadata'].get('groups')
+    row = dict(
+        maze=datum['metadata'].get('maze'),
+        condition=datum['metadata'].get('condition', 0),
+        name=datum['name'],
+        block=datum['metadata']['block_metadata']['desc'],
+        manipulation=datum['metadata']['block_metadata'].get('manipulation', None),
+        episode_idx=datum['metadata']['episode_idx'],
+        eval=datum['metadata']['eval'],
+        task=int(get_task_object(timesteps)),
+        room=int(get_task_room(timesteps, task_groups=groups)),
+    )
+    row.update(datum['user_data'])
+    ##########
+    # get experiment name from file
+    ##########
+    # '/path/data_user=3712207029_name=exp3-v2-r1-t30_exp=3_debug=0.json'
+    # e.g. ['data', 'user=3712207029', 'name=exp3-v2-r1-t30', 'exp=3', 'debug=0.json']
+    pieces = os.path.basename(file).split("_")
+
+    name = [k for k in pieces if 'name' in k]
+    assert len(name) == 1
+
+    # e.g. 'exp3-v2-r1-t30'
+    row['exp'] = name[0].split("=")[1]
+    return row
+
+def make_episode_data(
+        data: List[dict],
+        example_timestep: multitask_env.TimeStep,
+        file: Optional[str] = None):
     """This groups all of the data by block/stage information and prepares 
         (1) a list of EpisodeData objects per block/stage
         (2) a dataframe which summarizes all episode information.
@@ -384,60 +429,50 @@ def make_episode_data(data: List[dict], example_timestep: multitask_env.TimeStep
             timesteps=timesteps,
 
         )
-
-        ######################
-        # THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
-        ######################
-        datum0 = red[0]
-        groups = datum0['metadata']['block_metadata'].get('groups')
-
-        info = copy.deepcopy(gd_infos[key])
-        info.update(
-            task=get_task_object(timesteps),
-            room=get_task_room(timesteps, task_groups=groups),
+        episode_info[episode_idx] = make_row(
+            datum=raw_episode_data[0],
+            timesteps=timesteps,
+            file=file,
         )
-        # add in user information to dataframe
-        info.update(datum0['user_data'])
-
-        episode_info[episode_idx] = info
 
     episode_info = pl.DataFrame(episode_info)
     return episode_info, episode_data
 
-def process_file(file, example_timestep, overwrite):
-    user_filename = file.split("/")[-1].split(".json")[0]
-    base_path = file.split(user_filename)[0]
-    timesteps_filename = f"{base_path}/{user_filename}_timesteps.pickle"
-    df_filename = f"{base_path}/{user_filename}_df.csv"
-    
-    if (os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite):
-        episode_df = pl.read_csv(df_filename)
-        with open(timesteps_filename, 'rb') as f:
-            episode_data = pickle.load(f)
-    else:
-        with open(file, 'r') as f:
-            data = json.load(f)
 
-        finished = data[-1].get("finished", False)
-        if not finished:
-            return None, None
+def make_all_episode_data(files, example_timestep, debug=False, overwrite=False):
+    def process_file(file):
+        user_filename = file.split("/")[-1].split(".json")[0]
+        base_path = file.split(user_filename)[0]
+        if debug:
+            timesteps_filename = f"{base_path}/{user_filename}_debug_timesteps.pickle"
+            df_filename = f"{base_path}/{user_filename}_debug_df.csv"
+        else:
+            timesteps_filename = f"{base_path}/{user_filename}_timesteps.pickle"
+            df_filename = f"{base_path}/{user_filename}_df.csv"
 
-        episode_df, episode_data = make_episode_data(data, example_timestep)
-        episode_df.write_csv(df_filename)
-        with open(timesteps_filename, 'wb') as f:
-            pickle.dump(episode_data, f)
-    
-    return episode_df, episode_data
+        if (os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite):
+            episode_df = pl.read_csv(df_filename)
+            with open(timesteps_filename, 'rb') as f:
+                episode_data = pickle.load(f)
+        else:
+            with open(file, 'r') as f:
+                data = json.load(f)
 
+            finished = data[-1].get("finished", False)
+            if not finished:
+                return None, None
+            if debug:
+                n = max(1, int(len(data)*.05))
+                data = data[:n]
+            episode_df, episode_data = make_episode_data(
+                data, example_timestep, file=file)
+            episode_df.write_csv(df_filename)
+            with open(timesteps_filename, 'wb') as f:
+                pickle.dump(episode_data, f)
 
+        return episode_df, episode_data
 
-
-
-def make_all_episode_data(files, example_timestep, overwrite=False):
-    def process_file_wrapper(file):
-        return process_file(file, example_timestep, overwrite)
-
-    results = Parallel(n_jobs=-1)(delayed(process_file_wrapper)(file)
+    results = Parallel(n_jobs=-1)(delayed(process_file)(file)
                                   for file in files)
 
     all_episode_data = []
@@ -448,7 +483,6 @@ def make_all_episode_data(files, example_timestep, overwrite=False):
             all_episode_data.extend(episode_data)
             episode_df_list.append(episode_df)
 
-    episode_df = pl.concat(episode_df_list).with_row_count(name="index").with_columns(
-        pl.col("index").alias("index"))
+    episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
 
-    return episode_df, all_episode_data
+    return DataFrame(episode_df, all_episode_data)

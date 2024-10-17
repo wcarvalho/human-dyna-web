@@ -9,7 +9,7 @@ from pathlib import Path
 ##############################
 def initialize_storage_client(bucket_name='human-dyna'):
     storage_client = storage.Client.from_service_account_json(
-        'projects/humansf/google_cloud_key.json')
+        os.environ['GOOGLE_CREDENTIALS'])
     bucket = storage_client.bucket(bucket_name)
     return bucket
 

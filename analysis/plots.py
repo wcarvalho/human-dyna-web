@@ -23,12 +23,8 @@ model_colors = {
 }
 
 model_names = {
-    'dyna': 'multi-task preplay',
-    'bfs': 'breadth-first search',
-    'dfs': 'depth-first search',
     'human_terminate': 'Human (finished)',
-}
-model_names = {
+    'human_success': 'Human (Succeeded)',
     'qlearning': 'Q-learning',
     'usfa': 'Successor features',
     'dyna': 'Multitask preplay',
@@ -63,7 +59,7 @@ def success(e: EpisodeData):
     success = rewards > .5
     return success.any().astype(np.float32)
 
-def sucess_or_not_terminate(e: EpisodeData):
+def success_or_not_terminate(e: EpisodeData):
     terminated = e.timesteps.last().any()
     succeeded = success(e) > 0
     keep = not terminated or succeeded
@@ -79,8 +75,11 @@ def went_to_junction(episode_data, junction=(0, 11)):
     return match.any().astype(jnp.float32)  # if any matched
 
 
+def total_rt(e: EpisodeData):
+    return sum(e.reaction_times[:-1]/1000.)
+
 def avg_rt(e: EpisodeData):
-    return np.mean(e.reaction_times)/1000.
+    return np.mean(e.reaction_times[:-1])/1000.
 
 def first_rt(e: EpisodeData):
     return e.reaction_times[0]/1000.
@@ -210,7 +209,13 @@ def plot_train_reaction_times(
     n_cols = min(n_cols, n_stages)
     n_rows = (n_stages + n_cols - 1) // n_cols
 
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False)
+    if n_stages == 1:
+        fig, ax = plt.subplots(figsize=(4, 4))
+        axs = np.array([[ax]])  # Wrap the single axis in a 2D array
+    else:
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False)
+        if n_rows == 1:
+            axs = axs.reshape(1, -1)  # Ensure axs is always 2D
 
     for i, name in enumerate(stages):
         row = i // n_cols
@@ -294,7 +299,7 @@ def plot_train_reaction_times_dual(
     for i, name in enumerate(stages):
         sub_df = user_df.filter(name=name, room=0)
 
-        for j, (rt_fn, rt_label) in enumerate([('first', 'Average'), ('speed', 'Speed')]):
+        for j, (rt_fn, rt_label) in enumerate([('first', 'First'), ('speed', 'Speed')]):
             ax = axs[i, j]
             all_reaction_times = []
 
@@ -364,8 +369,13 @@ def plot_train_success_rate_histograms(
     n_cols = min(n_cols, n_stages)
     n_rows = (n_stages + n_cols - 1) // n_cols
 
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(
-        6 * n_cols, 5 * n_rows), squeeze=False)
+    if n_stages == 1:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        axs = np.array([[ax]])  # Wrap the single axis in a 2D array
+    else:
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(12 * n_cols, 6 * n_rows))
+        if n_rows == 1:
+            axs = axs.reshape(1, -1)  # Ensure axs is always 2D
 
     max_frequency = 0
 
@@ -465,8 +475,13 @@ def plot_episode_counts(
     n_cols = min(n_cols, n_stages)
     n_rows = (n_stages + n_cols - 1) // n_cols
 
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(
-        6 * n_cols, 5 * n_rows), squeeze=False)
+    if n_stages == 1:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        axs = np.array([[ax]])  # Wrap the single axis in a 2D array
+    else:
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(12 * n_cols, 6 * n_rows))
+        if n_rows == 1:
+            axs = axs.reshape(1, -1)  # Ensure axs is always 2D
 
     max_frequency = 0
 
@@ -521,14 +536,15 @@ def plot_episode_counts(
     plt.subplots_adjust(top=0.95)  # Adjust to make room for suptitle
     plt.show()
 
-def plot_episode_length_seconds(user_df: DataFrame, **kwargs):
+def plot_episode_length_seconds(user_df: DataFrame, settings=None, **kwargs):
     title_size = kwargs.pop('title_size', DEFAULT_TITLE_SIZE)
     label_size = kwargs.pop('label_size', DEFAULT_LABEL_SIZE)
     legend_size = kwargs.pop('legend_size', DEFAULT_LEGEND_SIZE)
 
     stages = kwargs.pop('stages', None)
 
-    user_df = user_df.filter(eval=False)
+    settings = settings or dict(eval=False)
+    user_df = user_df.filter(**settings)
     stages = stages or user_df['name'].unique()
     user_ids = user_df['user_id'].unique()
 
@@ -541,7 +557,7 @@ def plot_episode_length_seconds(user_df: DataFrame, **kwargs):
             user_data = user_df.filter(user_id=user_id, name=stage, room=0)
             for episode in user_data.episodes:
                 # Calculate episode length as the sum of reaction times
-                episode_length = sum(episode.reaction_times)
+                episode_length = total_rt(episode)
                 user_episode_lengths[stage][user_id].append(episode_length)
 
     # Calculate overall episode lengths across all stages
@@ -552,7 +568,15 @@ def plot_episode_length_seconds(user_df: DataFrame, **kwargs):
     n_stages = len(stages)
     n_cols = min(2, n_stages)
     n_rows = (n_stages + 1) // 2  # +1 for the overall plot
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(12 * n_cols, 6 * n_rows))
+    if n_stages == 1:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        axs = np.array([[ax]])  # Wrap the single axis in a 2D array
+    else:
+        fig, axs = plt.subplots(
+            n_rows, n_cols, figsize=(8 * n_cols, 4 * n_rows))
+        if n_rows == 1:
+            axs = axs.reshape(1, -1)  # Ensure axs is always 2D
+
 
     # Function to plot histogram and add statistics
     def plot_histogram(ax, data, title):
@@ -597,11 +621,11 @@ def plot_episode_length_seconds(user_df: DataFrame, **kwargs):
         # Set y-axis limit with 10% padding
         axs[row, col].set_ylim(0, max_frequency * 1.1)
 
-    # Plot overall histogram with consistent y-axis
-    axs[-1, -1].clear()  # Clear the previous plot
-    plot_histogram(axs[-1, -1], overall_episode_lengths, 'Overall')
-    # Set y-axis limit with 10% padding
-    axs[-1, -1].set_ylim(0, max_frequency * 1.1)
+    ## Plot overall histogram with consistent y-axis
+    #axs[-1, -1].clear()  # Clear the previous plot
+    #plot_histogram(axs[-1, -1], overall_episode_lengths, 'Overall')
+    ## Set y-axis limit with 10% padding
+    #axs[-1, -1].set_ylim(0, max_frequency * 1.1)
 
     # Remove any unused subplots
     for i in range(n_stages + 1, n_rows * n_cols):
@@ -641,20 +665,20 @@ def plot_reaction_times_across_conditions(episodes1: List[EpisodeData], episodes
     plt.show()
 
 
-def split_filter_fn(df: DataFrame):
+def split_filter_fn(df: DataFrame, min_successes: int = 16):
     successes = df.apply(success)
     remove = True
     if len(successes) == 0:
         return 0, remove
     nsuccess = sum(successes)
-    remove = nsuccess < 16
+    remove = nsuccess < min_successes
     return nsuccess, remove
 
 
 def m2_reaction_times(user_df: DataFrame):
     subset = user_df.subset(
         filter_fn=split_filter_fn,
-        output_filter_fn=lambda e: not sucess_or_not_terminate(e),
+        output_filter_fn=lambda e: not success_or_not_terminate(e),
         filter_settings=dict(eval=False),
         output_settings=dict(manipulation=2),
     )
@@ -689,7 +713,7 @@ def m2_reaction_times(user_df: DataFrame):
 def m2_reaction_time_difference(user_df: DataFrame):
     subset = user_df.subset(
         filter_fn=split_filter_fn,
-        output_filter_fn=lambda e: not sucess_or_not_terminate(e),
+        output_filter_fn=lambda e: not success_or_not_terminate(e),
         filter_settings=dict(eval=False),
         output_settings=dict(manipulation=2),
     )
@@ -737,9 +761,12 @@ def m2_reaction_time_difference(user_df: DataFrame):
 
 def m4_reaction_times(user_df: DataFrame, setting='short'):
     subset = user_df.subset(
-        filter_fn=split_filter_fn,
-        output_filter_fn=lambda e: not sucess_or_not_terminate(e),
-        filter_settings=dict(eval=False),
+        filter_fn=partial(split_filter_fn, min_successes=8),
+        output_filter_fn=lambda e: not success_or_not_terminate(e),
+        #output_filter_fn=lambda e: not success(e),
+        filter_settings=dict(
+            maze='big_m4_maze_short' if setting == 'short' else 'big_m4_maze_long',
+        ),
         output_settings=dict(manipulation=4),
     )
     if setting == 'short':
@@ -778,9 +805,12 @@ def m4_reaction_times(user_df: DataFrame, setting='short'):
 
 def m4_reaction_time_difference(user_df: DataFrame, setting='short'):
     subset = user_df.subset(
-        filter_fn=split_filter_fn,
-        output_filter_fn=lambda e: not sucess_or_not_terminate(e),
-        filter_settings=dict(eval=False),
+        filter_fn=partial(split_filter_fn, min_successes=8),
+        output_filter_fn=lambda e: not success_or_not_terminate(e),
+        #output_filter_fn=lambda e: not success(e),
+        filter_settings=dict(
+            maze='big_m4_maze_short' if setting == 'short' else 'big_m4_maze_long',
+        ),
         output_settings=dict(manipulation=4),
     )
     if setting == 'short':
@@ -836,7 +866,7 @@ def m3_reaction_times(user_df: DataFrame, episode_selection='latest'):
 
     subset = user_df.subset(
         filter_fn=split_filter_fn,
-        output_filter_fn=lambda e: not sucess_or_not_terminate(e),
+        output_filter_fn=lambda e: not success_or_not_terminate(e),
         filter_settings=dict(eval=False),
         output_settings=dict(manipulation=manipulation),
     )
@@ -990,7 +1020,7 @@ def create_success_termination_results_m3(user_df, model_df):
 
     # Success rate data
     data = {
-        'human': get_human_data(fn),
+        'human_success': get_human_data(fn),
         'human_terminate': get_human_data(lambda e: e.timesteps.last().any()),
         'qlearning': model_df.apply(fn=model_fn, post_fn=post_fn, algo="qlearning", **model_setting),
         'dyna': model_df.apply(fn=model_fn, post_fn=post_fn, algo="dynaq_shared", **model_setting),
@@ -1001,7 +1031,7 @@ def create_success_termination_results_m3(user_df, model_df):
     bar_plot_results(
         data,
         #data_termination,
-        title='Manipulation 3: Success vs Termination Rate',
+        title='Success Rate',
         ylabel='Rate'
     )
 
@@ -1020,7 +1050,7 @@ def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame):
         fn=fn,
         filter_fn=split_filter_fn,
         filter_settings=dict(manipulation=manipulation, eval=False),
-        output_filter_fn=lambda e: not sucess_or_not_terminate(e),
+        output_filter_fn=lambda e: not success_or_not_terminate(e),
         output_settings=dict(manipulation=manipulation, eval=True),
     )
 
@@ -1042,10 +1072,37 @@ def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame):
         'bfs': model_df.apply(fn=model_fn, post_fn=post_fn, algo='bfs', **model_setting),
         'dfs': model_df.apply(fn=model_fn, post_fn=post_fn, algo='dfs', **model_setting),
     }
+    figsize=(10, 6)
+    title='Partially reused training path when shorter path exists'
+    ylabel='Proportion'
+    plt.figure(figsize=figsize)
+    sns.set_style("whitegrid")
 
-    bar_plot_results(
-        data,
-        figsize=(10, 6),
-        title='Partially reused training path when shorter path exists',
-        ylabel='Proportion'
-    )
+    error_bars=True 
+    model_dict = data
+    # Prepare data for plotting
+    models = list(model_dict.keys())
+    values = [np.mean(arr) for arr in model_dict.values()]
+    errors = [np.std(arr)/np.sqrt(len(arr))
+              for arr in model_dict.values()] if error_bars else None
+
+    # Create the bar plot with consistent colors
+    bars = plt.bar([model_names.get(model, model) for model in models], values, yerr=errors,
+                   capsize=5, color=[model_colors.get(model, '#333333') for model in models])
+
+    # Customize the plot
+    plt.title(title, fontsize=16)
+    plt.xlabel("Data source", fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    plt.xticks(rotation=45, ha='right')
+
+    # Add value labels on top of each bar
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                 f'{height:.2f}',
+                 ha='center', va='bottom')
+
+    # Adjust layout and display the plot
+    plt.tight_layout()
+    plt.show()

@@ -417,6 +417,7 @@ def make_env_stage(
         duration=None,
         name='stage',
         use_done=False,
+        **kwargs,
         ):
     metadata = metadata or {}
     metadata['eval'] = not training
@@ -452,6 +453,7 @@ def make_env_stage(
         custom_data_fn=custom_data_fn,
         duration=duration if not training else None,
         notify_success=True,
+        **kwargs,
     )
 
 def make_block(
@@ -504,7 +506,9 @@ def make_block(
               training=False,
               min_success=1,
               max_episodes=1,
-              duration=eval_duration),
+              duration=eval_duration,
+              end_on_final_timestep=True,
+              ),
       ]
     if phase_2_cond2_maze_name is not None:
         stages.append(
@@ -515,7 +519,9 @@ def make_block(
               training=False,
               min_success=1,
               max_episodes=1,
-              duration=eval_duration))
+              duration=eval_duration,
+              end_on_final_timestep=True,
+              ))
 
     block = Block(
         metadata=dict(

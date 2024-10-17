@@ -314,7 +314,7 @@ def create_reaction_times_video(images, reaction_times, output_file, fps=1):
         os.makedirs(output_dir)
 
     n = len(images)
-    width = 5
+    width = 4
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(2*width, width))
 
     def update(frame):
