@@ -252,7 +252,8 @@ def stage_display_fn(stage, container):
                     extras=['cuddled-lists'])
         
         ui.markdown("Task objects will be selected from the set below.")
-        ui.markdown("**We note objects relevant to phase 2**")
+        if SAY_REUSE:
+            ui.markdown("**We note objects relevant to phase 2**")
         #phase 2 reward
         #idxs = char2idx.values()
         groups = stage.metadata['block_metadata'].get('groups', None)
@@ -269,10 +270,13 @@ def stage_display_fn(stage, container):
             for i, idx in enumerate(order):
                 cat = cats[idx]
                 axs[i].imshow(image_data['images'][cat])
-                axs[i].set_title(
-                    f'{keys[cat]}: {eval_prices[idx]}' if eval_prices[idx] == 0 else f'{keys[cat]}: {eval_prices[idx]}',
-                    fontsize=10, color='green' if eval_prices[idx] != 0 else 'black',
-                    weight='bold' if eval_prices[idx] != 0 else 'normal')
+                if SAY_REUSE:
+                    axs[i].set_title(
+                        f'{keys[cat]}: {eval_prices[idx]}' if eval_prices[idx] == 0 else f'{keys[cat]}: {eval_prices[idx]}',
+                        fontsize=10, color='green' if eval_prices[idx] != 0 else 'black',
+                        weight='bold' if eval_prices[idx] != 0 else 'normal')
+                else:
+                    axs[i].set_title(f'{keys[cat]}')
                 axs[i].set_xticks([])
                 axs[i].set_yticks([])
                 axs[i].axis("off")

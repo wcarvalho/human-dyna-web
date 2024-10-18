@@ -1,3 +1,4 @@
+import collections
 from functools import partial
 from typing import Callable, Optional, List
 import matplotlib.pyplot as plt
@@ -8,6 +9,7 @@ import numpy as np
 from scipy import stats
 from collections import defaultdict
 
+from housemaze.env import KeyboardActions
 from analysis.data_loading import EpisodeData
 from analysis import housemaze
 from nicewebrl.dataframe import DataFrame
@@ -636,15 +638,15 @@ def plot_episode_length_seconds(user_df: DataFrame, settings=None, **kwargs):
     plt.subplots_adjust(top=0.92)  # Adjust to make room for suptitle
     plt.show()
 
-###################
+#########################################################
 # Manipulation-specific plots
-###################
+#########################################################
 
 def plot_reaction_times_across_conditions(episodes1: List[EpisodeData], episodes2: List[EpisodeData], label1='group1', label2='group2'):
     rt_types = ['speed', 'first']
     rt_functions = [avg_rt, first_rt]
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
 
     for ax, rt_fn, rt_type in zip(axes, rt_functions, rt_types):
         group1_rts = np.array([rt_fn(e) for e in episodes1])
@@ -657,9 +659,10 @@ def plot_reaction_times_across_conditions(episodes1: List[EpisodeData], episodes
         sns.boxplot(data=box_data, ax=ax, width=0.5, palette=['green', 'red'])
         sns.stripplot(data=box_data, ax=ax, color='black', alpha=0.5, jitter=True)
 
-        ax.set_xticklabels(labels)
-        ax.set_ylabel('Reaction Time')
-        ax.set_title(f'{rt_type.capitalize()} Reaction Time')
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_ylabel('Reaction Time', fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_title(f'{rt_type.capitalize()}', fontsize=DEFAULT_TITLE_SIZE)
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
 
     plt.tight_layout()
     plt.show()
@@ -674,6 +677,9 @@ def split_filter_fn(df: DataFrame, min_successes: int = 16):
     remove = nsuccess < min_successes
     return nsuccess, remove
 
+#########################################################
+# Shortcut manipulation (2)
+#########################################################
 
 def m2_reaction_times(user_df: DataFrame):
     subset = user_df.subset(
@@ -686,17 +692,20 @@ def m2_reaction_times(user_df: DataFrame):
     cond2 = subset.filter(manipulation=2, eval=True, condition=2)
 
     # Create a figure with 3 subplots for render_path
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
     
     # Render paths on separate subplots
     housemaze.render_path(subset.episodes[0], ax=axs[0])
-    axs[0].set_title("Training")
+    axs[0].set_title("Training", fontsize=DEFAULT_TITLE_SIZE)
     
     housemaze.render_path(cond1.episodes[0], ax=axs[1])
-    axs[1].set_title("On-path")
+    axs[1].set_title("On-path", fontsize=DEFAULT_TITLE_SIZE)
     
     housemaze.render_path(cond2.episodes[0], ax=axs[2])
-    axs[2].set_title("Off-path")
+    axs[2].set_title("Off-path", fontsize=DEFAULT_TITLE_SIZE)
+
+    for ax in axs:
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
 
     plt.tight_layout()
     plt.show()
@@ -736,15 +745,17 @@ def m2_reaction_time_difference(user_df: DataFrame):
                     rt_cond2 - rt_cond1)  # Off-path minus On-path
 
     # Plot the distribution of RT differences
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
 
     for ax, rt_type in zip([ax1, ax2], ['first', 'avg']):
         sns.histplot(rt_differences[rt_type], kde=True, ax=ax)
         ax.axvline(x=0, color='r', linestyle='--')
         ax.set_title(
-            f"{rt_type.capitalize()} RT Difference (Start Manipulation)")
-        ax.set_xlabel("RT Difference (Off-path - On-path)")
-        ax.set_ylabel("Count")
+            f"Start Manipulation ({rt_type.capitalize()})",
+            fontsize=DEFAULT_TITLE_SIZE)
+        ax.set_xlabel("RT Difference (Off-path - On-path)", fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_ylabel("Count", fontsize=DEFAULT_LABEL_SIZE)
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
 
         # Calculate and display statistics
         positive_count = sum(diff > 0 for diff in rt_differences[rt_type])
@@ -752,114 +763,348 @@ def m2_reaction_time_difference(user_df: DataFrame):
         positive_percentage = (positive_count / total_count) * 100
 
         ax.text(0.05, 0.95, f"Total users: {total_count}\n"
-                f"Users with positive difference: {positive_count} ({positive_percentage:.2f}%)",
+                f"|positive difference|: {positive_count} ({positive_percentage:.2f}%)",
                 transform=ax.transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                fontsize=DEFAULT_LABEL_SIZE)
 
     plt.tight_layout()
     plt.show()
 
-def m4_reaction_times(user_df: DataFrame, setting='short'):
-    subset = user_df.subset(
-        filter_fn=partial(split_filter_fn, min_successes=8),
-        output_filter_fn=lambda e: not success_or_not_terminate(e),
-        #output_filter_fn=lambda e: not success(e),
-        filter_settings=dict(
-            maze='big_m4_maze_short' if setting == 'short' else 'big_m4_maze_long',
-        ),
-        output_settings=dict(manipulation=4),
-    )
-    if setting == 'short':
-        cond0 = subset.filter(maze='big_m4_maze_short')
-        cond1 = subset.filter(maze='big_m4_maze_short_eval_diff')
-        cond2 = subset.filter(maze='big_m4_maze_short_eval_same')
-    elif setting == 'long':
-        cond0 = subset.filter(maze='big_m4_maze_long')
-        cond1 = subset.filter(maze='big_m4_maze_long_eval_diff')
-        cond2 = subset.filter(maze='big_m4_maze_long_eval_same')
+#########################################################
+# Planning manipulation (4)
+#########################################################
 
-    # Create a figure with 3 subplots for render_path
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
-    # Render paths on separate subplots
-    housemaze.render_path(cond0.episodes[0], ax=axs[0])
-    axs[0].set_title("Training")
+def plot_initial_action_distribution(cond1, cond2, key2model, model_colors, action_indices):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
 
-    housemaze.render_path(cond1.episodes[0], ax=axs[1])
-    axs[1].set_title('New target location')
+    def plot_action_distribution(ax, episodes, title):
+        action_counts = np.zeros(len(action_indices))
+        for episode in episodes:
+            action0 = episode.actions[0]
+            action_counts[action_indices.index(int(action0))] += 1
 
-    housemaze.render_path(cond2.episodes[0], ax=axs[2])
-    axs[2].set_title('Same target location')
+        action_proportions = action_counts / len(episodes)
+
+        x = np.arange(len(action_indices))
+
+        bars = ax.bar(x, action_proportions)
+
+        ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+        ax.set_ylim(0, 1)
+        ax.set_xticks(x)
+
+        # Customize x-axis labels and add model names
+        x_labels = []
+        for index, action in enumerate(action_indices):
+            if action.name in key2model:
+                model = key2model[action.name]
+                x_labels.append(action.name)
+                #x_labels.append(f"{action.name}\n{model}")
+                bars[index].set_color(model_colors.get(model, '#333333'))
+            else:
+                x_labels.append(action.name)
+
+        ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_ylabel('Proportion', fontsize=DEFAULT_LABEL_SIZE)
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
+
+        # Add value labels on top of each bar
+        for rect in bars:
+            height = rect.get_height()
+            ax.text(rect.get_x() + rect.get_width()/2., height,
+                    f'{height:.2f}',
+                    ha='center', va='bottom', fontsize=DEFAULT_LEGEND_SIZE)
+
+    plot_action_distribution(ax2, cond1.episodes, "New target location")
+    plot_action_distribution(ax1, cond2.episodes, "Same target location")
+
 
     plt.tight_layout()
     plt.show()
 
-    # Plot reaction times
-    plot_reaction_times_across_conditions(
-        cond1.episodes,
-        cond2.episodes,
-        label1='New target location',
-        label2='Same target location'
-    )
-
-
-def m4_reaction_time_difference(user_df: DataFrame, setting='short'):
+def m4_initial_action_distribution(user_df, setting: str='short'):
+    assert setting in ['short', 'long']
     subset = user_df.subset(
         filter_fn=partial(split_filter_fn, min_successes=8),
-        output_filter_fn=lambda e: not success_or_not_terminate(e),
-        #output_filter_fn=lambda e: not success(e),
-        filter_settings=dict(
-            maze='big_m4_maze_short' if setting == 'short' else 'big_m4_maze_long',
-        ),
+        filter_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
         output_settings=dict(manipulation=4),
     )
+
+    cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+    cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+
     if setting == 'short':
-        cond1 = subset.filter(maze='big_m4_maze_short_eval_diff')
-        cond2 = subset.filter(maze='big_m4_maze_short_eval_same')
-    elif setting == 'long':
-        cond1 = subset.filter(maze='big_m4_maze_long_eval_diff')
-        cond2 = subset.filter(maze='big_m4_maze_long_eval_same')
+        key2model = {
+            'right': 'Multitask preplay',
+            'up': 'Model-free',
+            'left': 'Planning',
+        }
+        action_indices = [KeyboardActions.right,
+                          KeyboardActions.up,
+                          KeyboardActions.left,
+                          KeyboardActions.down,
+                          ]
     else:
-        raise ValueError("Setting must be 'short' or 'long'")
+        key2model = {
+            'left': 'Multitask preplay',
+            'down': 'Model-free',
+            'right': 'Planning',
+        }
+        action_indices = [KeyboardActions.left,
+                          KeyboardActions.down,
+                          KeyboardActions.right,
+                          KeyboardActions.up,
+                          ]
 
-    # Compute RT difference for each user for both RT types
-    rt_differences = {'first': [], 'avg': []}
-    users = set(cond1['user_id'].unique()) & set(cond2['user_id'].unique())
+    model_colors = {
+        'Model-free': '#CC79A7',
+        'Multitask preplay': '#F0E442',
+        'Planning': '#E69F00'
+    }
 
-    for user in users:
-        cond1_user = cond1.filter(user_id=user)
-        cond2_user = cond2.filter(user_id=user)
+    plot_initial_action_distribution(
+        cond1, cond2, key2model, model_colors, action_indices=action_indices)
 
-        if len(cond1_user.episodes) > 0 and len(cond2_user.episodes) > 0:
-            for rt_type, rt_fn in [('first', first_rt), ('avg', avg_rt)]:
-                rt_cond1 = np.mean([rt_fn(e) for e in cond1_user.episodes])
-                rt_cond2 = np.mean([rt_fn(e) for e in cond2_user.episodes])
-                rt_differences[rt_type].append((rt_cond1 - rt_cond2))
 
-    # Plot the distribution of RT differences
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+def plot_path_lengths_m4(user_df, setting: str = 'short'):
+    assert setting in ['short', 'long']
 
-    for ax, rt_type in zip([ax1, ax2], ['first', 'avg']):
-        sns.histplot(rt_differences[rt_type], kde=True, ax=ax)
-        ax.axvline(x=0, color='r', linestyle='--')
-        ax.set_title(
-            f"{rt_type.capitalize()} ({setting.capitalize()} setting)")
-        ax.set_xlabel("Time(New target location) - Time(Old target location)")
-        ax.set_ylabel("Count")
+    def create_figure(subset, title):
+        # Calculate path lengths for each condition
+        cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+        cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+        path_lengths_diff = [len(e.actions) for e in cond1.episodes]
+        path_lengths_same = [len(e.actions) for e in cond2.episodes]
 
-        # Calculate and display statistics
-        positive_count = sum(diff > 0 for diff in rt_differences[rt_type])
-        total_count = len(rt_differences[rt_type])
-        positive_percentage = (positive_count / total_count) * 100
+        # Calculate means and standard errors
+        mean_diff = np.mean(path_lengths_diff)
+        mean_same = np.mean(path_lengths_same)
+        se_diff = np.std(path_lengths_diff) / np.sqrt(len(path_lengths_diff))
+        se_same = np.std(path_lengths_same) / np.sqrt(len(path_lengths_same))
 
-        ax.text(0.05, 0.95, f"Total users: {total_count}\n"
-                f"Users with positive difference: {positive_count} ({positive_percentage:.2f}%)",
-                transform=ax.transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        # Create the plot
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        fig.suptitle(
+            f'{title} - Path Lengths for {setting.capitalize()} Maze', fontsize=16)
 
-    plt.tight_layout()
-    plt.show()
+        # Plot for different target location
+        ax1.bar(['Different'], [mean_diff], yerr=[
+                se_diff], capsize=10, color='skyblue')
+        ax1.set_ylabel('Path Length')
+        ax1.set_title('New Target Location')
+        ax1.text('Different', mean_diff,
+                 f'{mean_diff:.2f}', ha='center', va='bottom')
 
+        # Plot for same target location
+        ax2.bar(['Same'], [mean_same], yerr=[se_same],
+                capsize=10, color='lightgreen')
+        ax2.set_ylabel('Path Length')
+        ax2.set_title('Same Target Location')
+        ax2.text('Same', mean_same,
+                 f'{mean_same:.2f}', ha='center', va='bottom')
+
+        # Set y-axis limits to be the same for both plots
+        y_max = max(mean_diff + se_diff, mean_same + se_same) * 1.1
+        ax1.set_ylim(0, y_max)
+        ax2.set_ylim(0, y_max)
+
+        # Add individual data points
+        sns.stripplot(x=['Different'] * len(path_lengths_diff),
+                      y=path_lengths_diff, ax=ax1, color='navy', alpha=0.5)
+        sns.stripplot(x=['Same'] * len(path_lengths_same),
+                      y=path_lengths_same, ax=ax2, color='darkgreen', alpha=0.5)
+
+        plt.tight_layout()
+        plt.show()
+
+    # Create figure for all episodes
+    subset_all = user_df.subset(
+        filter_fn=partial(split_filter_fn, min_successes=8),
+        filter_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        output_settings=dict(manipulation=4),
+    )
+    create_figure(subset_all, "All Episodes")
+
+    # Create figure for only successful episodes
+    subset_success = user_df.subset(
+        filter_fn=partial(split_filter_fn, min_successes=8),
+        filter_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        output_settings=dict(manipulation=4),
+        output_filter_fn=lambda e: not success(e),
+    )
+    create_figure(subset_success, "Only Successful Episodes")
+
+
+def plot_episode_lengths_m4(user_df, setting: str = 'short'):
+    assert setting in ['short', 'long']
+
+    def create_figure(subset, title):
+        # Calculate episode lengths for each condition
+        cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+        cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+        episode_lengths_diff = [sum(e.reaction_times[:-1]/1000.0)
+                                for e in cond1.episodes]
+        episode_lengths_same = [sum(e.reaction_times[:-1]/1000.0)
+                                for e in cond2.episodes]
+        episode_lengths_diff = np.asarray(episode_lengths_diff)
+        episode_lengths_same = np.asarray(episode_lengths_same)
+
+        # Calculate means and standard errors
+        mean_diff = np.mean(episode_lengths_diff)
+        mean_same = np.mean(episode_lengths_same)
+        se_diff = np.std(episode_lengths_diff) / \
+            np.sqrt(len(episode_lengths_diff))
+        se_same = np.std(episode_lengths_same) / \
+            np.sqrt(len(episode_lengths_same))
+
+        # Create the plot
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        fig.suptitle(
+            f'{title} - Episode Lengths for {setting.capitalize()} Maze', fontsize=16)
+
+        # Plot for different target location
+        ax1.bar(['Different'], [mean_diff], yerr=[
+                se_diff], capsize=10, color='skyblue')
+        ax1.set_ylabel('Episode Length (seconds)')
+        ax1.set_title('New Target Location')
+        ax1.text('Different', mean_diff,
+                 f'{mean_diff:.2f}', ha='center', va='bottom')
+
+        # Plot for same target location
+        ax2.bar(['Same'], [mean_same], yerr=[se_same],
+                capsize=10, color='lightgreen')
+        ax2.set_ylabel('Episode Length (seconds)')
+        ax2.set_title('Same Target Location')
+        ax2.text('Same', mean_same,
+                 f'{mean_same:.2f}', ha='center', va='bottom')
+
+        # Set y-axis limits to be the same for both plots
+        y_max = max(mean_diff + se_diff, mean_same + se_same) * 1.1
+        ax1.set_ylim(0, y_max)
+        ax2.set_ylim(0, y_max)
+
+        # Add individual data points
+        sns.stripplot(x=['Different'] * len(episode_lengths_diff),
+                      y=episode_lengths_diff, ax=ax1, color='navy', alpha=0.5)
+        sns.stripplot(x=['Same'] * len(episode_lengths_same),
+                      y=episode_lengths_same, ax=ax2, color='darkgreen', alpha=0.5)
+
+        plt.tight_layout()
+        plt.show()
+
+    # Create figure for all episodes
+    subset_all = user_df.subset(
+        filter_fn=partial(split_filter_fn, min_successes=8),
+        filter_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        output_settings=dict(manipulation=4),
+    )
+    create_figure(subset_all, "All Episodes")
+
+    # Create figure for only successful episodes
+    subset_success = user_df.subset(
+        filter_fn=partial(split_filter_fn, min_successes=8),
+        filter_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        output_settings=dict(manipulation=4),
+        output_filter_fn=lambda e: not success(e),
+    )
+    create_figure(subset_success, "Only Successful Episodes")
+
+
+def m4_reaction_times(user_df: DataFrame, setting='short', rt_type='speed'):
+    assert setting in ['short', 'long']
+    assert rt_type in ['speed', 'first']
+
+    def create_plots(output_filter_fn, title_suffix):
+        subset = user_df.subset(
+            filter_fn=partial(split_filter_fn, min_successes=8),
+            output_filter_fn=output_filter_fn,
+            filter_settings=dict(
+                maze=f'big_m4_maze_{setting}',
+            ),
+            output_settings=dict(manipulation=4),
+        )
+
+        cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+        cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+
+        if setting == 'short':
+            key2model = {
+                'right': 'Multitask preplay',
+                'up': 'Model-free',
+                'left': 'Planning',
+            }
+            action_indices = [KeyboardActions.right,
+                              KeyboardActions.up,
+                              KeyboardActions.left,
+                              KeyboardActions.down]
+        else:
+            key2model = {
+                'left': 'Multitask preplay',
+                'down': 'Model-free',
+                'right': 'Planning',
+            }
+            action_indices = [KeyboardActions.left,
+                              KeyboardActions.down,
+                              KeyboardActions.right,
+                              KeyboardActions.up,
+                              ]
+
+        model_colors = {
+            'Model-free': '#CC79A7',
+            'Multitask preplay': '#F0E442',
+            'Planning': '#E69F00'
+        }
+
+        # Create a figure with 2 subplots
+        fig, axs = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
+        fig.suptitle(
+            f"{setting.capitalize()} Maze - {title_suffix} - {rt_type.capitalize()} Reaction Time", fontsize=DEFAULT_TITLE_SIZE)
+
+        # Function to plot reaction times by initial action
+        def plot_rt_by_action(ax, episodes, title):
+            action_rts = {action: [] for action in action_indices}
+            
+            for episode in episodes:
+                initial_action = int(episode.actions[0])
+                if rt_type == 'speed':
+                    rt = avg_rt(episode)
+                else:  # 'first'
+                    rt = first_rt(episode)
+                action_rts[initial_action].append(rt)
+
+            x = range(len(action_indices))
+            means = [np.mean(action_rts[action]) if action_rts[action] else 0 for action in action_indices]
+            errors = [np.std(action_rts[action]) / np.sqrt(len(action_rts[action])) if action_rts[action] else 0 for action in action_indices]
+
+            bars = ax.bar(x, means, yerr=errors, capsize=5)
+
+            for i, action in enumerate(action_indices):
+                if action.name in key2model:
+                    model = key2model[action.name]
+                    bars[i].set_color(model_colors.get(model, '#333333'))
+
+            ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+            ax.set_xlabel('Initial Action', fontsize=DEFAULT_LABEL_SIZE)
+            ax.set_ylabel(f'{rt_type.capitalize()} Reaction Time (s)', fontsize=DEFAULT_LABEL_SIZE)
+            ax.set_xticks(x)
+            ax.set_xticklabels([action.name for action in action_indices], rotation=45, ha='right')
+            ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
+
+        plot_rt_by_action(axs[1], cond1.episodes, 'New target location')
+        plot_rt_by_action(axs[0], cond2.episodes, 'Same target location')
+
+        plt.tight_layout()
+        plt.show()
+
+    # Create plots for all episodes
+    create_plots(None, "All Episodes")
+    ## Create plots for successful episodes only
+    #create_plots(lambda e: success(e), "Successful Episodes Only")
+#########################################################
+# Paths manipulation (3)
+#########################################################
 
 def m3_reaction_times(user_df: DataFrame, episode_selection='latest'):
     manipulation = 3
@@ -892,17 +1137,20 @@ def m3_reaction_times(user_df: DataFrame, episode_selection='latest'):
     new = [e for e in eval_episodes if new_path(e)]
 
     # Create a figure with 3 subplots for render_path
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
 
     # Render paths on separate subplots
     housemaze.render_path(selected_training_episodes[0], ax=axs[0])
-    axs[0].set_title(f"{episode_selection.capitalize()} Training Episode")
+    axs[0].set_title(f"{episode_selection.capitalize()} Training Episode", fontsize=DEFAULT_TITLE_SIZE)
 
     housemaze.render_path(new[0], ax=axs[1])
-    axs[1].set_title("Used new path")
+    axs[1].set_title("Used new path", fontsize=DEFAULT_TITLE_SIZE)
 
     housemaze.render_path(old[0], ax=axs[2])
-    axs[2].set_title("Used old path")
+    axs[2].set_title("Used old path", fontsize=DEFAULT_TITLE_SIZE)
+
+    for ax in axs:
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
 
     plt.tight_layout()
     plt.show()
@@ -922,7 +1170,7 @@ def plot_reaction_times_across_conditions_m3(episodes1: List[EpisodeData], episo
     rt_types = ['speed', 'first']
     rt_functions = [avg_rt, first_rt]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
 
     for ax, rt_fn, rt_type in zip(axes, rt_functions, rt_types):
         group1_rts = np.array([rt_fn(e) for e in episodes1])
@@ -938,9 +1186,10 @@ def plot_reaction_times_across_conditions_m3(episodes1: List[EpisodeData], episo
         sns.stripplot(data=box_data, ax=ax, color='black',
                       alpha=0.5, jitter=True)
 
-        ax.set_xticklabels(labels, rotation=45, ha='right')
-        ax.set_ylabel('Reaction Time')
-        ax.set_title(f'{rt_type.capitalize()} Reaction Time')
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_ylabel('Reaction Time', fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_title(f'{rt_type.capitalize()} Reaction Time', fontsize=DEFAULT_TITLE_SIZE)
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
 
     plt.tight_layout()
     plt.show()

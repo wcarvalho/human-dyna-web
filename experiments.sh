@@ -1,5 +1,17 @@
 # delete local data (useful for testing)
 rm -r data .nicegui;
+########################################################
+# Experiment 4 - no reuse or no timer
+##########################################
+## FIXED NAME
+python launch.py exp3-v3-r1-t0 --env EXP=3 --env SAY_REUSE=1 --env TIMER=0
+https://human-dyna-exp3-v3-r1-t30.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v3-r1-t30.toml
+
+python launch.py exp3-v3-r0-t30 --env EXP=3 --env SAY_REUSE=0 --env TIMER=30
+https://human-dyna-exp3-v3-r0-t30.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v3-r0-t30.toml
+
 
 ########################################################
 # Experiment 3 - launches
@@ -38,7 +50,7 @@ flyctl deploy --config configs/human-dyna-exp3-v1-r0-t30.toml
 rm -r data/*exp3-v1* .nicegui; INST=1 DEBUG=0 NMAN=0 EXP=3 NAME='exp3-v1' SEED=45 python main.py
 
 # debugging command to test
-rm -r data .nicegui; INST=1 DEBUG=1 NMAN=0 EXP=3 NAME='exp3-v1' SEED=44 python main.py
+rm -r data .nicegui; INST=1 DEBUG=1 NMAN=0 EXP=3 SAY_REUSE=0 TIMER=0 NAME='exp3-v1' SEED=44 python main.py
 
 # create the config for putting this online
 # added planning manipulation
