@@ -273,17 +273,7 @@ def dict_to_string(data):
     # Join all pairs with ", " separator
     return ", ".join(pairs)
 
-"""
-data=dict(
-                image_seen_time=imageSeenTime,
-                action_taken_time=keydownTime,
-                computer_interaction=key,
-                action_name=action_name,
-                action_idx=action_idx,
-                timelimit=self.duration,
-                timestep=encoded_timestep,
-            ),
-"""
+
 def get_block_stage_description(datum):
     ####################
     # block information
@@ -458,6 +448,8 @@ def make_all_episode_data(files, example_timestep, debug=False, overwrite=False)
             with open(file, 'r') as f:
                 data = json.load(f)
 
+            if len(data) == 0:
+                return None, None
             finished = data[-1].get("finished", False)
             if not finished:
                 return None, None

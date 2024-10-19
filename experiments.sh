@@ -6,20 +6,21 @@ rm -r data .nicegui;
 ## FIXED NAME
 python launch.py exp3-v3-r1-t0 --env EXP=3 --env SAY_REUSE=1 --env TIMER=0
 https://human-dyna-exp3-v3-r1-t30.fly.dev
-flyctl deploy --config configs/human-dyna-exp3-v3-r1-t30.toml
+flyctl deploy --config "configs/human-dyna-exp3-v3-r1-t0.toml"
 
 python launch.py exp3-v3-r0-t30 --env EXP=3 --env SAY_REUSE=0 --env TIMER=30
 https://human-dyna-exp3-v3-r0-t30.fly.dev
 flyctl deploy --config configs/human-dyna-exp3-v3-r0-t30.toml
 
 
+python launch.py exp3-v2-r1-t30 --env EXP=3 --env SAY_REUSE=1 --env TIMER=30
+https://human-dyna-exp3-v2-r1-t30.fly.dev
+flyctl deploy --config configs/human-dyna-exp3-v2-r1-t30.toml
+
 ########################################################
 # Experiment 3 - launches
 ##########################################
 ## FIXED NAME
-python launch.py exp3-v2-r1-t30 --env EXP=3 --env SAY_REUSE=1 --env TIMER=30
-https://human-dyna-exp3-v2-r1-t30.fly.dev
-flyctl deploy --config configs/human-dyna-exp3-v2-r1-t30.toml
 
 python launch.py exp3-v2-r0-t30 --env EXP=3 --env SAY_REUSE=0 --env TIMER=30
 https://human-dyna-exp3-v2-r0-t30.fly.dev

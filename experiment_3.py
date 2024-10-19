@@ -135,8 +135,8 @@ block_groups = [
     # room 1
     [image_keys.index('orange'), image_keys.index('potato')],
     # room 2
-    [image_keys.index('knife'), image_keys.index('spoon')],
-    ## room 3
+    [image_keys.index('lettuce'), image_keys.index('apple')],
+    # room 3
     #[image_keys.index('tomato'), image_keys.index('lettuce')],
 ]
 block_groups = np.array(block_groups, dtype=np.int32)
@@ -286,7 +286,7 @@ def stage_display_fn(stage, container):
 def make_image_html(src):
     html = '''
     <div id="stateImageContainer" style="display: flex; justify-content: center; align-items: center; height: 100%;">
-        <img id="stateImage" src="{src}" style="max-width: 800px; max-height: 400px; object-fit: contain;">
+        <img id="stateImage" src="{src}" style="max-width: 900px; max-height: 450px; object-fit: contain;">
     </div>
     '''.format(src=src)
     return html
