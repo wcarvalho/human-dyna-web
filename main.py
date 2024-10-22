@@ -48,6 +48,9 @@ elif EXPERIMENT == 2:
 elif EXPERIMENT == 3:
   import experiment_3 as experiment
   APP_TITLE = 'Dyna 3'
+elif EXPERIMENT == 4:
+  import experiment_4 as experiment
+  APP_TITLE = 'Dyna 4'
 else:
    raise NotImplementedError
 all_stages = experiment.all_stages

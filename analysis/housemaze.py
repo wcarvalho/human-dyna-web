@@ -304,6 +304,7 @@ def render_path(episode_data, from_model=True, ax=None):
     if ax is None:
       fig, ax = plt.subplots(1, figsize=(5, 5))
     img = housemaze_render_fn(state_0)
+    
     renderer.place_arrows_on_image(img, positions, actions, maze_height, maze_width, arrow_scale=5, ax=ax)
 
 
