@@ -1,4 +1,4 @@
-from typing import List, Callable
+from typing import List, Callable, Tuple
 from functools import partial
 
 from skimage.transform import resize
@@ -420,6 +420,7 @@ def make_env_stage(
         duration=None,
         name='stage',
         use_done=False,
+        force_random_room: bool = False,
         **kwargs,
         ):
     metadata = metadata or {}
@@ -436,6 +437,10 @@ def make_env_stage(
         training=training,
         force_room=force_room
     )
+
+    if force_random_room:
+        env_params = env_params.replace(force_room=jnp.array(False))
+
 
     return EnvStage(
         name=name,
@@ -474,12 +479,16 @@ def make_block(
     phase_2_cond1_name: str = None,
     phase_2_cond2_name: str = None,
     make_env_kwargs: dict = None,
+    phase2_cond1_env_kwargs: dict = None,
+    phase2_cond2_env_kwargs: dict = None,
     str_transform: Callable[[str], str] = lambda s:s,
 ):
     def create_stage(name, body):
         return Stage(name=name, body=body, display_fn=stage_display_fn)
     
     make_env_kwargs = make_env_kwargs or {}
+    phase2_cond1_env_kwargs = phase2_cond1_env_kwargs or {}
+    phase2_cond2_env_kwargs = phase2_cond2_env_kwargs or {}
     def create_env_stage(name, maze_name, training, min_success, max_episodes, duration=None, **kwargs):
         return make_env_stage(
             name=name,
@@ -512,6 +521,7 @@ def make_block(
               max_episodes=1,
               duration=eval_duration,
               end_on_final_timestep=True,
+              **phase2_cond1_env_kwargs,
               ),
       ]
     if phase_2_cond2_maze_name is not None:
@@ -525,6 +535,7 @@ def make_block(
               max_episodes=1,
               duration=eval_duration,
               end_on_final_timestep=True,
+              **phase2_cond2_env_kwargs,
               ))
 
     block = Block(
@@ -591,7 +602,9 @@ def make_phase_1_text():
 ####################
 # practice block
 ####################
-def create_practice_block(str_transform=lambda s: s):
+def create_practice_block(
+  reversal: Tuple[bool, bool] = [False, False]):
+    str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         eval_duration=30,
@@ -611,7 +624,9 @@ def create_practice_block(str_transform=lambda s: s):
 ####################
 # (3) paths manipulation: reusing longer of two paths matching training path
 ####################
-def create_path_manipulation_block(str_transform=lambda s: s):
+def create_path_manipulation_block(
+  reversal: Tuple[bool, bool] = [False, False]):
+    str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         phase_1_text=make_phase_1_text(),
@@ -636,7 +651,9 @@ def create_path_manipulation_block(str_transform=lambda s: s):
 ####################
 # (2) Start manipulation: Faster when on-path but further than off-path but closer
 ####################
-def create_start_manipulation_block(str_transform=lambda s: s):
+def create_start_manipulation_block(
+  reversal: Tuple[bool, bool] = [False, False]):
+    str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         phase_1_text=make_phase_1_text(),
@@ -649,6 +666,7 @@ def create_start_manipulation_block(str_transform=lambda s: s):
         eval_duration=30,
         metadata=dict(
             manipulation=2,
+            reversal=reversal,
             desc="faster when on-path but further than off-path but closer",
             long=f"""
             In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
@@ -661,7 +679,9 @@ def create_start_manipulation_block(str_transform=lambda s: s):
 ####################
 # (4) planning manipulation (short plan)
 ####################
-def create_plan_manipulation_block_short(str_transform=lambda s: s):
+def create_plan_manipulation_block_short(
+  reversal: Tuple[bool, bool] = [False, False]):
+    str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         # special case for short planning maze
@@ -669,6 +689,7 @@ def create_plan_manipulation_block_short(str_transform=lambda s: s):
         max_episodes=30,
         eval_duration=5,
         make_env_kwargs=dict(force_room=True),
+        phase2_cond1_env_kwargs=dict(force_random_room=True),
         # regular commands
         phase_1_text=make_phase_1_text(),
         phase_1_maze_name='big_m4_maze_short',
@@ -679,6 +700,7 @@ def create_plan_manipulation_block_short(str_transform=lambda s: s):
         block_char2idx=block_char2idx,
         metadata=dict(
             manipulation=4,
+            reversal=reversal,
             desc="See if faster off train path than planning (short)",
             long=f"""
             Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
@@ -691,7 +713,9 @@ def create_plan_manipulation_block_short(str_transform=lambda s: s):
 ####################
 # (4) planning manipulation (long plan)
 ####################
-def create_plan_manipulation_block_long(str_transform=lambda s: s):
+def create_plan_manipulation_block_long(
+  reversal: Tuple[bool, bool] = [False, False]):
+    str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         # special case for long planning maze
@@ -699,6 +723,7 @@ def create_plan_manipulation_block_long(str_transform=lambda s: s):
         max_episodes=30,
         eval_duration=15,
         make_env_kwargs=dict(force_room=True),
+        phase2_cond1_env_kwargs=dict(force_random_room=True),
         # regular commands
         phase_1_text=make_phase_1_text(),
         phase_1_maze_name='big_m4_maze_long',
@@ -709,6 +734,7 @@ def create_plan_manipulation_block_long(str_transform=lambda s: s):
         block_char2idx=block_char2idx,
         metadata=dict(
             manipulation=4,
+            reversal=reversal,
             desc="See if faster off train path than planning (long)",
             long=f"""
             Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
@@ -729,20 +755,18 @@ feedback_block = Block(
 ##########################
 
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-reverse_fns = [partial(mazes.reverse, horizontal=r[0], vertical=r[1]) for r in reversals]
-
 
 if MAN == 'start':
   manipulations = [
-      create_start_manipulation_block(str_transform=f) for f in reverse_fns]
+      create_start_manipulation_block(r) for r in reversals]
 elif MAN == 'paths':
   manipulations = [
-      create_path_manipulation_block(str_transform=f) for f in reverse_fns]
+      create_path_manipulation_block(r) for r in reversals]
 elif MAN == 'plan':
   manipulations = [
-      create_plan_manipulation_block_short(str_transform=f) for f in reverse_fns
+      create_plan_manipulation_block_short(r) for r in reversals
   ]+[
-      create_plan_manipulation_block_long(str_transform=f) for f in reverse_fns
+      create_plan_manipulation_block_long(r) for r in reversals
   ]
 else:
     raise NotImplementedError
