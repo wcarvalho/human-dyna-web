@@ -839,10 +839,10 @@ def group_filter_fn(df: DataFrame, min_successes: int = 16):
         return 0, remove
     nsuccess = int(sum(successes))
     remove = nsuccess < min_successes
-    remove |= np.mean(successes) < 0.5
+    #remove |= np.mean(successes) < 0.5
     if remove:
         user = df['user_id'].unique().to_list()[0]
-        print(f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{len(successes)}")
+        print(f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{min_successes}/{len(successes)}")
     return remove
 
 #########################################################
@@ -856,7 +856,7 @@ def plot_m3_example(user_df: DataFrame, finished=False):
     else:
         output_episode_filter = lambda e: not success_or_not_terminate(e)
 
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=group_filter_fn,
         output_episode_filter=output_episode_filter,
         input_settings=dict(eval=False),
@@ -886,7 +886,7 @@ def plot_m3_example(user_df: DataFrame, finished=False):
 def m3_reaction_times(user_df: DataFrame, **kwargs):
     manipulation = 3
 
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=group_filter_fn,
         #output_episode_filter=lambda e: not success_or_not_terminate(e),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
@@ -1014,7 +1014,7 @@ def create_success_termination_results_m3(user_df: DataFrame, model_df: DataFram
         return np.concatenate(l)
 
     def get_human_data(fn):
-        return user_df.split_apply(
+        return user_df.apply_by_group(
             fn=fn,
             input_episode_filter=group_filter_fn,
             input_settings=dict(manipulation=manipulation, eval=False),
@@ -1056,7 +1056,7 @@ def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ylim=Non
         return np.array(x)[0]
 
     # Human data with first filter
-    human_data_1 = user_df.split_apply(
+    human_data_1 = user_df.apply_by_group(
         fn=fn,
         input_episode_filter=group_filter_fn,
         input_settings=dict(manipulation=manipulation, eval=False),
@@ -1064,7 +1064,7 @@ def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ylim=Non
         output_settings=dict(manipulation=manipulation, eval=True),
     )
     # Human data with second filter
-    human_data_2 = user_df.split_apply(
+    human_data_2 = user_df.apply_by_group(
         fn=fn,
         input_episode_filter=group_filter_fn,
         input_settings=dict(manipulation=manipulation, eval=False),
@@ -1097,7 +1097,7 @@ def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ylim=Non
 #########################################################
 
 def plot_m2_example(user_df: DataFrame):
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=group_filter_fn,
         output_episode_filter=lambda e: not success_or_not_terminate(e),
         input_settings=dict(eval=False),
@@ -1121,7 +1121,7 @@ def plot_m2_example(user_df: DataFrame):
     plt.show()
 
 def m2_reaction_time_difference(user_df: DataFrame, rt_types=['first', 'avg'], **kwargs):
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=group_filter_fn,
         output_episode_filter=lambda e: not success_or_not_terminate(e),
         input_settings=dict(eval=False),
@@ -1140,7 +1140,7 @@ def m2_reaction_time_difference(user_df: DataFrame, rt_types=['first', 'avg'], *
 
 def plot_m4_example(user_df: DataFrame, setting: str='short'):
     assert setting in ['short', 'long']
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
         input_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
@@ -1168,7 +1168,7 @@ def plot_m4_example(user_df: DataFrame, setting: str='short'):
 
 def m4_initial_action_distribution(user_df: DataFrame, setting: str='short'):
     assert setting in ['short', 'long']
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_settings=dict(manipulation=4),
@@ -1216,7 +1216,7 @@ def m4_reaction_times(user_df: DataFrame, setting='short', rt_type='speed', ylim
     assert rt_type in ['speed', 'first']
 
     def create_plots(output_filter_fn, title_suffix):
-        subset = user_df.filter_groups(
+        subset = user_df.filter_by_group(
             input_episode_filter=partial(group_filter_fn, min_successes=8),
             output_episode_filter=output_filter_fn,
             input_settings=dict(
@@ -1316,7 +1316,7 @@ def m4_action_reaction_times(
     assert setting in ['short', 'long']
     assert rt_type in ['speed', 'first']
 
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         input_settings=dict(
             maze=f'big_m4_maze_{setting}',
@@ -1390,7 +1390,7 @@ def m4_reaction_time_difference(
         rt_types=['first', 'avg'],
         **kwargs):
     assert setting in ['short', 'long']
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
         input_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
@@ -1412,7 +1412,7 @@ def m4_action_reaction_time_difference(
         **kwargs):
     assert setting in ['short', 'long']
 
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         input_settings=dict(
             maze=f'big_m4_maze_{setting}',
@@ -1459,7 +1459,7 @@ def plot_m3_episode_length_histogram(user_df: DataFrame, **kwargs):
     legend_size = kwargs.pop('legend_size', DEFAULT_LEGEND_SIZE)
 
     # Filter the data as specified
-    subset = user_df.filter_groups(
+    subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         input_settings=dict(eval=False, manipulation=3),
         output_settings=dict(eval=True, manipulation=3),
@@ -1509,7 +1509,7 @@ def m4_condition_reaction_times(
         **kwargs):
 
     def get_conditions(setting):
-        subset = user_df.filter_groups(
+        subset = user_df.filter_by_group(
             input_episode_filter=partial(group_filter_fn, min_successes=8),
             input_settings=dict(
                 maze=f'big_m4_maze_{setting}',

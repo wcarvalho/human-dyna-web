@@ -5,6 +5,7 @@ import json
 import jax.numpy as jnp
 from nicegui import app, ui
 import nicewebrl
+import sys
 import nicewebrl.nicejax
 import nicewebrl.stages
 import nicewebrl.utils
@@ -28,10 +29,12 @@ load_dotenv()
 
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 NAME = os.environ.get('NAME', 'exp')
+LOG_DIR = os.environ.get('LOG_DIR', 'data/')
 DEBUG = int(os.environ.get('DEBUG', 0))
 LOCAL = int(os.environ.get('LOCAL', 0))
 DEBUG_SEED = int(os.environ.get('SEED', 42))
 EXPERIMENT = int(os.environ.get('EXP', 1))
+os.makedirs(LOG_DIR, exist_ok=True)
 
 if EXPERIMENT == 0:
   #import experiment_test as experiment
@@ -56,6 +59,10 @@ else:
 all_stages = experiment.all_stages
 
 DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}'
+
+def user_log_file(log_dir):
+  user_id = app.storage.user.get('user_id')
+  return os.path.join(log_dir, f'log_{user_id}.log')
 
 #####################################
 # Consent Form
@@ -89,7 +96,6 @@ def collect_demographic_info(meta_container, stage_container, button_container):
         # Collect age with a textbox input
         age_input = ui.input('Age')
 
-
       # Button to submit and store the data
       async def submit():
           age = age_input.value
@@ -114,11 +120,21 @@ def collect_demographic_info(meta_container, stage_container, button_container):
 # Start/load experiment
 #####################################
 def get_stage(stage_idx):
-   if app.storage.user.get('experiment_finished', False):
-      return all_stages[-1]
-   stage_order = app.storage.user['stage_order']
-   stage_idx = stage_order[stage_idx]
-   return all_stages[stage_idx]
+  if app.storage.user.get('experiment_finished', False):
+    return all_stages[-1]
+  stage_order = app.storage.user['stage_order']
+  try:
+    stage_idx = stage_order[stage_idx]
+  except IndexError as e:
+    user_id = app.storage.user.get('user_id')
+    user_id = user_id or app.storage.user.get('seed')
+    msg = f"{user_id}: {datetime.now():%m/%d %H:%M}. Indexed stage order {stage_idx}/{len(stage_order)}"
+    msg += f"\n\nstage order: {stage_order}"
+    print(msg)
+    raise RuntimeError(msg)
+  except Exception as e:
+    raise e
+  return all_stages[stage_idx]
 
 def get_block_idx(stage):
   # says which current block we're in
@@ -415,6 +431,11 @@ async def save_data(final_save=True, feedback=None, **kwargs):
 
     if not LOCAL:
       await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+      log_file = user_log_file(LOG_DIR)
+      bucket = gcs.initialize_storage_client()
+      blob = bucket.blob(
+          f'logs/user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.log')
+      blob.upload_from_filename(log_file)
 
     # Now delete the data from the database
     if final_save:
@@ -492,11 +513,16 @@ def footer(card):
 
 
 def initalize_user(user_info):
-
+  #########
+  # User settings
+  #########
   nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
 
   app.storage.user['user_id'] = user_info['worker_id'] or app.storage.user['seed']
 
+  #########
+  # Stage settings
+  #########
   print(f"Initialized user: {app.storage.user['seed']}")
   app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
   app.storage.user['block_idx'] = app.storage.user.get('block_idx', 0)
@@ -517,9 +543,19 @@ def initalize_user(user_info):
     block_order_to_idx = {str(i): int(idx) for idx, i in enumerate(block_order)}
 
   app.storage.user['stage_order'] = stage_order
+  print(f"Loaded stage order: {stage_order}")
+  print(f"Total stages: {len(all_stages)}")
   # this will be used to track which block you're currently in
-  
+
   app.storage.user['block_order_to_idx'] = block_order_to_idx
+  print(f"Loaded block_order_to_idx: {block_order_to_idx}")
+
+  #########
+  # Logging
+  #########
+  log_file = user_log_file(LOG_DIR)
+  sys.stdout = nicewebrl.utils.TeeOutput(open(log_file, 'a'), sys.stdout)
+  sys.stderr = nicewebrl.utils.TeeOutput(open(log_file, 'a'), sys.stderr)
 
 @ui.page('/')
 async def index(request: Request):
@@ -530,7 +566,12 @@ async def index(request: Request):
             'assignmentId', None)
     )
     initalize_user(user_info)
-    ui.on('ping', lambda e: print(e.args))
+    def print_ping(e):
+      user_id = app.storage.user.get('user_id')
+      user_id = user_id or app.storage.user.get('seed')
+      if user_id is not None:
+          print(f"{user_id}: {datetime.now():%m/%d %H:%M}: {str(e.args)}")
+    ui.on('ping', print_ping)
 
     ui.run_javascript(f'window.debug = {DEBUG}')
     ################

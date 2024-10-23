@@ -48,7 +48,7 @@ num_rooms = 2
 
 min_success_task = 8
 min_success_train = min_success_task*num_rooms
-max_episodes_train = 30*num_rooms
+max_episodes_train = 50*num_rooms
 if DEBUG == 0:
     pass
 elif DEBUG == 1:
@@ -194,6 +194,13 @@ def went_to_junction(timestep, junction):
     match = np.array(junction) == position
     match = match.sum(-1) == 2  # both x and y matches
     return match.any()
+
+
+def manip1_data_fn(timestep):
+  old_path = went_to_junction(timestep, junction=(2, 14))
+  return {
+      'old_path': old_path,
+  }
 
 def manip3_data_fn(timestep):
   return {
@@ -345,7 +352,7 @@ def env_stage_display_fn(
         ui.html(text).style('align-items: center;')
         ui.html(make_image_html(src=state_image))
 
-async def feedback_display_fn(
+async def paths_manipulation_feedback_display_fn(
         stage,
         container,
         name: str = 'big_m3_maze1_eval'):
@@ -403,6 +410,61 @@ async def feedback_display_fn(
         await button.clicked()
         feedback = text.value
         output['feedback'] = feedback
+    return output
+
+
+async def shortcut_manipulation_feedback_display_fn(
+        stage,
+        container):
+    container.clear()
+    output = {}
+    with container.style('align-items: center;'):
+        train_user_data = await ExperimentData.filter(
+            session_id=app.storage.browser['id'],
+            name='big_m1_maze3',
+        )
+        train_timestep = train_user_data[0].data['timestep']
+        train_timestep = nicejax.deserialize_bytes(maze.TimeStep, train_timestep)
+        train_image = render_fn(train_timestep)
+
+        eval_user_data = await ExperimentData.filter(
+            session_id=app.storage.browser['id'],
+            name='big_m1_maze3_shortcut',
+        )
+        eval_timestep = eval_user_data[0].data['timestep']
+        eval_timestep = nicejax.deserialize_bytes(
+            maze.TimeStep, eval_timestep)
+        eval_image = render_fn(eval_timestep)
+
+        # Calculate aspect ratio and set figure size
+        height, width = train_image.shape[:2]
+        aspect_ratio = width / height
+        fig_width = 12
+        fig_height = 4
+
+        with ui.matplotlib(
+                figsize=(int(fig_width), int(fig_height))).figure as fig:
+            axs = fig.subplots(1, 2)
+            axs[0].set_title("Phase 1")
+            axs[0].imshow(train_image)
+            axs[0].axis('off')
+            axs[1].set_title("Phase 2")
+            axs[1].imshow(eval_image)
+            axs[1].axis('off')
+        ui.html(f"Did you notice that the map from phase 2 was different from the map in phase 1?")
+        radio = ui.radio({1: "Yes", 2: "No"}).props('inline')
+
+        async def submit():
+            if radio.value is None:
+                ui.notify(
+                    "Please select an option before submitting.", type="warning")
+                return
+
+            noticed_difference = "Yes" if radio.value == 1 else "No"
+            output['noticed_difference'] = noticed_difference
+
+        button = ui.button('Submit', on_click=submit)
+        await button.clicked()
     return output
 
 
@@ -622,6 +684,32 @@ def create_practice_block(
     )
 
 ####################
+# (1) Shortcut manipulation
+####################
+def create_shortcut_manipulation_block(
+        reversal: Tuple[bool, bool] = [False, False]):
+    str_transform = partial(
+        mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
+    block_groups, block_char2idx = permute_groups(groups)
+    return make_block(
+        phase_1_text=make_phase_1_text(),
+        phase_1_maze_name='big_m1_maze3',
+        phase_2_text=make_phase_2_text(),
+        phase_2_cond1_maze_name='big_m1_maze3_shortcut',
+        block_groups=block_groups,
+        block_char2idx=block_char2idx,
+        eval_duration=TIMER,
+        make_env_kwargs=dict(custom_data_fn=manip1_data_fn),
+        metadata=dict(
+            manipulation=1,
+            reversal=reversal,
+            desc="shortcut",
+            long="A shortcut is introduced"
+        ),
+        str_transform=str_transform
+    )
+
+####################
 # (3) paths manipulation: reusing longer of two paths matching training path
 ####################
 def create_path_manipulation_block(
@@ -640,6 +728,7 @@ def create_path_manipulation_block(
         make_env_kwargs=dict(custom_data_fn=manip3_data_fn),
         metadata=dict(
             manipulation=3,
+            reversal=reversal,
             desc="reusing longer of two paths which matches training path",
             long=f"""
             Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
@@ -669,7 +758,7 @@ def create_start_manipulation_block(
             reversal=reversal,
             desc="faster when on-path but further than off-path but closer",
             long=f"""
-            In both tests, a shortcut is introduced. In the first, the agent is tested on the same path it trained on. In the second, the agent is tested on a different path.
+            In the first, the agent is tested with starting in a familiar location. In the second, the agent is started from a different, but closer parth of the path.
             """
         ),
         str_transform=str_transform
@@ -677,31 +766,33 @@ def create_start_manipulation_block(
 
 
 ####################
-# (4) planning manipulation (short plan)
+# (4) planning manipulation (short)
 ####################
-def create_plan_manipulation_block_short(
-  reversal: Tuple[bool, bool] = [False, False]):
+def create_plan_manipulation_block(
+  reversal: Tuple[bool, bool] = [False, False],
+  setting: str = 'short',
+  ):
     str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         # special case for short planning maze
         min_success=min_success_task,
-        max_episodes=30,
-        eval_duration=5,
+        max_episodes=50,
+        eval_duration=5 if setting == 'short' else 15,
         make_env_kwargs=dict(force_room=True),
-        phase2_cond1_env_kwargs=dict(force_random_room=True),
+        phase2_cond1_env_kwargs={} if SAY_REUSE else dict(force_random_room=True),
         # regular commands
         phase_1_text=make_phase_1_text(),
-        phase_1_maze_name='big_m4_maze_short',
-        phase_2_text=make_phase_2_text(time=5),
-        phase_2_cond1_maze_name='big_m4_maze_short_eval_same',
-        phase_2_cond2_maze_name='big_m4_maze_short_eval_diff',
+        phase_1_maze_name=f'big_m4_maze_{setting}' if SAY_REUSE else f'big_m4_maze_{setting}_blind',
+        phase_2_text=make_phase_2_text(time=5 if setting == 'short' else 15),
+        phase_2_cond1_maze_name=f'big_m4_maze_{setting}_eval_same' if SAY_REUSE else f'big_m4_maze_{setting}_eval_same_blind',
+        phase_2_cond2_maze_name=f'big_m4_maze_{setting}_eval_diff',
         block_groups=block_groups,
         block_char2idx=block_char2idx,
         metadata=dict(
             manipulation=4,
             reversal=reversal,
-            desc="See if faster off train path than planning (short)",
+            desc=f"See if faster off train path than planning ({setting})",
             long=f"""
             Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
             """
@@ -710,64 +801,48 @@ def create_plan_manipulation_block_short(
     )
 
 
-####################
-# (4) planning manipulation (long plan)
-####################
-def create_plan_manipulation_block_long(
-  reversal: Tuple[bool, bool] = [False, False]):
-    str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
-    block_groups, block_char2idx = permute_groups(groups)
-    return make_block(
-        # special case for long planning maze
-        min_success=min_success_task,
-        max_episodes=30,
-        eval_duration=15,
-        make_env_kwargs=dict(force_room=True),
-        phase2_cond1_env_kwargs=dict(force_random_room=True),
-        # regular commands
-        phase_1_text=make_phase_1_text(),
-        phase_1_maze_name='big_m4_maze_long',
-        phase_2_text=make_phase_2_text(time=15),
-        phase_2_cond1_maze_name='big_m4_maze_long_eval_same',
-        phase_2_cond2_maze_name='big_m4_maze_long_eval_diff',
-        block_groups=block_groups,
-        block_char2idx=block_char2idx,
-        metadata=dict(
-            manipulation=4,
-            reversal=reversal,
-            desc="See if faster off train path than planning (long)",
-            long=f"""
-            Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
-            """
-        ),
-        str_transform=str_transform
-    )
 
-##########################
-# Feedback Block
-##########################
-feedback_block = Block(
-  stages=[FeedbackStage(name='maze3_feedback', display_fn=feedback_display_fn)],
-  metadata=dict(desc="feedback")
-)
 ##########################
 # Combining all together
 ##########################
 
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-
-if MAN == 'start':
+if DEBUG:
+  reversals = [(False, False)]
+if MAN == 'start':  # start manipulation (2)
   manipulations = [
       create_start_manipulation_block(r) for r in reversals]
-elif MAN == 'paths':
+elif MAN == 'paths':  # paths manipulation (3)
   manipulations = [
       create_path_manipulation_block(r) for r in reversals]
-elif MAN == 'plan':
+  if FEEDBACK:
+      manipulations.append(
+          Block(
+              stages=[FeedbackStage(
+                  name='paths_manipulation_feedback',
+                  display_fn=paths_manipulation_feedback_display_fn)],
+              metadata=dict(desc="paths_manipulation_feedback")
+          )
+      )
+elif MAN == 'plan':  # planning manipulation (4)
   manipulations = [
-      create_plan_manipulation_block_short(r) for r in reversals
+      create_plan_manipulation_block(r, 'short') for r in reversals
   ]+[
-      create_plan_manipulation_block_long(r) for r in reversals
+      create_plan_manipulation_block(r, 'long') for r in reversals
   ]
+elif MAN == 'shortcut':  # shortcut manipulation (1)
+  manipulations = [
+      create_shortcut_manipulation_block(r) for r in reversals
+  ]
+  if FEEDBACK:
+      manipulations.append(
+          Block(
+              stages=[FeedbackStage(
+                  name='shortcut_manipulation_feedback',
+                  display_fn=shortcut_manipulation_feedback_display_fn)],
+              metadata=dict(desc="shortcut_manipulation_feedback")
+          )
+      )
 else:
     raise NotImplementedError
 
@@ -785,9 +860,6 @@ if GIVE_INSTRUCTIONS:
     all_blocks.extend([instruct_block, create_practice_block()])
 
 all_blocks.extend(manipulations)
-if FEEDBACK:
-    all_blocks.append(feedback_block)
-
 all_stages = stages.prepare_blocks(all_blocks)
 
 ##########################
@@ -807,7 +879,7 @@ def generate_block_stage_order(rng_key):
     # blocks afterward are randomized
     randomized_blocks = list(all_blocks[offset:-1] if FEEDBACK else all_blocks[offset:])
     random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + offset
-    
+
     if FEEDBACK:
         block_order = jnp.concatenate([
             fixed_blocks,  # instruction blocks

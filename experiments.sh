@@ -6,39 +6,36 @@ rm -r data .nicegui;
 rm -r data/*exp3-v1* .nicegui; INST=1 DEBUG=0 NMAN=0 EXP=4 NAME='exp3-v1' SEED=45 python main.py
 
 # debugging command to test
-rm -r data .nicegui; INST=1 DEBUG=1 NMAN=0 EXP=4 SAY_REUSE=0 TIMER=0 NAME='exp3-v1' SEED=44 python main.py
+rm -r data .nicegui; INST=0 DEBUG=1 EXP=4 MAN='shortcut' SAY_REUSE=1 SEED=44 python main.py
 
 #1. paths: no timer, tell
-python launch.py exp4-v1-r1-t0-paths --MAN="paths" --env EXP=4 --env SAY_REUSE=1 --env TIMER=0
+python launch.py exp4-v1-r1-t0-paths --env EXP=4 --env MAN="paths" --env SAY_REUSE=1 --env TIMER=0
 #https://human-dyna-exp4-v1-r1-t0-paths.fly.dev
 flyctl deploy --config configs/human-dyna-exp4-v1-r1-t0-paths.toml
 
 #2. start: no timer, tell
-python launch.py exp4-v1-r1-t0-start --MAN="start" --env EXP=4 --env SAY_REUSE=1 --env TIMER=0
+python launch.py exp4-v1-r1-t0-start --env EXP=4 --env MAN="start" --env SAY_REUSE=1 --env TIMER=0
 #https://human-dyna-exp4-v1-r1-t0-start.fly.dev
 flyctl deploy --config configs/human-dyna-exp4-v1-r1-t0-start.toml
 
 #3. plan: no timer, tell
-python launch.py exp4-v1-r1-t0-plan --MAN="plan" --env EXP=4 --env SAY_REUSE=1 --env TIMER=0
+python launch.py exp4-v1-r1-t0-plan --env EXP=4 --env MAN="plan" --env SAY_REUSE=1 --env TIMER=0
 #https://human-dyna-exp4-v1-r1-t0-plan.fly.dev
 flyctl deploy --config configs/human-dyna-exp4-v1-r1-t0-plan.toml
 
 #4. plan: no timer, don't tell
-python launch.py exp4-v1-r0-t0-plan --MAN="plan" --env EXP=4 --env SAY_REUSE=0 --env TIMER=0
+python launch.py exp4-v1-r0-t0-plan --env EXP=4 --env MAN="plan" --env SAY_REUSE=0 --env TIMER=0
 #https://human-dyna-exp4-v1-r0-t0-plan.fly.dev
 flyctl deploy --config configs/human-dyna-exp4-v1-r0-t0-plan.toml
 
 
+#5. shortcut: no timer tell
+python launch.py exp4-v1-r1-t0-shortcut --env EXP=4 --env MAN="shortcut" --env SAY_REUSE=1 --env TIMER=0
+#https://human-dyna-exp4-v1-r1-t0-shortcut.fly.dev
+flyctl deploy --config configs/human-dyna-exp4-v1-r1-t0-shortcut.toml
 
-python launch.py exp3-v5-r0-t30 --env EXP=4 --env SAY_REUSE=0 --env TIMER=30
-https://human-dyna-exp3-v5-r0-t30.fly.dev
-flyctl deploy --config configs/human-dyna-exp3-v5-r0-t30.toml
 
-
-python launch.py exp3-v5-r1-t30 --env EXP=4 --env SAY_REUSE=1 --env TIMER=30
-https://human-dyna-exp3-v5-r1-t30.fly.dev
-flyctl deploy --config configs/human-dyna-exp3-v5-r1-t30.toml
-
+flyctl logs --config configs/human-dyna-exp4-v1-r0-t0-plan.toml
 ########################################################
 # Experiment 5 - three conditions, new map
 ##########################################
@@ -59,6 +56,7 @@ flyctl deploy --config configs/human-dyna-exp3-v5-r0-t30.toml
 python launch.py exp3-v5-r1-t30 --env EXP=3 --env SAY_REUSE=1 --env TIMER=30
 https://human-dyna-exp3-v5-r1-t30.fly.dev
 flyctl deploy --config configs/human-dyna-exp3-v5-r1-t30.toml
+
 
 
 ########################################################
