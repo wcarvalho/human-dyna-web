@@ -53,6 +53,15 @@ if is_in_notebook():
 else:
     from tqdm import tqdm
 
+def reversal_label(reversal):
+    if reversal == [False, False]:
+        return 'F,F'
+    elif reversal == [True, False]:
+        return 'T,F'
+    elif reversal == [False, True]:
+        return 'F,T'
+    else:
+        return 'T,T'
 ############
 # deep learning models
 ############
@@ -287,6 +296,7 @@ def get_block_stage_description(datum):
     ####################
     # stage information
     ####################
+    reversal = datum['metadata']['block_metadata'].get('reversal', [False, False])
     return dict(
         maze=datum['metadata'].get('maze'),
         condition=datum['metadata'].get('condition', 0),
@@ -295,6 +305,7 @@ def get_block_stage_description(datum):
         manipulation=block_manipulation,
         episode_idx=datum['metadata']['episode_idx'],
         eval=datum['metadata']['eval'],
+        reversal=reversal_label(reversal),
     )
 
 def separate_data_by_block_stage(data: List[dict]):
@@ -359,25 +370,75 @@ def make_row(
     ##########
     # '/path/data_user=3712207029_name=exp3-v2-r1-t30_exp=3_debug=0.json'
     # e.g. ['data', 'user=3712207029', 'name=exp3-v2-r1-t30', 'exp=3', 'debug=0.json']
-    pieces = os.path.basename(file).split("_")
+    pieces = os.path.splitext(os.path.basename(file))[0].split("_")
+    pieces = [p.split("=") for p in pieces if "=" in p]
+    new_vals = {p[0]: p[1] for p in pieces}
+    row.update(new_vals)
 
-    name = [k for k in pieces if 'name' in k]
-    assert len(name) == 1
+    name = new_vals.get('name')
+    if name is not None:
+        # example 'exp4-v1-r1-t0-plan'
+        # split on '-' and take the first element
+        # if v--> version
+        # if r--> tell_reuse
+        # if t--> timer
+        # if there's a word at the end, it's the manipulation
+        # create a dictionary according to this legend
+        legend = dict(v='version', r='tell_reuse', t='timer')
+        name_info = dict()
+        for k, v in legend.items():
+            if k in name:
+                name_info[v] = name.split(k)[1].split('-')[0]
+        row.update(name_info)
 
-    # e.g. 'exp3-v2-r1-t30'
-    row['exp'] = name[0].split("=")[1]
+    # Convert all numeric strings to integers
+    for key, value in row.items():
+        if isinstance(value, str) and value.isdigit():
+            row[key] = int(value)
+    reversal = datum['metadata']['block_metadata'].get('reversal', [False, False])
+    row['reversal'] = reversal_label(reversal)
     return row
 
 def make_episode_data(
-        data: List[dict],
+        file: str,
         example_timestep: multitask_env.TimeStep,
-        file: Optional[str] = None):
+        debug: bool = False,
+        overwrite: bool = False,
+        ):
     """This groups all of the data by block/stage information and prepares 
         (1) a list of EpisodeData objects per block/stage
         (2) a dataframe which summarizes all episode information.
 
     The dataframe can be used to get indices into the list of EpisodeData for further computation.
     """
+    with open(file, 'r') as f:
+        data = json.load(f)
+
+    if len(data) == 0:
+        return None, None
+
+    finished = data[-1].get("finished", False)
+    if not finished:
+        return None, None
+    if debug:
+        n = max(1, int(len(data) * .05))
+        data = data[:n]
+
+    #####################
+    # filenames
+    #####################
+    user_filename = file.split("/")[-1].split(".json")[0]
+    base_path = file.split(user_filename)[0]
+    if debug:
+        episode_data_filename = f"{base_path}/{user_filename}_debug_episode_data.pickle"
+        episode_info_filename = f"{base_path}/{user_filename}_debug_episode_info.csv"
+    else:
+        episode_data_filename = f"{base_path}/{user_filename}_episode_data.pickle"
+        episode_info_filename = f"{base_path}/{user_filename}_episode_info.csv"
+
+    #####################
+    # filter out practice not-manipulation data
+    #####################
     def filter_fn(datum):
         if 'metadata' not in datum: return True
         desc = datum['metadata']['block_metadata']['desc']
@@ -386,86 +447,72 @@ def make_episode_data(
         if 'practice' in desc: return True
 
         return False
+
     nbefore = len(data)
     data = [datum for datum in data if not filter_fn(datum)]
     print(f"Filtered {nbefore-len(data)} data points")
+
+    #####################
+    # separate data by block/stage
+    #####################
     gds, gd_infos = separate_data_by_block_stage(data)
+    idxs = [k['user_episode_idx'] for k in gd_infos.values()]
+    assert len(idxs) == len(set(idxs)), f"user_episode_idx is not unique. {len(idxs)} vs {len(set(idxs))}. max={max(idxs)}"
+    #####################
+    # Load or create episode_data
+    #####################
+    if os.path.exists(episode_data_filename) and not overwrite:
+        with open(episode_data_filename, 'rb') as f:
+            episode_data = pickle.load(f)
+    else:
+        episode_data = [None] * len(gds.keys())
+        for key in tqdm(gds.keys(), desc="Processing episodes"):
+            red = raw_episode_data = gds[key]
+            actions = jnp.asarray([datum['data']['action_idx'] for datum in red])
+            timesteps = [get_timestep(datum, example_timestep) for datum in red]
+            timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+            positions = timesteps.state.agent_pos
+            reaction_times = [compute_reaction_time(datum) for datum in red]
+            reaction_times = jnp.asarray(reaction_times)
+            episode_idx = gd_infos[key]['user_episode_idx']
+            episode_data[episode_idx] = EpisodeData(
+                actions=actions,
+                positions=positions,
+                reaction_times=reaction_times,
+                timesteps=timesteps,
+            )
+        with open(episode_data_filename, 'wb') as f:
+            pickle.dump(episode_data, f)
 
-    episode_data = [None]*len(gds.keys())
-    episode_info = [None]*len(gds.keys())
-    for key in tqdm(gds.keys(), desc="Processing episodes"):
-        red = raw_episode_data = gds[key]
-        # get actions
+    #####################
+    # Load or create episode_info
+    #####################
+    if os.path.exists(episode_info_filename) and not overwrite:
+        episode_info = pl.read_csv(episode_info_filename)
+    else:
+        episode_info = [None] * len(gds.keys())
+        for key in gds.keys():
+            raw_episode_data = gds[key]
+            episode_idx = gd_infos[key]['user_episode_idx']
+            timesteps = episode_data[episode_idx]['timesteps']
+            episode_info[episode_idx] = make_row(
+                datum=raw_episode_data[0],
+                timesteps=timesteps,
+                file=file,
+            )
+        episode_info = pl.DataFrame(episode_info)
+        episode_info.write_csv(episode_info_filename)
 
-        actions = jnp.asarray([datum['data']['action_idx'] for datum in red])
-
-        # collect timesteps
-        timesteps = [get_timestep(datum, example_timestep) for datum in red]
-        
-        # combine them into trajectory
-        timesteps = jtu.tree_map(
-                lambda *v: jnp.stack(v), *timesteps)
-
-        positions = timesteps.state.agent_pos
-
-        reaction_times = [compute_reaction_time(datum) for datum in red]
-        reaction_times = jnp.asarray(reaction_times)
-
-        episode_idx = gd_infos[key]['user_episode_idx']
-        episode_data[episode_idx] = EpisodeData(
-            actions=actions,
-            positions=positions,
-            reaction_times=reaction_times,
-            timesteps=timesteps,
-
-        )
-        episode_info[episode_idx] = make_row(
-            datum=raw_episode_data[0],
-            timesteps=timesteps,
-            file=file,
-        )
-
-    episode_info = pl.DataFrame(episode_info)
     return episode_info, episode_data
 
 
 def make_all_episode_data(files, example_timestep, debug=False, overwrite=False):
     def process_file(file):
-        user_filename = file.split("/")[-1].split(".json")[0]
-        base_path = file.split(user_filename)[0]
-        if debug:
-            timesteps_filename = f"{base_path}/{user_filename}_debug_timesteps.pickle"
-            df_filename = f"{base_path}/{user_filename}_debug_df.csv"
-        else:
-            timesteps_filename = f"{base_path}/{user_filename}_timesteps.pickle"
-            df_filename = f"{base_path}/{user_filename}_df.csv"
+        return make_episode_data(file, example_timestep, overwrite=overwrite, debug=debug)
 
-        if (os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite):
-            episode_df = pl.read_csv(df_filename)
-            with open(timesteps_filename, 'rb') as f:
-                episode_data = pickle.load(f)
-        else:
-            with open(file, 'r') as f:
-                data = json.load(f)
-
-            if len(data) == 0:
-                return None, None
-            finished = data[-1].get("finished", False)
-            if not finished:
-                return None, None
-            if debug:
-                n = max(1, int(len(data)*.05))
-                data = data[:n]
-            episode_df, episode_data = make_episode_data(
-                data, example_timestep, file=file)
-            episode_df.write_csv(df_filename)
-            with open(timesteps_filename, 'wb') as f:
-                pickle.dump(episode_data, f)
-
-        return episode_df, episode_data
-
-    results = Parallel(n_jobs=-1)(delayed(process_file)(file)
-                                  for file in files)
+    if debug:
+        files = files[:max(int(len(files) * .1), 10)]
+    results = Parallel(n_jobs=-1)(delayed(process_file)(file) for file in files)
 
     all_episode_data = []
     episode_df_list = []
@@ -478,3 +525,4 @@ def make_all_episode_data(files, example_timestep, debug=False, overwrite=False)
     episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
 
     return DataFrame(episode_df, all_episode_data)
+
