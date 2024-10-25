@@ -28,14 +28,13 @@ python launch.py exp4-v1-r0-t0-plan --env EXP=4 --env MAN="plan" --env SAY_REUSE
 #https://human-dyna-exp4-v1-r0-t0-plan.fly.dev
 flyctl deploy --config configs/human-dyna-exp4-v1-r0-t0-plan.toml
 
-
 #5. shortcut: no timer tell
-python launch.py exp4-v1-r1-t0-shortcut --env EXP=4 --env MAN="shortcut" --env SAY_REUSE=1 --env TIMER=0
+python launch.py exp4-v1-r1-t0-shortcut --env EXP=4 --env MAN="shortcut" --env SAY_REUSE=1 --env TIMER=0  --env FEEDBACK=1
 #https://human-dyna-exp4-v1-r1-t0-shortcut.fly.dev
 flyctl deploy --config configs/human-dyna-exp4-v1-r1-t0-shortcut.toml
 
 
-flyctl logs --config configs/human-dyna-exp4-v1-r0-t0-plan.toml
+flyctl logs --config configs/human-dyna-exp4-v1-r1-t0-shortcut.toml
 ########################################################
 # Experiment 5 - three conditions, new map
 ##########################################

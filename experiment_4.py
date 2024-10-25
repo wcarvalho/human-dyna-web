@@ -42,6 +42,7 @@ SAY_REUSE = int(os.environ.get('SAY_REUSE', 1))
 TIMER = int(os.environ.get('TIMER', 45))
 USE_DONE = DEBUG > 0
 
+
 # number of rooms to user for tasks (1st n)
 num_rooms = 2
 
@@ -670,7 +671,7 @@ def create_practice_block(
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         eval_duration=30,
-        min_success=4 if not DEBUG else 1,
+        min_success=2 if not DEBUG else 1,
         max_episodes=10,
         make_env_kwargs=dict(force_room=True),
         phase_1_text=make_phase_1_text(),
@@ -809,6 +810,8 @@ def create_plan_manipulation_block(
 reversals = [(False, False), (True, False), (False, True), (True, True)]
 if DEBUG:
   reversals = [(False, False)]
+
+feedback_block = []
 if MAN == 'start':  # start manipulation (2)
   manipulations = [
       create_start_manipulation_block(r) for r in reversals]
@@ -816,7 +819,7 @@ elif MAN == 'paths':  # paths manipulation (3)
   manipulations = [
       create_path_manipulation_block(r) for r in reversals]
   if FEEDBACK:
-      manipulations.append(
+      feedback_block.append(
           Block(
               stages=[FeedbackStage(
                   name='paths_manipulation_feedback',
@@ -835,7 +838,7 @@ elif MAN == 'shortcut':  # shortcut manipulation (1)
       create_shortcut_manipulation_block(r) for r in reversals
   ]
   if FEEDBACK:
-      manipulations.append(
+      feedback_block.append(
           Block(
               stages=[FeedbackStage(
                   name='shortcut_manipulation_feedback',
@@ -859,7 +862,7 @@ all_blocks = []
 if GIVE_INSTRUCTIONS:
     all_blocks.extend([instruct_block, create_practice_block()])
 
-all_blocks.extend(manipulations)
+all_blocks.extend(manipulations + feedback_block)
 all_stages = stages.prepare_blocks(all_blocks)
 
 ##########################
@@ -870,6 +873,7 @@ def generate_block_stage_order(rng_key):
     """Take blocks defined above, flatten all their stages, and generate an order where the (1) blocks are randomized, and (2) stages within blocks are randomized if they're consecutive eval stages."""
     fixed_blocks = []
     offset = 0
+    nfeedback = len(feedback_block)
     if GIVE_INSTRUCTIONS:
         offset = 2
     # fix ordering of instruct_block, practice_block
@@ -877,14 +881,18 @@ def generate_block_stage_order(rng_key):
     fixed_blocks = jnp.array(fixed_blocks)
 
     # blocks afterward are randomized
-    randomized_blocks = list(all_blocks[offset:-1] if FEEDBACK else all_blocks[offset:])
+    if nfeedback > 0:
+        randomized_blocks = list(all_blocks[offset:-nfeedback])
+    else:
+        randomized_blocks = list(all_blocks[offset:])
     random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + offset
 
-    if FEEDBACK:
+    if nfeedback > 0:
+        n = len(fixed_blocks) + len(randomized_blocks)
         block_order = jnp.concatenate([
             fixed_blocks,  # instruction blocks
             random_order,  # experiment blocks
-            np.array([len(all_blocks)-1], dtype=np.int32),  # feedback block
+            np.arange(n, n+nfeedback, dtype=np.int32)
         ]).astype(jnp.int32)
     else:
         block_order = jnp.concatenate([
@@ -893,7 +901,6 @@ def generate_block_stage_order(rng_key):
         ]).astype(jnp.int32)
     
     block_order = block_order.tolist()
-
     stage_order = stages.generate_stage_order(all_blocks, block_order, rng_key)
 
     return block_order, stage_order

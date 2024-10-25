@@ -4,15 +4,16 @@ from typing import Callable, Optional, List
 import matplotlib.pyplot as plt
 import seaborn as sns
 import jax
-import jax.numpy as jnp
 import numpy as np
 from scipy import stats
 from collections import defaultdict
 
 from housemaze.env import KeyboardActions
 from analysis.data_loading import EpisodeData
-from analysis import housemaze
+from analysis import housemaze_utils
 from nicewebrl.dataframe import DataFrame
+
+from analysis.housemaze_utils import success, success_or_not_terminate, terminated, went_to_junction
 
 model_colors = {
     'human_success': '#0072B2',
@@ -53,39 +54,6 @@ DEFAULT_TITLE_SIZE = 14
 DEFAULT_LABEL_SIZE = 12
 DEFAULT_LEGEND_SIZE = 10
 
-
-def success(e: EpisodeData):
-    rewards = e.timesteps.reward
-    # return rewards
-    assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
-    success = rewards > .5
-    return success.any().astype(np.float32)
-
-
-def features_achieved(e):
-    features = e.timesteps.state.task_state.features
-    achieved = features.sum(-1) > 0
-    return achieved.any().astype(np.float32)
-
-def terminated(e):
-    return features_achieved(e)
-
-def success_or_not_terminate(e: EpisodeData):
-    terminated = features_achieved(e)
-    succeeded = success(e) > 0
-    keep = not terminated or succeeded
-    return keep
-
-
-def went_to_junction(episode_data, junction=(0, 11)):
-    # positions = episode_data.positions
-    # if positions is None:
-    positions = episode_data.timesteps.state.agent_pos
-    match = jnp.array(junction) == positions
-    match = (match).sum(-1) == 2  # both x and y matches
-    return match.any().astype(jnp.float32)  # if any matched
-
-
 def total_rt(e: EpisodeData):
     return sum(e.reaction_times[:-1]/1000.)
 
@@ -101,7 +69,6 @@ def get_ylim_without_outliers(data):
     lower_bound = q1 - 1.5 * iqr
     upper_bound = q3 + 1.5 * iqr
     return max(0, lower_bound), upper_bound
-
 
 def bar_plot_results(model_dict, figsize=(8, 4), error_bars=True, title="", ylabel=""):
     # Set up the plot style
@@ -648,6 +615,7 @@ def plot_episode_length_seconds(user_df: DataFrame, settings=None, **kwargs):
     plt.subplots_adjust(top=0.92)  # Adjust to make room for suptitle
     plt.show()
 
+
 #########################################################
 # Manipulation-specific plots
 #########################################################
@@ -692,7 +660,6 @@ def reaction_times_dual(
             ax.set_ylim(*ylim[i])
     plt.tight_layout()
     plt.show()
-
 
 def reaction_times_difference(
         cond1: DataFrame,
@@ -780,7 +747,6 @@ def reaction_times_difference(
     for i, (ax, rt_type) in enumerate(zip(axs, rt_types)):
         plot_rt_difference(ax, rt_differences[rt_type], rt_type.capitalize(), i)
 
-
 def initial_action_distribution(cond1, cond2, key2model, model_colors, action_indices):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
 
@@ -849,7 +815,6 @@ def group_filter_fn(df: DataFrame, min_successes: int = 16):
 # Paths manipulation (3)
 #########################################################
 
-
 def plot_m3_example(user_df: DataFrame, finished=False):
     if finished:
         output_episode_filter = lambda e: not success(e)
@@ -874,10 +839,10 @@ def plot_m3_example(user_df: DataFrame, finished=False):
     # Create a figure with 3 subplots for render_path
     fig, axs = plt.subplots(1, 2, figsize=(10, 5))
 
-    housemaze.render_path(old_path_cond.episodes[0], ax=axs[0])
+    housemaze_utils.render_path(old_path_cond.episodes[0], ax=axs[0])
     axs[0].set_title('Using prior path')
 
-    housemaze.render_path(new_path_cond.episodes[0], ax=axs[1])
+    housemaze_utils.render_path(new_path_cond.episodes[0], ax=axs[1])
     axs[1].set_title('Using new path')
 
     plt.tight_layout()
@@ -947,7 +912,6 @@ def reaction_times_across_conditions_m3(
     plt.tight_layout()
     plt.show()
 
-
 def success_termination_results(success_dict, termination_dict, title="", ylabel=""):
     # Set up the plot style
     plt.figure(figsize=(12, 6))
@@ -1002,7 +966,6 @@ def success_termination_results(success_dict, termination_dict, title="", ylabel
     fig.tight_layout()
     plt.show()
 
-
 def create_success_termination_results_m3(user_df: DataFrame, model_df: DataFrame):
     manipulation = 3
     model_setting = dict(maze_name='big_m3_maze1', eval=True)
@@ -1043,7 +1006,6 @@ def create_success_termination_results_m3(user_df: DataFrame, model_df: DataFram
         #title='Success Rate',
         ylabel='Rate'
     )
-
 
 def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ylim=None):
     manipulation = 3
@@ -1091,7 +1053,6 @@ def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ylim=Non
         ylabel = 'Proportion',
     )
 
-
 #########################################################
 # Starting point manipulation (2)
 #########################################################
@@ -1111,10 +1072,10 @@ def plot_m2_example(user_df: DataFrame):
     # Create a figure with 3 subplots for render_path
     fig, axs = plt.subplots(1, 2, figsize=(15, 5))
 
-    housemaze.render_path(cond1.episodes[0], ax=axs[0])
+    housemaze_utils.render_path(cond1.episodes[0], ax=axs[0])
     axs[0].set_title('Starting location on-path')
 
-    housemaze.render_path(cond2.episodes[0], ax=axs[1])
+    housemaze_utils.render_path(cond2.episodes[0], ax=axs[1])
     axs[1].set_title('Starting location off-path')
 
     plt.tight_layout()
@@ -1154,13 +1115,13 @@ def plot_m4_example(user_df: DataFrame, setting: str='short'):
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
     # Render paths on separate subplots
-    housemaze.render_path(cond0.episodes[1], ax=axs[0])
+    housemaze_utils.render_path(cond0.episodes[1], ax=axs[0])
     axs[0].set_title("Training")
 
-    housemaze.render_path(cond1.episodes[1], ax=axs[1])
+    housemaze_utils.render_path(cond1.episodes[1], ax=axs[1])
     axs[1].set_title('Same target location')
 
-    housemaze.render_path(cond2.episodes[0], ax=axs[2])
+    housemaze_utils.render_path(cond2.episodes[0], ax=axs[2])
     axs[2].set_title('New target location')
 
     plt.tight_layout()
@@ -1309,7 +1270,6 @@ def m4_reaction_times(user_df: DataFrame, setting='short', rt_type='speed', ylim
 
     # Create plots for all episodes
     create_plots(None, "All Episodes")
-
 
 def m4_action_reaction_times(
         user_df: DataFrame, setting='short', rt_type='speed'):
@@ -1498,7 +1458,6 @@ def plot_m3_episode_length_histogram(user_df: DataFrame, **kwargs):
 
     plt.tight_layout()
     plt.show()
-
 
 def m4_condition_reaction_times(
         user_df: DataFrame,

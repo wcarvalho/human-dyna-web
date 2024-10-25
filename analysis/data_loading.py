@@ -3,7 +3,7 @@ from functools import partial
 from typing import Optional
 import polars as pl
 import json
-import copy
+from glob import glob
 import os.path
 from collections import defaultdict
 from typing import Callable, NamedTuple, List
@@ -341,7 +341,8 @@ def separate_data_by_block_stage(data: List[dict]):
 def make_row(
         datum: dict,
         timesteps: multitask_env.TimeStep,
-        file: str):
+        file: str,
+        episode_info: Optional[dict]):
     """THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
 
     Args:
@@ -359,12 +360,14 @@ def make_row(
         name=datum['name'],
         block=datum['metadata']['block_metadata']['desc'],
         manipulation=datum['metadata']['block_metadata'].get('manipulation', None),
+        global_episode_idx=episode_info['user_episode_idx'], 
         episode_idx=datum['metadata']['episode_idx'],
         eval=datum['metadata']['eval'],
         task=int(get_task_object(timesteps)),
         room=int(get_task_room(timesteps, task_groups=groups)),
     )
     row.update(datum['user_data'])
+
     ##########
     # get experiment name from file
     ##########
@@ -403,7 +406,8 @@ def make_episode_data(
         file: str,
         example_timestep: multitask_env.TimeStep,
         debug: bool = False,
-        overwrite: bool = False,
+        overwrite_episode_data: bool = False,
+        overwrite_episode_info: bool = False,
         ):
     """This groups all of the data by block/stage information and prepares 
         (1) a list of EpisodeData objects per block/stage
@@ -461,7 +465,7 @@ def make_episode_data(
     #####################
     # Load or create episode_data
     #####################
-    if os.path.exists(episode_data_filename) and not overwrite:
+    if os.path.exists(episode_data_filename) and not overwrite_episode_data:
         with open(episode_data_filename, 'rb') as f:
             episode_data = pickle.load(f)
     else:
@@ -487,16 +491,17 @@ def make_episode_data(
     #####################
     # Load or create episode_info
     #####################
-    if os.path.exists(episode_info_filename) and not overwrite:
+    if os.path.exists(episode_info_filename) and not overwrite_episode_info:
         episode_info = pl.read_csv(episode_info_filename)
     else:
         episode_info = [None] * len(gds.keys())
         for key in gds.keys():
             raw_episode_data = gds[key]
             episode_idx = gd_infos[key]['user_episode_idx']
-            timesteps = episode_data[episode_idx]['timesteps']
+            timesteps = episode_data[episode_idx].timesteps
             episode_info[episode_idx] = make_row(
                 datum=raw_episode_data[0],
+                episode_info=gd_infos[key],
                 timesteps=timesteps,
                 file=file,
             )
@@ -506,9 +511,12 @@ def make_episode_data(
     return episode_info, episode_data
 
 
-def make_all_episode_data(files, example_timestep, debug=False, overwrite=False):
+def make_all_episode_data(files, example_timestep, debug=False, overwrite_episode_data=False, overwrite_episode_info=False):
     def process_file(file):
-        return make_episode_data(file, example_timestep, overwrite=overwrite, debug=debug)
+        return make_episode_data(file, example_timestep, 
+                                 overwrite_episode_data=overwrite_episode_data, 
+                                 overwrite_episode_info=overwrite_episode_info, 
+                                 debug=debug)
 
     if debug:
         files = files[:max(int(len(files) * .1), 10)]
@@ -525,4 +533,101 @@ def make_all_episode_data(files, example_timestep, debug=False, overwrite=False)
     episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
 
     return DataFrame(episode_df, all_episode_data)
+
+
+def compute_experiment_lengths(files, plot: bool = False, condition_name: str = '', verbose: bool = False):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from absl import logging
+    experiment_lengths = {}
+
+    for file in files:
+        with open(file, 'r') as f:
+            data = json.load(f)
+
+        user_id = int(file.split('/')[-1].split('.')[0].split('_')[1].split('=')[1])
+        if len(data) < 2 or not data[-1].get('finished', False):
+            if verbose:
+                print(f"Skipping {user_id} because it's not finished")
+            continue
+
+
+        try:
+            start_time = datetime.strptime(
+                data[0]['data']['image_seen_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            
+            if 'noticed_difference' in data[-2]['data'].keys():
+                end_time = datetime.strptime(
+                    data[-3]['data']['action_taken_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            else:
+                end_time = datetime.strptime(
+                    data[-2]['data']['action_taken_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        except Exception as e:
+            print(f"Error processing file {file}: {e}")
+            import pdb; pdb.set_trace()
+            raise e
+
+        total_length = (end_time - start_time).total_seconds() / 60  # Convert to minutes
+
+        user_id = data[0]['user_data']['user_id']
+        experiment_lengths[user_id] = total_length
+
+    if plot:
+        lengths = np.array(list(experiment_lengths.values()))
+        mean = np.mean(lengths)
+        std = np.std(lengths)
+
+        plt.figure(figsize=(10, 6))
+        sns.histplot(lengths, kde=True)
+        plt.axvline(mean, color='r', linestyle='--', label='Mean')
+        plt.axvline(mean + 2*std, color='g', linestyle='--', label='2 Std Dev')
+        plt.axvline(mean + 3*std, color='b', linestyle='--', label='3 Std Dev')
+        plt.axvline(mean - 2*std, color='g', linestyle='--')
+        plt.axvline(mean - 3*std, color='b', linestyle='--')
+        plt.title(f'Distribution of Experiment Lengths - {condition_name}')
+        plt.xlabel('Experiment Length (minutes)')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.show()
+
+    return experiment_lengths
+
+
+def get_valid_files(searches, plot: bool = False, verbose: bool = False):
+    all_valid_files = {}
+
+    for condition_name, search in searches.items():
+        files = list(set(glob(search)))
+        experiment_lengths = compute_experiment_lengths(
+            files, condition_name=condition_name, plot=plot)
+        
+        # Calculate mean and standard deviation
+        lengths = np.array(list(experiment_lengths.values()))
+        mean = np.mean(lengths)
+        std = np.std(lengths)
+        
+        # Filter files within 3 standard deviations
+        def good_user(file):
+            user_id = int(file.split('/')[-1].split('.')[0].split('_')[1].split('=')[1])
+            if user_id not in experiment_lengths:
+                if verbose:
+                    print(f"User {user_id} not in experiment_lengths")
+                return False
+            user_val = experiment_lengths[user_id]
+            good = abs(user_val - mean) <= 3 * std
+            if not good:
+                if verbose:
+                    print(f"User {user_id} > 3 std. x: {user_val}, mean: {mean}, 3*std: {mean+3*std}")
+            return good
+        valid_files = [file for file in files if good_user(file)]
+        
+        all_valid_files[condition_name] = valid_files
+        print(f"{condition_name}: {len(valid_files)}/{len(files)} valid files")
+
+    # Convert the dictionary of valid files to a long list
+    all_valid_files_list = []
+    for condition_files in all_valid_files.values():
+        all_valid_files_list.extend(condition_files)
+    
+    return all_valid_files_list
 

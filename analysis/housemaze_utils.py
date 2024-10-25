@@ -17,6 +17,7 @@ from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import experiments as housemaze_experiments
 
 from analysis import data_loading
+from analysis.data_loading import EpisodeData
 
 image_dict = utils.load_image_dict()
 
@@ -329,7 +330,7 @@ def create_reaction_times_video(images, reaction_times, output_file, fps=1):
             ax1.imshow(img, cmap='viridis')
         else:
             ax1.text(0.5, 0.5, "No image data", ha='center', va='center')
-        rt = reaction_times[frame]/1e3
+        rt = reaction_times[frame]
         ax1.set_title(
             f"Step: {frame}, Reaction Time: {rt:.2f} s")
         ax1.axis('off')
@@ -339,7 +340,6 @@ def create_reaction_times_video(images, reaction_times, output_file, fps=1):
                        reaction_times, color='lightblue')
         bars[frame].set_color('red')  # Highlight current index
         ax2.set_xlabel('Time Index')
-        ax2.set_ylabel('Reaction Time')
         ax2.set_title('Reaction Times')
         ax2.set_ylim(0, max(reaction_times) * 1.1)
 
@@ -453,45 +453,6 @@ def make_sf_video(
 ###################
 
 
-def success(e):
-    rewards = e.timesteps.reward
-    #return rewards
-    assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
-    success = rewards > .5
-    return success.any().astype(np.float32)
-
-def features_achieved(e):
-    features = e.timesteps.state.task_state.features
-    achieved = features.sum(-1) > 0
-    return achieved.any().astype(np.float32)
-
-def terminated(e):
-    return features_achieved(e)
-    #import ipdb; ipdb.set_trace()
-    #is_last = e.timesteps.last().any()
-    #return is_last.any()
-
-
-def rewards(e):
-    rewards = e.timesteps.reward
-    assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
-    success = rewards > .5
-    return success.any()
-
-
-def went_to_junction(episode_data, junction=(0, 11)):
-    #positions = episode_data.positions
-    #if positions is None:
-    positions = episode_data.timesteps.state.agent_pos
-    match = jnp.array(junction) == positions
-    match = (match).sum(-1) == 2  # both x and y matches
-    return match.any().astype(jnp.float32)  # if any matched
-
-
-def sucess_or_not_terminate(e):
-    succeeded = success(e) > 0
-    keep = not terminated(e) or succeeded
-    return keep
 
 def get_human_data(user_df, user_data, fn, filter_fn=None, **kwargs):
     eval_df = user_df.filter(**kwargs)
@@ -665,6 +626,40 @@ def plot_reaction_times(group1, group2, label1='group1', label2='group2'):
 
     plt.tight_layout()
     plt.show()
+
+
+def success(e: EpisodeData):
+    rewards = e.timesteps.reward
+    # return rewards
+    assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
+    success = rewards > .5
+    return success.any().astype(np.float32)
+
+
+def features_achieved(e):
+    features = e.timesteps.state.task_state.features
+    achieved = features.sum(-1) > 0
+    return achieved.any().astype(np.float32)
+
+
+def terminated(e):
+    return features_achieved(e)
+
+
+def success_or_not_terminate(e: EpisodeData):
+    terminated = features_achieved(e)
+    succeeded = success(e) > 0
+    keep = not terminated or succeeded
+    return keep
+
+
+def went_to_junction(episode_data, junction=(0, 11)):
+    # positions = episode_data.positions
+    # if positions is None:
+    positions = episode_data.timesteps.state.agent_pos
+    match = jnp.array(junction) == positions
+    match = (match).sum(-1) == 2  # both x and y matches
+    return match.any().astype(jnp.float32)  # if any matched
 
 
 
