@@ -1,3 +1,6 @@
+import logging
+import inspect
+import collections
 import asyncio
 
 from dotenv import load_dotenv
@@ -14,16 +17,19 @@ from tortoise import Tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
 import os
 import random
+from pprint import pprint
 from datetime import datetime, timedelta
 
 
 import gcs
 import nicewebrl
 from nicewebrl.stages import ExperimentData
-from nicewebrl.utils import wait_for_button_or_keypress
+from nicewebrl.utils import wait_for_button_or_keypress, clear_element
+from nicewebrl.logging import setup_logging, get_logger
 
 from google.auth.exceptions import TransportError
 from load_data import get_block_stage_description, dict_to_string, time_diff
+from google.cloud import exceptions as gcs_exceptions
 
 load_dotenv()
 
@@ -31,10 +37,14 @@ DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
 NAME = os.environ.get('NAME', 'exp')
 LOG_DIR = os.environ.get('LOG_DIR', 'data/')
 DEBUG = int(os.environ.get('DEBUG', 0))
-LOCAL = int(os.environ.get('LOCAL', 0))
-DEBUG_SEED = int(os.environ.get('SEED', 42))
-EXPERIMENT = int(os.environ.get('EXP', 1))
+DEBUG_SEED = int(os.environ.get('SEED', 0))
+EXPERIMENT = int(os.environ.get('EXP', 4))
+LIGHT = int(os.environ.get('LIGHT', 0))
 os.makedirs(LOG_DIR, exist_ok=True)
+
+setup_logging(LOG_DIR,
+              nicegui_storage_user_key='user_id')
+logger = get_logger('main')
 
 if EXPERIMENT == 0:
   #import experiment_test as experiment
@@ -58,11 +68,13 @@ else:
    raise NotImplementedError
 all_stages = experiment.all_stages
 
-DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}'
+DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_debug={DEBUG}'
 
 def user_log_file(log_dir):
   user_id = app.storage.user.get('user_id')
   return os.path.join(log_dir, f'log_{user_id}.log')
+
+
 
 #####################################
 # Consent Form
@@ -83,7 +95,7 @@ def make_consent_form(
 
 def collect_demographic_info(meta_container, stage_container, button_container):
     # Create a markdown title for the section
-    meta_container.clear()
+    clear_element(meta_container)
     with meta_container:
       ui.markdown('## Demographic Info')
       ui.markdown('Please fill out the following information.')
@@ -109,8 +121,8 @@ def collect_demographic_info(meta_container, stage_container, button_container):
           app.storage.user['age'] = int(age)
           app.storage.user['sex'] = sex
 
-          print("started experiment for user:", app.storage.user['seed'])
-          print(f"age: {int(age)}, sex: {sex}")
+          logger.info("started experiment for user:", app.storage.user['seed'])
+          logger.info(f"age: {int(age)}, sex: {sex}")
           await start_experiment(meta_container, stage_container, button_container)
 
       ui.button('Submit', on_click=submit)
@@ -118,23 +130,63 @@ def collect_demographic_info(meta_container, stage_container, button_container):
 
 #####################################
 # Start/load experiment
-#####################################
-def get_stage(stage_idx):
+#####################################:
+def update_stage():
+  #-------------------
+  # Update stage index
+  #-------------------
+  stage_idx = app.storage.user['stage_idx']
+  if app.storage.user.get('experiment_finished', False):
+    stage_idx = len(all_stages)
+  if stage_idx < len(all_stages):
+    stage_idx += 1
+  else:
+     stage_idx = len(all_stages)
+  app.storage.user['stage_idx'] = stage_idx
+
+  # -------------------
+  # Print stage information
+  # -------------------
+  # Get the current frame and the caller's frame
+  current_frame = inspect.currentframe()
+  caller_frame = current_frame.f_back
+  # Extract the name of the calling function
+  fn_name = caller_frame.f_code.co_name if caller_frame else "Unknown"
+
+  if stage_idx >= len(all_stages):
+    name = "Finished experiment"
+    order_stage_idx = len(all_stages)
+  else:
+    stage_order = app.storage.user['stage_order']
+    order_stage_idx = stage_order[stage_idx]
+    name = all_stages[order_stage_idx].name
+
+    block_idx = app.storage.user['stage_to_block_idx'][order_stage_idx][0]
+    manipulation = all_stages[order_stage_idx].metadata['block_metadata'].get('short', 'generic')
+    desc = f"stage: {stage_idx}/{len(all_stages)}. "
+    desc += f"{manipulation} block: idx {block_idx}: {name}"
+    logger.info(desc)
+    logger.info(desc)
+
+  return stage_idx
+
+def get_stage(raw_stage_idx):
   if app.storage.user.get('experiment_finished', False):
     return all_stages[-1]
+  if raw_stage_idx >= len(all_stages):
+     return all_stages[-1]
   stage_order = app.storage.user['stage_order']
   try:
-    stage_idx = stage_order[stage_idx]
+    order_stage_idx = stage_order[raw_stage_idx]
   except IndexError as e:
-    user_id = app.storage.user.get('user_id')
-    user_id = user_id or app.storage.user.get('seed')
-    msg = f"{user_id}: {datetime.now():%m/%d %H:%M}. Indexed stage order {stage_idx}/{len(stage_order)}"
-    msg += f"\n\nstage order: {stage_order}"
-    print(msg)
+    msg = f"raw_stage_idx: {raw_stage_idx}/{len(stage_order)}, order_stage_idx: {order_stage_idx}/{len(stage_order)}"
+    logger.info(msg)
+    msg = f"stage order: {stage_order}"
+    logger.info(msg)
     raise RuntimeError(msg)
   except Exception as e:
     raise e
-  return all_stages[stage_idx]
+  return all_stages[order_stage_idx]
 
 def get_block_idx(stage):
   # says which current block we're in
@@ -165,10 +217,10 @@ async def start_experiment(
     return
 
   nicewebrl.get_user_session_minutes()
-  meta_container.clear()
+  clear_element(meta_container)
   ui.on('key_pressed', 
         lambda e: handle_key_press(e, meta_container, stage_container, button_container))
-  await asyncio.create_task(load_stage(meta_container, stage_container, button_container))
+  await load_stage(meta_container, stage_container, button_container)
 
 async def handle_key_press(e, meta_container, stage_container, button_container):
   if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
@@ -179,7 +231,7 @@ async def handle_key_press(e, meta_container, stage_container, button_container)
   stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_key_press(e, stage_container)
   if stage.get_user_data('finished', False):
-    app.storage.user['stage_idx'] += 1
+    update_stage()
     await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, button_container, **kwargs):
@@ -187,22 +239,19 @@ async def handle_button_press(*args, button_container, **kwargs):
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
-  button_container.clear()
+  clear_element(button_container)
   stage = get_stage(app.storage.user['stage_idx'])
   await stage.handle_button_press()
   if stage.get_user_data('finished', False):
-
-    app.storage.user['stage_idx'] += 1
-
+    update_stage()
     await load_stage(*args, button_container=button_container, **kwargs)
-
 
 async def handle_timer_finished(*args, button_container, **kwargs):
   if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
-  button_container.clear()
+  clear_element(button_container)
   stage = get_stage(app.storage.user['stage_idx'])
   notification = ui.notification(
       'The timer has run out.',
@@ -213,7 +262,7 @@ async def handle_timer_finished(*args, button_container, **kwargs):
     await button.clicked()
     notification.dismiss()
   if stage.get_user_data('finished', False):
-    app.storage.user['stage_idx'] += 1
+    update_stage()
     await load_stage(*args, button_container=button_container, **kwargs)
 
 async def save_on_new_block():
@@ -226,8 +275,8 @@ async def save_on_new_block():
       return
 
     if block != prior_block:
-       print("-"*10)
-       print(f"Saving results from block: `{prior_block}`")
+       logger.info("-"*10)
+       logger.info(f"Saving results from block: `{prior_block}`")
        asyncio.create_task(save_data(final_save=False))
 
 async def load_stage(meta_container, stage_container, button_container):
@@ -235,7 +284,6 @@ async def load_stage(meta_container, stage_container, button_container):
     if app.storage.user['stage_idx'] >= len(all_stages):
         await finish_experiment(meta_container, stage_container, button_container)
         return
-
     await save_on_new_block()
     #########
     # Activate new stage
@@ -248,12 +296,12 @@ async def load_stage(meta_container, stage_container, button_container):
       await stage.activate(stage_container)
 
     if stage.get_user_data('finished', False):
-      app.storage.user['stage_idx'] += 1
+      update_stage()
       return await load_stage(meta_container, stage_container, button_container)
 
 
     with button_container.style('align-items: center;'):
-      button_container.clear()
+      clear_element(button_container)
       ####################
       # Timer
       ####################
@@ -269,7 +317,7 @@ async def load_stage(meta_container, stage_container, button_container):
 
           async def update_countdown():
             if stage.get_user_data('finished', False):
-               button_container.clear()
+               clear_element(button_container)
                return 
             current_end_time = app.storage.user[f'{stage_idx}_end']
             if not isinstance(current_end_time, datetime):
@@ -297,9 +345,9 @@ async def load_stage(meta_container, stage_container, button_container):
                     button_container=button_container)
 
 async def finish_experiment(meta_container, stage_container, button_container):
-    meta_container.clear()
-    stage_container.clear()
-    button_container.clear()
+    clear_element(meta_container)
+    clear_element(stage_container)
+    clear_element(button_container)
 
     experiment_finished = app.storage.user.get('experiment_finished', False)
 
@@ -313,7 +361,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
     async def submit(feedback):
       app.storage.user['experiment_finished'] = True
       with meta_container:
-        meta_container.clear()
+        clear_element(meta_container)
         ui.markdown(f"## Saving data. Please wait")
         ui.markdown(
           "**Once the data is uploaded, this app will automatically move to the next screen**")
@@ -330,7 +378,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
         'data_saved', False)
     if not app.storage.user['data_saved']:
       with meta_container:
-        meta_container.clear()
+        clear_element(meta_container)
         ui.markdown("Please provide feedback on the experiment here. For example, please describe if anything went wrong or if you have any suggestions for the experiment.")
         text = ui.textarea().style('width: 80%;')  # Set width to 80% of the container
         button = ui.button("Submit")
@@ -341,7 +389,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
     # Final screen
     #########################
     with meta_container:
-        meta_container.clear()
+        clear_element(meta_container)
         key = {
            0: "Ym3sa",
            1: "Mja2S",
@@ -391,7 +439,7 @@ async def compute_bonus(data_dicts):
             train_successes += datum['metadata']['nsuccesses']
             train_episodes += datum['metadata']['episode_idx']
     train_sr = (train_successes / max(1, train_episodes))
-    bonus_sr = successes / npossible
+    bonus_sr = successes / max(1, npossible)
     bonus_sr = bonus_sr*(train_sr > .5)
 
     if bonus_sr < .25:
@@ -409,7 +457,7 @@ async def save_data(final_save=True, feedback=None, **kwargs):
     ExperimentDataPydantic.model_config['from_attributes'] = True
 
     user_experiment_data = await ExperimentData.filter(
-        session_id=app.storage.browser['id']).all()
+        session_id=app.storage.browser['id']).order_by('id').all()
 
     data_dicts = [ExperimentDataPydantic.model_validate(
         data).model_dump() for data in user_experiment_data]
@@ -418,24 +466,46 @@ async def save_data(final_save=True, feedback=None, **kwargs):
     if final_save:
       bonus = await compute_bonus(data_dicts)
       app.storage.user['bonus'] = bonus
+      user_storage = nicewebrl.nicejax.make_serializable(dict(app.storage.user))
       data_dicts.append(dict(
          finished=True,
          feedback=feedback,
          bonus=bonus,
+         user_storage=user_storage,
          **kwargs,
          ))
     user_seed = app.storage.user['seed']
-    user_data_file = f'data/data_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json'
+    user_data_file = f'data/data_user={user_seed}_name={NAME}_debug={DEBUG}.json'
     with open(user_data_file, 'w') as f:
       json.dump(data_dicts, f)
 
-    if not LOCAL:
-      await save_to_gcs(user_data=data_dicts, filename=user_data_file)
-      log_file = user_log_file(LOG_DIR)
-      bucket = gcs.initialize_storage_client()
-      blob = bucket.blob(
-          f'logs/user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.log')
-      blob.upload_from_filename(log_file)
+    if not DEBUG:
+        if final_save:
+            max_retries = 5
+            retry_delay = 5  # seconds
+            for attempt in range(max_retries):
+                try:
+                    saved = await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+                    if not saved: continue
+                    log_file = user_log_file(LOG_DIR)
+                    bucket = gcs.initialize_storage_client()
+                    blob = bucket.blob(
+                        f'logs/user={user_seed}_name={NAME}_debug={DEBUG}.log')
+                    blob.upload_from_filename(log_file)
+                    logger.info(f"Successfully saved data to GCS on attempt {attempt + 1}")
+                    break
+                except (TransportError, gcs_exceptions.GoogleCloudError) as e:
+                    if attempt < max_retries - 1:
+                        logger.info(f"Error saving to GCS: {e}. Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.info(f"Failed to save to GCS after {max_retries} attempts: {e}")
+        else:
+            # Non-final save, just attempt once
+            try:
+                await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+            except Exception as e:
+                logger.info(f"Error saving to GCS (non-final save): {e}")
 
     # Now delete the data from the database
     if final_save:
@@ -444,22 +514,24 @@ async def save_data(final_save=True, feedback=None, **kwargs):
 
 async def save_to_gcs(user_data, filename):
     try:
-      bucket = gcs.initialize_storage_client()
-      blob = bucket.blob(filename)
-      blob.upload_from_string(data=json.dumps(
-          user_data), content_type='application/json')
-      print(f'Saved {filename} in bucket {bucket.name}')
-    except TransportError as te:
-       print(te)
-       print("No internet connection maybe?")
+        bucket = gcs.initialize_storage_client()
+        blob = bucket.blob(filename)
+        blob.upload_from_string(data=json.dumps(user_data), content_type='application/json')
+        logger.info(f'Saved {filename} in bucket {bucket.name}')
+        return True  # Successfully saved
+    except (TransportError, gcs_exceptions.GoogleCloudError) as e:
+        logger.info(f"Error saving to GCS: {e}")
     except Exception as e:
-       raise e
+        logger.info(f"Unexpected error: {e}")
+        logger.info("Skipping GCS upload")
+    
+    return False  # Failed to save
 
 async def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()
    minutes_passed = app.storage.user['session_duration']
    if minutes_passed > episode_limit:
-      print(f"experiment timed out after {minutes_passed} minutes")
+      logger.info(f"experiment timed out after {minutes_passed} minutes")
       app.storage.user['stage_idx'] = len(all_stages)
       await finish_experiment(*args, **kwargs)
 
@@ -516,14 +588,13 @@ def initalize_user(user_info):
   #########
   # User settings
   #########
-  nicewebrl.initialize_user(debug=DEBUG, debug_seed=DEBUG_SEED)
+  nicewebrl.initialize_user(debug_seed=DEBUG_SEED)
 
   app.storage.user['user_id'] = user_info['worker_id'] or app.storage.user['seed']
 
   #########
   # Stage settings
   #########
-  print(f"Initialized user: {app.storage.user['seed']}")
   app.storage.user['stage_idx'] = app.storage.user.get('stage_idx', 0)
   app.storage.user['block_idx'] = app.storage.user.get('block_idx', 0)
   app.storage.user['block_progress'] = app.storage.user.get('block_progress', 0.)
@@ -531,8 +602,6 @@ def initalize_user(user_info):
   stage_order = app.storage.user.get('stage_order', None)
   block_order_to_idx = app.storage.user.get('block_order_to_idx', None)
 
-  print(f"Loaded block: {app.storage.user['block_idx']}")
-  print(f"Loaded stage: {app.storage.user['stage_idx']}")
   if not stage_order:
     init_rng_key = jnp.array(
         app.storage.user['init_rng_key'], dtype=jnp.uint32)
@@ -543,19 +612,35 @@ def initalize_user(user_info):
     block_order_to_idx = {str(i): int(idx) for idx, i in enumerate(block_order)}
 
   app.storage.user['stage_order'] = stage_order
-  print(f"Loaded stage order: {stage_order}")
-  print(f"Total stages: {len(all_stages)}")
   # this will be used to track which block you're currently in
 
   app.storage.user['block_order_to_idx'] = block_order_to_idx
-  print(f"Loaded block_order_to_idx: {block_order_to_idx}")
 
   #########
   # Logging
   #########
-  log_file = user_log_file(LOG_DIR)
-  sys.stdout = nicewebrl.utils.TeeOutput(open(log_file, 'a'), sys.stdout)
-  sys.stderr = nicewebrl.utils.TeeOutput(open(log_file, 'a'), sys.stderr)
+
+  logger.info(f"Initialized user: {app.storage.user['seed']}")
+  logger.info(f"Loaded block: {app.storage.user['block_idx']}")
+  logger.info(f"Loaded stage order: {stage_order}")
+  logger.info(f"Loaded stage: {app.storage.user['stage_idx']}")
+  stage_names = collections.OrderedDict()
+  stage_to_block_idx = {}
+  for i, stage_idx in enumerate(stage_order):
+      stage = all_stages[stage_idx]
+      block = stage.metadata.get('block_metadata', {}).get('idx', -1)
+      stage_names[block] = stage_names.get(block, {})
+      stage_names[block].update({i: (stage_idx, stage.name)})
+  
+  block, block_pieces = next(iter(stage_names.items()))
+  for block, block_pieces in stage_names.items():
+     for gloabl_idx, (idx_in_block, name) in block_pieces.items():
+        stage_to_block_idx[gloabl_idx] = (idx_in_block % len(block_pieces), name)
+
+  app.storage.user['stage_to_block_idx'] = stage_to_block_idx
+  app.storage.user['stage_names'] = stage_names
+  logger.info(f"Total stages: {len(all_stages)}")
+
 
 @ui.page('/')
 async def index(request: Request):
@@ -567,10 +652,7 @@ async def index(request: Request):
     )
     initalize_user(user_info)
     def print_ping(e):
-      user_id = app.storage.user.get('user_id')
-      user_id = user_id or app.storage.user.get('seed')
-      if user_id is not None:
-          print(f"{user_id}: {datetime.now():%m/%d %H:%M}: {str(e.args)}")
+      logger.info(str(e.args))
     ui.on('ping', print_ping)
 
     ui.run_javascript(f'window.debug = {DEBUG}')
@@ -580,7 +662,7 @@ async def index(request: Request):
     user_seed = app.storage.user['seed']
     await save_to_gcs(
         user_data=user_info,
-        filename=f'data/info_user={user_seed}_name={NAME}_exp={EXPERIMENT}_debug={DEBUG}.json')
+        filename=f'data/info_user={user_seed}_name={NAME}_debug={DEBUG}.json')
 
     ################
     # Start experiment
@@ -610,7 +692,7 @@ async def index(request: Request):
       stage_container = ui.column()
       button_container = ui.column()
       with ui.column() as meta_container:
-        if app.storage.user.get('experiment_started', False):
+        if app.storage.user.get('experiment_started', False) or DEBUG:
           await start_experiment(
              meta_container, stage_container, button_container)
         else: # very initial page
@@ -625,3 +707,4 @@ ui.run(
    reload='FLY_ALLOC_ID' not in os.environ,
    title=APP_TITLE,
    )
+

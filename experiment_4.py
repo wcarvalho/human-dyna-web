@@ -26,7 +26,7 @@ from nicewebrl import stages
 from nicewebrl.stages import Stage, EnvStage, Block, FeedbackStage
 from nicewebrl.stages import ExperimentData
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
-from nicewebrl.utils import wait_for_button_or_keypress
+from nicewebrl.utils import wait_for_button_or_keypress, clear_element
 from nicewebrl import nicejax
 
 load_dotenv()
@@ -37,9 +37,11 @@ MAN = os.environ.get('MAN', 'paths')  # which manipulation
 
 #USE_REVERSALS = int(os.environ.get('REV', 0))
 #EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
-FEEDBACK = int(os.environ.get('FEEDBACK', 0))
+FEEDBACK = int(os.environ.get('FEEDBACK', 1))
 SAY_REUSE = int(os.environ.get('SAY_REUSE', 1))
-TIMER = int(os.environ.get('TIMER', 45))
+TIMER = int(os.environ.get('TIMER', 30))
+VERBOSITY = int(os.environ.get('VERBOSITY', 0))
+NTRAIN = int(os.environ.get('NTRAIN', 8))
 USE_DONE = DEBUG > 0
 
 
@@ -47,14 +49,34 @@ USE_DONE = DEBUG > 0
 num_rooms = 2
 
 
-min_success_task = 8
+min_success_task = NTRAIN
 min_success_train = min_success_task*num_rooms
-max_episodes_train = 50*num_rooms
+max_episodes_task = 50
 if DEBUG == 0:
     pass
 elif DEBUG == 1:
+    max_episodes_train = NTRAIN*num_rooms
+    max_episodes_task = NTRAIN
+elif DEBUG == 2:
     min_success_task = 1
     min_success_train = 1
+    max_episodes_task = 1
+    max_episodes_train = 1
+
+max_episodes_train = max_episodes_task*num_rooms
+
+def reversal_label(reversal):
+    reversal = tuple(reversal)
+    if reversal == (False, False):
+        return 'F,F'
+    elif reversal == (True, False):
+        return 'T,F'
+    elif reversal == (False, True):
+        return 'F,T'
+    elif reversal == (True, True):
+        return 'T,T'
+    else:
+        raise ValueError(f"reversal: {reversal}")
 
 ##############################################
 # Creating environment stuff
@@ -70,7 +92,7 @@ def create_env_params(
     training=True,
     force_room=False,
     label=0,
-    time_limit=10_000_000,
+    time_limit=10_000_000 if DEBUG == 0 else 5,
     default_room=0,
     p_test_sample_train=1.0
 ):
@@ -229,7 +251,7 @@ def debug_info(stage):
 
 def instruct_display_fn(stage, container):
     with container.style('align-items: center;'):
-        container.clear()
+        clear_element(container)
         ui.markdown(f"## {stage.name}")
         ui.markdown(f"{remove_extra_spaces(stage.body)}",
                     extras=['cuddled-lists'])
@@ -251,7 +273,7 @@ def instruct_display_fn(stage, container):
 
 def stage_display_fn(stage, container):
     with container.style('align-items: center;'):
-        container.clear()
+        clear_element(container)
         ui.markdown(f"## {stage.name}")
         if DEBUG:
             ui.markdown(debug_info(stage))
@@ -309,7 +331,7 @@ async def env_reset_display_fn(
     image = base64_npimage(image)
 
     with container.style('align-items: center;'):
-        container.clear()
+        clear_element(container)
         ui.markdown(f"#### Goal object: {category}")
         if DEBUG:
             ui.markdown(debug_info(stage))
@@ -330,7 +352,7 @@ def env_stage_display_fn(
 
     stage_state = stage.get_user_data('stage_state')
     with container.style('align-items: center;'):
-        container.clear()
+        clear_element(container)
         #ui.markdown(f"#### Goal object: {category}")
         with ui.matplotlib(figsize=(1,1)).figure as fig:
             ax = fig.subplots(1, 1)
@@ -357,7 +379,7 @@ async def paths_manipulation_feedback_display_fn(
         stage,
         container,
         name: str = 'big_m3_maze1_eval'):
-    container.clear()
+    clear_element(container)
     output = {}
     with container.style('align-items: center;'):
         user_data = await ExperimentData.filter(
@@ -417,7 +439,7 @@ async def paths_manipulation_feedback_display_fn(
 async def shortcut_manipulation_feedback_display_fn(
         stage,
         container):
-    container.clear()
+    clear_element(container)
     output = {}
     with container.style('align-items: center;'):
         train_user_data = await ExperimentData.filter(
@@ -524,6 +546,7 @@ def make_env_stage(
         custom_data_fn=custom_data_fn,
         duration=duration if not training else None,
         notify_success=True,
+        verbosity=VERBOSITY,
         **kwargs,
     )
 
@@ -545,16 +568,17 @@ def make_block(
     phase2_cond1_env_kwargs: dict = None,
     phase2_cond2_env_kwargs: dict = None,
     str_transform: Callable[[str], str] = lambda s:s,
+    appendix: str = '',
 ):
     def create_stage(name, body):
-        return Stage(name=name, body=body, display_fn=stage_display_fn)
+        return Stage(name=f"{name}", body=body, display_fn=stage_display_fn)
     
     make_env_kwargs = make_env_kwargs or {}
     phase2_cond1_env_kwargs = phase2_cond1_env_kwargs or {}
     phase2_cond2_env_kwargs = phase2_cond2_env_kwargs or {}
     def create_env_stage(name, maze_name, training, min_success, max_episodes, duration=None, **kwargs):
         return make_env_stage(
-            name=name,
+            name=f"{name}",
             maze_str=str_transform(getattr(mazes, maze_name)),
             min_success=min_success,
             max_episodes=max_episodes,
@@ -570,7 +594,7 @@ def make_block(
             create_env_stage(
               name=phase_1_maze_name,
               maze_name=phase_1_maze_name,
-              metadata=dict(maze=phase_1_maze_name, condition=0),
+              metadata=dict(maze=phase_1_maze_name+appendix, condition=0),
               training=True,
               min_success=min_success or min_success_train,
               max_episodes=max_episodes or max_episodes_train),
@@ -578,11 +602,11 @@ def make_block(
             create_env_stage(
               name=phase_2_cond1_name or phase_2_cond1_maze_name,
               maze_name=phase_2_cond1_maze_name,
-              metadata=dict(maze=phase_2_cond1_maze_name, condition=1),
+              metadata=dict(maze=phase_2_cond1_maze_name+appendix, condition=1),
               training=False,
               min_success=1,
               max_episodes=1,
-              duration=eval_duration,
+              duration=eval_duration if TIMER else None,
               end_on_final_timestep=True,
               **phase2_cond1_env_kwargs,
               ),
@@ -592,11 +616,11 @@ def make_block(
             create_env_stage(
               name=phase_2_cond2_name or phase_2_cond2_maze_name,
               maze_name=phase_2_cond2_maze_name,
-              metadata=dict(maze=phase_2_cond2_maze_name, condition=2),
+              metadata=dict(maze=phase_2_cond2_maze_name+appendix, condition=2),
               training=False,
               min_success=1,
               max_episodes=1,
-              duration=eval_duration,
+              duration=eval_duration if TIMER else None,
               end_on_final_timestep=True,
               **phase2_cond2_env_kwargs,
               ))
@@ -627,9 +651,11 @@ if SAY_REUSE:
       threshold = int(time*2/3)
       phase_2_text = f"""
       You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds. 
-      
+      """
+      phase_2_text += f"""
       You have a <span style="color: red; font-weight: bold;">time-limit</span>{time_str}. Try to reuse what you learned as best you can.
-
+      """ if TIMER else ''
+      phase_2_text += f"""
       If you retrieve the wrong object, the episode ends early. You have 1 try.
 
       """
@@ -645,9 +671,11 @@ else:
       threshold = int(time*2/3)
       phase_2_text = f"""
       You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds.
-
+      """
+      phase_2_text += f"""
       You have a <span style="color: red; font-weight: bold;">time-limit</span>{time_str}.
-
+      """ if TIMER else ''
+      phase_2_text += f"""
       If you retrieve the wrong object, the episode ends early. You have 1 try.
       """
       return phase_2_text
@@ -672,7 +700,7 @@ def create_practice_block(
     return make_block(
         eval_duration=30,
         min_success=2 if not DEBUG else 1,
-        max_episodes=10,
+        max_episodes=10 if not DEBUG else 1,
         make_env_kwargs=dict(force_room=True),
         phase_1_text=make_phase_1_text(),
         phase_1_maze_name='big_practice_maze',
@@ -681,7 +709,8 @@ def create_practice_block(
         block_groups=block_groups,
         block_char2idx=block_char2idx,
         metadata=dict(manipulation=-1, desc="practice", long="practice"),
-        str_transform=str_transform
+        str_transform=str_transform,
+        #appendix=f"_({reversal_label(reversal)})"
     )
 
 ####################
@@ -705,9 +734,11 @@ def create_shortcut_manipulation_block(
             manipulation=1,
             reversal=reversal,
             desc="shortcut",
-            long="A shortcut is introduced"
+            long="A shortcut is introduced",
+            short=f'shortcut_{reversal_label(reversal)}'
         ),
-        str_transform=str_transform
+        str_transform=str_transform,
+        #appendix=f"_({reversal_label(reversal)})"
     )
 
 ####################
@@ -731,11 +762,11 @@ def create_path_manipulation_block(
             manipulation=3,
             reversal=reversal,
             desc="reusing longer of two paths which matches training path",
-            long=f"""
-            Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.
-            """
+            long="Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.",
+            short=f'paths_{reversal_label(reversal)}'
         ),
-        str_transform=str_transform
+        str_transform=str_transform,
+        #appendix=f"_({reversal_label(reversal)})"
     )
 
 ####################
@@ -753,16 +784,16 @@ def create_start_manipulation_block(
         phase_2_cond2_maze_name='big_m2_maze2_offpath',
         block_groups=block_groups,
         block_char2idx=block_char2idx,
-        eval_duration=30,
+        eval_duration=TIMER,
         metadata=dict(
             manipulation=2,
             reversal=reversal,
             desc="faster when on-path but further than off-path but closer",
-            long=f"""
-            In the first, the agent is tested with starting in a familiar location. In the second, the agent is started from a different, but closer parth of the path.
-            """
+            long="In the first, the agent is tested with starting in a familiar location. In the second, the agent is started from a different, but closer part of the path.",
+            short=f'start_{reversal_label(reversal)}'
         ),
-        str_transform=str_transform
+        str_transform=str_transform,
+        #appendix=f"_({reversal_label(reversal)})"
     )
 
 
@@ -778,7 +809,7 @@ def create_plan_manipulation_block(
     return make_block(
         # special case for short planning maze
         min_success=min_success_task,
-        max_episodes=50,
+        max_episodes=max_episodes_task,
         eval_duration=5 if setting == 'short' else 15,
         make_env_kwargs=dict(force_room=True),
         phase2_cond1_env_kwargs={} if SAY_REUSE else dict(force_random_room=True),
@@ -794,11 +825,11 @@ def create_plan_manipulation_block(
             manipulation=4,
             reversal=reversal,
             desc=f"See if faster off train path than planning ({setting})",
-            long=f"""
-            Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.
-            """
+            long="Here there are two branches from a training path. We predict that people will have a shorter response time when an object is in the same location it was in phase 1.",
+            short=f'plan_{setting}_{reversal_label(reversal)}'
         ),
-        str_transform=str_transform
+        str_transform=str_transform,
+        #appendix=f"_({reversal_label(reversal)})"
     )
 
 
@@ -808,7 +839,7 @@ def create_plan_manipulation_block(
 ##########################
 
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-if DEBUG:
+if DEBUG > 1:
   reversals = [(False, False)]
 
 feedback_block = []
@@ -899,8 +930,7 @@ def generate_block_stage_order(rng_key):
             fixed_blocks,  # instruction blocks
             random_order,  # experiment blocks
         ]).astype(jnp.int32)
-    
     block_order = block_order.tolist()
     stage_order = stages.generate_stage_order(all_blocks, block_order, rng_key)
-
+    stage_order = [int(i) for i in stage_order]
     return block_order, stage_order

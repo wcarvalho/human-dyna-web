@@ -60,8 +60,11 @@ def reversal_label(reversal):
         return 'T,F'
     elif reversal == [False, True]:
         return 'F,T'
-    else:
+    elif reversal == [True, True]:
         return 'T,T'
+    else:
+        raise ValueError(f"reversal: {reversal}")
+
 ############
 # deep learning models
 ############

@@ -6,7 +6,15 @@ rm -r data .nicegui;
 rm -r data/*exp3-v1* .nicegui; INST=1 DEBUG=0 NMAN=0 EXP=4 NAME='exp3-v1' SEED=45 python main.py
 
 # debugging command to test
-rm -r data .nicegui; INST=0 DEBUG=1 EXP=4 MAN='shortcut' SAY_REUSE=1 SEED=44 python main.py
+rm -r data .nicegui; INST=0 DEBUG=0 NTRAIN=1 EXP=4 MAN='plan' SAY_REUSE=0 SEED=44 python main.py
+
+
+# FULL command
+rm -r data .nicegui; EXP=4 MAN='shortcut' SAY_REUSE=0 SEED=2764371760 python main.py
+
+
+
+
 
 #1. paths: no timer, tell
 python launch.py exp4-v1-r1-t0-paths --env EXP=4 --env MAN="paths" --env SAY_REUSE=1 --env TIMER=0
@@ -34,7 +42,7 @@ python launch.py exp4-v1-r1-t0-shortcut --env EXP=4 --env MAN="shortcut" --env S
 flyctl deploy --config configs/human-dyna-exp4-v1-r1-t0-shortcut.toml
 
 
-flyctl logs --config configs/human-dyna-exp4-v1-r1-t0-shortcut.toml
+flyctl logs --config configs/human-dyna-exp4-v1-r0-t0-plan.toml
 ########################################################
 # Experiment 5 - three conditions, new map
 ##########################################
