@@ -5,3 +5,4 @@ polars
 joblib
 safetensors
 ipywidgets
+aiofiles
