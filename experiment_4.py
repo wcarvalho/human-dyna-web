@@ -33,6 +33,7 @@ load_dotenv()
 
 GIVE_INSTRUCTIONS = int(os.environ.get('INST', 1))
 DEBUG = int(os.environ.get('DEBUG', 0))
+NAME = os.environ.get('NAME', 'exp')
 MAN = os.environ.get('MAN', 'paths')  # which manipulation
 
 #USE_REVERSALS = int(os.environ.get('REV', 0))
@@ -78,6 +79,8 @@ def reversal_label(reversal):
     else:
         raise ValueError(f"reversal: {reversal}")
 
+def get_user_save_file_fn():
+    return f'data/user={app.storage.user.get("seed")}_name={NAME}_debug={DEBUG}.json'
 ##############################################
 # Creating environment stuff
 ##############################################
@@ -375,119 +378,54 @@ def env_stage_display_fn(
         ui.html(text).style('align-items: center;')
         ui.html(make_image_html(src=state_image))
 
-async def paths_manipulation_feedback_display_fn(
+
+async def train_eval_feedback_display_fn(
         stage,
         container,
-        name: str = 'big_m3_maze1_eval'):
-    clear_element(container)
+        stages_for_feedback: List[Tuple[Stage, Stage]],
+        question: str,
+        ):
+    del stage  # won't use
     output = {}
     with container.style('align-items: center;'):
-        user_data = await ExperimentData.filter(
-            session_id=app.storage.browser['id'],
-            name=name,
-        )
-        used_old_path = [d.user_data.get('old_path', False)
-                        for d in user_data]
-        used_old_path = np.array(used_old_path).any()
+        rng = nicejax.new_rng()
+        for train_stage, eval_stage in stages_for_feedback:
+            clear_element(container)
+            train_timestep = train_stage.web_env.reset(rng, train_stage.env_params)
+            train_image = train_stage.render_fn(train_timestep)
+            train_category = keys[train_timestep.state.task_object]
+            
+            eval_timestep = eval_stage.web_env.reset(rng, eval_stage.env_params)
+            eval_image = eval_stage.render_fn(eval_timestep)
+            eval_category = keys[eval_timestep.state.task_object]
 
-        ########
-        # radio
-        #######
-        groups = user_data[0].metadata['block_metadata'].get('groups', None)
-        phase2_train = keys[groups[0][0]]
-        phase2_test = keys[groups[0][1]]
-        ui.html(f"Did you notice that the phase 2 object ({phase2_test}) was accessible from the path towards the phase 1 object ({phase2_train})?")
-        #radio = ui.radio({1: "Yes", 2: "No", 3: "I'm not sure"}, value=3).props('inline')
-        #output['noticed_path'] = radio.value
+            # Calculate aspect ratio and set figure size
+            fig_width = 12
+            fig_height = 4
+            with ui.matplotlib(
+                    figsize=(int(fig_width), int(fig_height))).figure as fig:
+                axs = fig.subplots(1, 2)
+                axs[0].set_title(f"Phase 1: get {train_category}")
+                axs[0].imshow(train_image)
+                axs[0].axis('off')
+                axs[1].set_title(f"Phase 2: get {eval_category}")
+                axs[1].imshow(eval_image)
+                axs[1].axis('off')
+            ui.html(question)
+            radio = ui.radio({1: "Yes", 2: "No"}).props('inline')
 
-        ########
-        # freeform
-        ########
-        if used_old_path is None: 
-            output['feedback'] = None
-            return output
+            async def submit():
+                if radio.value is None:
+                    ui.notify(
+                        "Please select an option before submitting.", type="warning")
+                    return
 
-        if used_old_path:
-            text = f"You used the same path as in Phase 1. Please briefly describe why."
-        else:
-            text = f"You used a different path as in Phase 1. Please briefly describe why. For example, did you re-plan how to get the object?"
-        output['question'] = text
-        timestep = user_data[0].data['timestep']
-        timestep = nicejax.deserialize_bytes(maze.TimeStep, timestep)
-        image = render_fn(timestep)
+                noticed_difference = "Yes" if radio.value == 1 else "No"
+                reversal = train_stage.metadata['block_metadata']['reversal']
+                output[f'noticed_cond={reversal}'] = noticed_difference
 
-        # Calculate aspect ratio and set figure size
-        height, width = image.shape[:2]
-        aspect_ratio = width / height
-        fig_width = 6
-        fig_height = fig_width / aspect_ratio
-
-        with ui.matplotlib(
-            figsize=(int(fig_width), int(fig_height))).figure as fig:
-            ax = fig.subplots(1, 1)
-            ax.imshow(image)
-            ax.axis('off')
-        ui.html(f"{text}")
-        text = ui.textarea().style('width: 80%;')  # Set width to 80% of the container
-        button = ui.button("Submit")
-        await button.clicked()
-        feedback = text.value
-        output['feedback'] = feedback
-    return output
-
-
-async def shortcut_manipulation_feedback_display_fn(
-        stage,
-        container):
-    clear_element(container)
-    output = {}
-    with container.style('align-items: center;'):
-        train_user_data = await ExperimentData.filter(
-            session_id=app.storage.browser['id'],
-            name='big_m1_maze3',
-        )
-        train_timestep = train_user_data[0].data['timestep']
-        train_timestep = nicejax.deserialize_bytes(maze.TimeStep, train_timestep)
-        train_image = render_fn(train_timestep)
-
-        eval_user_data = await ExperimentData.filter(
-            session_id=app.storage.browser['id'],
-            name='big_m1_maze3_shortcut',
-        )
-        eval_timestep = eval_user_data[0].data['timestep']
-        eval_timestep = nicejax.deserialize_bytes(
-            maze.TimeStep, eval_timestep)
-        eval_image = render_fn(eval_timestep)
-
-        # Calculate aspect ratio and set figure size
-        height, width = train_image.shape[:2]
-        aspect_ratio = width / height
-        fig_width = 12
-        fig_height = 4
-
-        with ui.matplotlib(
-                figsize=(int(fig_width), int(fig_height))).figure as fig:
-            axs = fig.subplots(1, 2)
-            axs[0].set_title("Phase 1")
-            axs[0].imshow(train_image)
-            axs[0].axis('off')
-            axs[1].set_title("Phase 2")
-            axs[1].imshow(eval_image)
-            axs[1].axis('off')
-        ui.html(f"Did you notice that the map from phase 2 was different from the map in phase 1?")
-        radio = ui.radio({1: "Yes", 2: "No"}).props('inline')
-
-        async def submit():
-            if radio.value is None:
-                ui.notify(
-                    "Please select an option before submitting.", type="warning")
-                return
-
-            noticed_difference = "Yes" if radio.value == 1 else "No"
-            output['noticed_difference'] = noticed_difference
-
-        button = ui.button('Submit', on_click=submit)
-        await button.clicked()
+            button = ui.button('Submit', on_click=submit)
+            await button.clicked()
     return output
 
 
@@ -546,7 +484,6 @@ def make_env_stage(
         custom_data_fn=custom_data_fn,
         duration=duration if not training else None,
         notify_success=True,
-        verbosity=VERBOSITY,
         **kwargs,
     )
 
@@ -586,9 +523,11 @@ def make_block(
             groups=block_groups,
             char2idx=block_char2idx,
             training=training,
+            user_save_file_fn=get_user_save_file_fn,
             **make_env_kwargs,
             **kwargs,
         )
+
     stages=[
             create_stage('Phase 1', phase_1_text),
             create_env_stage(
@@ -839,8 +778,8 @@ def create_plan_manipulation_block(
 ##########################
 
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-if DEBUG > 1:
-  reversals = [(False, False)]
+#if DEBUG > 1:
+#  reversals = [(False, False)]
 
 feedback_block = []
 if MAN == 'start':  # start manipulation (2)
@@ -849,12 +788,22 @@ if MAN == 'start':  # start manipulation (2)
 elif MAN == 'paths':  # paths manipulation (3)
   manipulations = [
       create_path_manipulation_block(r) for r in reversals]
+  stages_for_feedback = []
+  for block in manipulations:
+    train_stage = block.stages[1]
+    eval_stage = block.stages[3]
+    stages_for_feedback.append((train_stage, eval_stage))
+
   if FEEDBACK:
+      display_fn = partial(
+          train_eval_feedback_display_fn,
+          stages_for_feedback=stages_for_feedback,
+          question="Did you notice both paths to the phase 2 object?")
       feedback_block.append(
           Block(
               stages=[FeedbackStage(
                   name='paths_manipulation_feedback',
-                  display_fn=paths_manipulation_feedback_display_fn)],
+                  display_fn=display_fn)],
               metadata=dict(desc="paths_manipulation_feedback")
           )
       )
@@ -868,12 +817,22 @@ elif MAN == 'shortcut':  # shortcut manipulation (1)
   manipulations = [
       create_shortcut_manipulation_block(r) for r in reversals
   ]
+  stages_for_feedback = []
+  for block in manipulations:
+    train_stage = block.stages[1]
+    eval_stage = block.stages[3]
+    stages_for_feedback.append((train_stage, eval_stage))
+
   if FEEDBACK:
+      display_fn = partial(
+          train_eval_feedback_display_fn,
+          stages_for_feedback=stages_for_feedback,
+          question="Did you notice that the map from phase 2 was different from the map in phase 1?")
       feedback_block.append(
           Block(
               stages=[FeedbackStage(
                   name='shortcut_manipulation_feedback',
-                  display_fn=shortcut_manipulation_feedback_display_fn)],
+                  display_fn=display_fn)],
               metadata=dict(desc="shortcut_manipulation_feedback")
           )
       )

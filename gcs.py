@@ -1,8 +1,15 @@
+from google.auth.exceptions import TransportError
 from google.cloud import storage
 import os
+import json
 
 from dotenv import load_dotenv
 
+from google.cloud.exceptions import exceptions as gcs_exceptions
+from nicewebrl.logging import get_logger
+
+
+logger = get_logger(__name__)
 load_dotenv()
 
 
@@ -43,3 +50,35 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+async def save_data_to_gcs(data, blob_filename):
+    try:
+        bucket = initialize_storage_client()
+        blob = bucket.blob(blob_filename)
+        blob.upload_from_string(data=json.dumps(data), content_type='application/json')
+        logger.info(f'Saved {blob_filename} in bucket {bucket.name}')
+        return True  # Successfully saved
+    except (TransportError, gcs_exceptions.GoogleCloudError) as e:
+        logger.info(f"Error saving to GCS: {e}")
+    except Exception as e:
+        logger.info(f"Unexpected error: {e}")
+        logger.info("Skipping GCS upload")
+
+    return False  # Failed to save
+
+
+async def save_file_to_gcs(local_filename, blob_filename):
+    try:
+        bucket = initialize_storage_client()
+        blob = bucket.blob(blob_filename)
+        blob.upload_from_filename(local_filename)
+        logger.info(f'Saved {blob_filename} in bucket {bucket.name}')
+        return True  # Successfully saved
+    except (TransportError, gcs_exceptions.GoogleCloudError) as e:
+        logger.info(f"Error saving to GCS: {e}")
+    except Exception as e:
+        logger.info(f"Unexpected error: {e}")
+        logger.info("Skipping GCS upload")
+
+    return False  # Failed to save

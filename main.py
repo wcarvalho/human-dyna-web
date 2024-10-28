@@ -2,16 +2,14 @@ import logging
 import inspect
 import collections
 import asyncio
+import aiofiles
+import subprocess
 
 from dotenv import load_dotenv
 import json
 import jax.numpy as jnp
 from nicegui import app, ui
-import nicewebrl
 import sys
-import nicewebrl.nicejax
-import nicewebrl.stages
-import nicewebrl.utils
 from fastapi import Request
 from tortoise import Tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
@@ -21,8 +19,12 @@ from pprint import pprint
 from datetime import datetime, timedelta
 
 
-import gcs
+from gcs import save_data_to_gcs
+from gcs import save_file_to_gcs
 import nicewebrl
+import nicewebrl.nicejax
+import nicewebrl.stages
+import nicewebrl.utils
 from nicewebrl.stages import ExperimentData
 from nicewebrl.utils import wait_for_button_or_keypress, clear_element
 from nicewebrl.logging import setup_logging, get_logger
@@ -34,15 +36,30 @@ from google.cloud import exceptions as gcs_exceptions
 load_dotenv()
 
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
+DATA_DIR = os.environ.get('DATA_DIR', 'data/')
 NAME = os.environ.get('NAME', 'exp')
-LOG_DIR = os.environ.get('LOG_DIR', 'data/')
 DEBUG = int(os.environ.get('DEBUG', 0))
 DEBUG_SEED = int(os.environ.get('SEED', 0))
 EXPERIMENT = int(os.environ.get('EXP', 4))
 LIGHT = int(os.environ.get('LIGHT', 0))
-os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
-setup_logging(LOG_DIR,
+def log_filename_fn(log_dir, user_id):
+  return os.path.join(log_dir, f'log_{user_id}.log')
+
+# user_info_file = f'data/info_user={user_seed}_name={NAME}_debug={DEBUG}.json'
+def get_date_filename(data_dir, user_id):
+  return os.path.join(data_dir, f'log_{user_id}.log')
+# user_data_file = f'data/data_user={user_seed}_name={NAME}_debug={DEBUG}.json'
+
+def blob_user_filename():
+  """filename structure for user data in GCS (cloud)"""
+  seed = app.storage.user['seed']
+  worker = app.storage.user.get('worker', None)
+  return f'user={seed}_worker={worker}_name={NAME}_debug={DEBUG}'
+
+setup_logging(DATA_DIR,
+              log_filename_fn=log_filename_fn,
               nicegui_storage_user_key='user_id')
 logger = get_logger('main')
 
@@ -70,9 +87,6 @@ all_stages = experiment.all_stages
 
 DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_debug={DEBUG}'
 
-def user_log_file(log_dir):
-  user_id = app.storage.user.get('user_id')
-  return os.path.join(log_dir, f'log_{user_id}.log')
 
 
 
@@ -390,94 +404,70 @@ async def finish_experiment(meta_container, stage_container, button_container):
     #########################
     with meta_container:
         clear_element(meta_container)
-        key = {
-           0: "Ym3sa",
-           1: "Mja2S",
-           2: "Ujas14",
-           3: "Ukla0j",
-        }[app.storage.user['bonus']]
         ui.markdown("# Experiment over")
         ui.markdown("## Data saved")
         ui.markdown("### Please record the following code which you will need to provide for compensation")
         ui.markdown(
-            f'### gershman.dyna.{key}')
+            f'### gershman.dyna')
         ui.markdown("#### You may close the browser")
 
-async def compute_bonus(data_dicts):
+#async def compute_bonus(data_dicts):
 
-    train_successes = 0
-    train_episodes = 0
-    eval_successes = 0
-    eval_episodes = 0
-    keys = set()
-    successes = 0
-    npossible = 0
-    for datum in data_dicts[::-1]:
-       if 'practice' in datum['metadata']['block_metadata'].get('desc', ''):
-          continue
-       if 'feedback' in datum['metadata']['block_metadata'].get('desc', ''):
-          continue
-       info = get_block_stage_description(datum)
-       desc = dict_to_string(info)
-       if desc not in keys:
-          keys.add(desc)
-          user_data = await ExperimentData.filter(
-              session_id=app.storage.browser['id'],
-              name=datum['name'],
-          )
-          first = user_data[0].data['image_seen_time']
-          last = user_data[-1].data['action_taken_time']
-          seconds = time_diff(first, last)/1000
-          timelimit = user_data[0].data['timelimit']
-          if timelimit is not None:
-            successes += seconds < timelimit
-            npossible += 1
-          if datum['metadata'].get('eval', False):
-            eval_successes += datum['metadata']['nsuccesses']
-            eval_episodes += datum['metadata']['episode_idx']
-          else:
-            train_successes += datum['metadata']['nsuccesses']
-            train_episodes += datum['metadata']['episode_idx']
-    train_sr = (train_successes / max(1, train_episodes))
-    bonus_sr = successes / max(1, npossible)
-    bonus_sr = bonus_sr*(train_sr > .5)
+#    train_successes = 0
+#    train_episodes = 0
+#    eval_successes = 0
+#    eval_episodes = 0
+#    keys = set()
+#    successes = 0
+#    npossible = 0
+#    for user_data in data_dicts[::-1]:
+#       if 'practice' in user_data['metadata']['block_metadata'].get('desc', ''):
+#          continue
+#       if 'feedback' in user_data['metadata']['block_metadata'].get('desc', ''):
+#          continue
+#       info = get_block_stage_description(user_data)
+#       desc = dict_to_string(info)
+#       if desc not in keys:
+#          keys.add(desc)
+#          first = user_data[0].data['image_seen_time']
+#          last = user_data[-1].data['action_taken_time']
+#          seconds = time_diff(first, last)/1000
+#          timelimit = user_data[0].data['timelimit']
+#          if timelimit is not None:
+#            successes += seconds < timelimit
+#            npossible += 1
+#          if user_data['metadata'].get('eval', False):
+#            eval_successes += user_data['metadata']['nsuccesses']
+#            eval_episodes += user_data['metadata']['episode_idx']
+#          else:
+#            train_successes += user_data['metadata']['nsuccesses']
+#            train_episodes += user_data['metadata']['episode_idx']
+#    train_sr = (train_successes / max(1, train_episodes))
+#    bonus_sr = successes / max(1, npossible)
+#    bonus_sr = bonus_sr*(train_sr > .5)
 
-    if bonus_sr < .25:
-       return 0
-    elif bonus_sr < .5:
-       return 1
-    elif bonus_sr < .75:
-       return 2
-    else:
-       return 3
+#    if bonus_sr < .25:
+#       return 0
+#    elif bonus_sr < .5:
+#       return 1
+#    elif bonus_sr < .75:
+#       return 2
+#    else:
+#       return 3
 
 async def save_data(final_save=True, feedback=None, **kwargs):
-    # Create a Pydantic model from your Tortoise model
-    ExperimentDataPydantic = pydantic_model_creator(ExperimentData)
-    ExperimentDataPydantic.model_config['from_attributes'] = True
+    user_data_file = experiment.get_user_save_file_fn()
 
-    user_experiment_data = await ExperimentData.filter(
-        session_id=app.storage.browser['id']).order_by('id').all()
-
-    data_dicts = [ExperimentDataPydantic.model_validate(
-        data).model_dump() for data in user_experiment_data]
-
-    bonus = 0
     if final_save:
-      bonus = await compute_bonus(data_dicts)
-      app.storage.user['bonus'] = bonus
       user_storage = nicewebrl.nicejax.make_serializable(dict(app.storage.user))
-      data_dicts.append(dict(
+      last_line = dict(
          finished=True,
          feedback=feedback,
-         bonus=bonus,
          user_storage=user_storage,
          **kwargs,
-         ))
-    user_seed = app.storage.user['seed']
-    user_data_file = f'data/data_user={user_seed}_name={NAME}_debug={DEBUG}.json'
-    with open(user_data_file, 'w') as f:
-      json.dump(data_dicts, f)
+         )
+      async with aiofiles.open(user_data_file, 'a') as f:
+          await f.write(json.dumps(last_line) + '\n')
 
     if not DEBUG:
         if final_save:
@@ -485,13 +475,20 @@ async def save_data(final_save=True, feedback=None, **kwargs):
             retry_delay = 5  # seconds
             for attempt in range(max_retries):
                 try:
-                    saved = await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+                    # ----------
+                    # upload user data
+                    # ----------
+                    saved = await save_file_to_gcs(
+                      local_filename=user_data_file,
+                      blob_filename=f'data/{blob_user_filename()}.json')
                     if not saved: continue
-                    log_file = user_log_file(LOG_DIR)
-                    bucket = gcs.initialize_storage_client()
-                    blob = bucket.blob(
-                        f'logs/user={user_seed}_name={NAME}_debug={DEBUG}.log')
-                    blob.upload_from_filename(log_file)
+                    # ----------
+                    # upload user logs
+                    # ----------
+                    await save_file_to_gcs(
+                        local_filename=log_filename_fn(
+                            DATA_DIR, app.storage.user.get('user_id')),
+                        blob_filename=f'logs/{blob_user_filename()}.log')
                     logger.info(f"Successfully saved data to GCS on attempt {attempt + 1}")
                     break
                 except (TransportError, gcs_exceptions.GoogleCloudError) as e:
@@ -503,29 +500,12 @@ async def save_data(final_save=True, feedback=None, **kwargs):
         else:
             # Non-final save, just attempt once
             try:
-                await save_to_gcs(user_data=data_dicts, filename=user_data_file)
+                saved = await save_file_to_gcs(
+                    local_filename=user_data_file,
+                    blob_filename=f'data/{blob_user_filename()}.json')
             except Exception as e:
                 logger.info(f"Error saving to GCS (non-final save): {e}")
 
-    # Now delete the data from the database
-    if final_save:
-      await ExperimentData.filter(session_id=app.storage.browser['id']).delete()
-
-
-async def save_to_gcs(user_data, filename):
-    try:
-        bucket = gcs.initialize_storage_client()
-        blob = bucket.blob(filename)
-        blob.upload_from_string(data=json.dumps(user_data), content_type='application/json')
-        logger.info(f'Saved {filename} in bucket {bucket.name}')
-        return True  # Successfully saved
-    except (TransportError, gcs_exceptions.GoogleCloudError) as e:
-        logger.info(f"Error saving to GCS: {e}")
-    except Exception as e:
-        logger.info(f"Unexpected error: {e}")
-        logger.info("Skipping GCS upload")
-    
-    return False  # Failed to save
 
 async def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()
@@ -538,13 +518,12 @@ async def check_if_over(*args, episode_limit=60, ** kwargs):
 #####################################
 # Setup database
 #####################################
-directory = 'data'
-if not os.path.exists(directory):
-    os.mkdir(directory)
+if not os.path.exists(DATA_DIR):
+    os.mkdir(DATA_DIR)
 
 async def init_db() -> None:
     await Tortoise.init(
-       db_url=f'sqlite://data/{DATABASE_FILE}',
+       db_url=f'sqlite://{DATA_DIR}/{DATABASE_FILE}',
        modules={'models': ['models']})
     await Tortoise.generate_schemas()
 
@@ -588,7 +567,7 @@ def initalize_user(user_info):
   #########
   # User settings
   #########
-  nicewebrl.initialize_user(debug_seed=DEBUG_SEED)
+  nicewebrl.initialize_user(seed=DEBUG_SEED)
 
   app.storage.user['user_id'] = user_info['worker_id'] or app.storage.user['seed']
 
@@ -641,6 +620,16 @@ def initalize_user(user_info):
   app.storage.user['stage_names'] = stage_names
   logger.info(f"Total stages: {len(all_stages)}")
 
+def get_git_version():
+    try:
+        # Get the current commit hash
+        git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+        # Get any uncommitted changes
+        git_diff = subprocess.check_output(['git', 'status', '--porcelain']).decode('ascii').strip()
+        is_dirty = bool(git_diff)
+        return f"{git_hash}{'_dirty' if is_dirty else ''}"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "git_version_unknown"
 
 @ui.page('/')
 async def index(request: Request):
@@ -648,8 +637,10 @@ async def index(request: Request):
         worker_id=request.query_params.get('workerId', None),
         hit_id=request.query_params.get('hitId', None),
         assignment_id=request.query_params.get(
-            'assignmentId', None)
+            'assignmentId', None),
+        git_version=get_git_version()
     )
+
     initalize_user(user_info)
     def print_ping(e):
       logger.info(str(e.args))
@@ -659,10 +650,9 @@ async def index(request: Request):
     ################
     # Get user data and save to GCS
     ################
-    user_seed = app.storage.user['seed']
-    await save_to_gcs(
-        user_data=user_info,
-        filename=f'data/info_user={user_seed}_name={NAME}_debug={DEBUG}.json')
+    await save_data_to_gcs(
+        data=user_info,
+        blob_filename=f'info/{blob_user_filename()}.json')
 
     ################
     # Start experiment
@@ -681,7 +671,7 @@ async def index(request: Request):
         'align-items: center;'
     )
     with card:
-      episode_limit = 120
+      episode_limit = 200
       ui.timer(
         1,  # check every minute
         lambda: check_if_over(
@@ -707,4 +697,5 @@ ui.run(
    reload='FLY_ALLOC_ID' not in os.environ,
    title=APP_TITLE,
    )
+
 
