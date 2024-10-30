@@ -5,7 +5,7 @@ def launch_experiment(name, env_vars):
     # Construct the flyctl launch command
     launch_cmd = [
         "flyctl", "launch",
-        "--dockerfile", "Dockerfile",
+        "--dockerfile", "Dockerfile_housemaze",
         "--name", f"human-dyna-{name}",
         "--config", f"configs/human-dyna-{name}.toml",
         "--vm-size", "performance-2x",

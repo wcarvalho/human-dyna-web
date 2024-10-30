@@ -181,8 +181,16 @@ async def update_stage():
   saved_data = stage.get_user_data('saved_data', False)
   if isinstance(stage, EnvStage) and not saved_data:
     logger.error(f"\n{fn_name}: leaving stage {stage.name} without saved data")
-    import os
-    os._exit(1)
+    stage_idx = len(all_stages)
+    app.storage.user['stage_idx'] = stage_idx
+    ui.notification(
+       "Error: Experiment unexpectedly ended early",
+       type='negative')
+    if DEBUG:
+      import os
+      os._exit(1)
+    else:
+      return stage_idx
 
   # -------------------
   # Update stage index
@@ -497,6 +505,7 @@ async def run_stage(stage, stage_container, button_container):
     if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
       ui.notify('Please enter fullscreen mode to continue experiment',
                 type='negative')
+      logger.info("Button press but not fullscreen")
       return
     if stage.get_user_data('finished', False):
        return
@@ -545,6 +554,11 @@ async def run_stage(stage, stage_container, button_container):
   with stage_container.style('align-items: center;'):
     await stage.activate(stage_container)
 
+  if stage.get_user_data('finished', False):
+    # over as soon as stage activation was complete
+    logger.info(f"Finished {stage_name(stage)} immediately after activation")
+    stage_over_event.set()
+
   await stage.set_user_data(local_handle_key_press=local_handle_key_press)
 
   with button_container.style('align-items: center;'):
@@ -567,11 +581,27 @@ async def run_stage(stage, stage_container, button_container):
       ####################
       # Button to go to next page
       ####################
-      button = ui.button('Next page').bind_visibility_from(
-          stage, 'next_button')
+      checking_fullscreen = DEBUG == 0
+      next_button_container = ui.row()
+      async def create_button_and_wait():
+          with next_button_container:
+            clear_element(next_button_container)
+            button = ui.button('Next page').bind_visibility_from(
+                stage, 'next_button')
+            await wait_for_button_or_keypress(button)
+            logger.info("Button or key pressed")
+            await handle_button_press()
       if stage.next_button:
-        await wait_for_button_or_keypress(button)
-        await handle_button_press()
+        if checking_fullscreen:
+            await create_button_and_wait()
+            while not await nicewebrl.utils.check_fullscreen():
+              if await stage_over_event.wait():
+                 break
+              logger.info("Waiting for fullscreen")
+              await asyncio.sleep(0.1)
+              await create_button_and_wait()
+        else:
+          await create_button_and_wait()
 
   await stage_over_event.wait()
   #clear_element(button_container)

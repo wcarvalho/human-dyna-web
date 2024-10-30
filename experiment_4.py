@@ -254,7 +254,7 @@ def debug_info(stage):
     return debug_info
 
 
-def instruct_display_fn(stage, container):
+async def instruct_display_fn(stage, container):
     with container.style('align-items: center;'):
         clear_element(container)
         ui.markdown(f"## {stage.name}")
@@ -276,7 +276,7 @@ def instruct_display_fn(stage, container):
             # Adjust layout
             fig.tight_layout()
 
-def stage_display_fn(stage, container):
+async def stage_display_fn(stage, container):
     with container.style('align-items: center;'):
         clear_element(container)
         ui.markdown(f"## {stage.name}")
@@ -316,6 +316,7 @@ def stage_display_fn(stage, container):
                 axs[i].axis("off")
             # Adjust layout
             fig.tight_layout()
+    await asyncio.sleep(5)
 
 def make_image_html(src):
     html = '''
@@ -345,7 +346,7 @@ async def env_reset_display_fn(
         await wait_for_button_or_keypress(
             button, ignore_recent_press=True)
 
-def env_stage_display_fn(
+async def env_stage_display_fn(
         stage,
         container,
         timestep):
@@ -395,7 +396,6 @@ async def train_eval_feedback_display_fn(
             clear_element(container)
             train_timestep = train_stage.web_env.reset(rng, train_stage.env_params)
             train_image = train_stage.render_fn(train_timestep)
-            train_category = keys[train_timestep.state.task_object]
             
             eval_timestep = eval_stage.web_env.reset(rng, eval_stage.env_params)
             eval_image = eval_stage.render_fn(eval_timestep)
@@ -407,10 +407,10 @@ async def train_eval_feedback_display_fn(
             with ui.matplotlib(
                     figsize=(int(fig_width), int(fig_height))).figure as fig:
                 axs = fig.subplots(1, 2)
-                axs[0].set_title(f"Phase 1: get {train_category}")
+                axs[0].set_title(f"Phase 1 map")
                 axs[0].imshow(train_image)
                 axs[0].axis('off')
-                axs[1].set_title(f"Phase 2: get {eval_category}")
+                axs[1].set_title(f"Phase 2 object: {eval_category}")
                 axs[1].imshow(eval_image)
                 axs[1].axis('off')
             ui.html(question)
@@ -648,7 +648,7 @@ def create_practice_block(
     str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
-        eval_duration=30,
+        eval_duration=TIMER,
         min_success=2 if not DEBUG else 2,
         max_episodes=10 if not DEBUG else 2,
         make_env_kwargs=dict(force_room=True),
