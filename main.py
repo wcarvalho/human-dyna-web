@@ -25,24 +25,27 @@ import nicewebrl
 import nicewebrl.nicejax
 import nicewebrl.stages
 import nicewebrl.utils
-from nicewebrl.stages import ExperimentData
+from nicewebrl.stages import ExperimentData, EnvStage
 from nicewebrl.utils import wait_for_button_or_keypress, clear_element
 from nicewebrl.logging import setup_logging, get_logger
 
 from google.auth.exceptions import TransportError
 from load_data import get_block_stage_description, dict_to_string, time_diff
 from google.cloud import exceptions as gcs_exceptions
+from asyncio import Lock
 
 load_dotenv()
 
 DATABASE_FILE = os.environ.get('DB_FILE', 'db.sqlite')
-DATA_DIR = os.environ.get('DATA_DIR', 'data/')
+DATA_DIR = os.environ.get('DATA_DIR', 'data')
 NAME = os.environ.get('NAME', 'exp')
 DEBUG = int(os.environ.get('DEBUG', 0))
 DEBUG_SEED = int(os.environ.get('SEED', 0))
 EXPERIMENT = int(os.environ.get('EXP', 4))
 LIGHT = int(os.environ.get('LIGHT', 0))
 os.makedirs(DATA_DIR, exist_ok=True)
+
+_user_locks = {}
 
 def log_filename_fn(log_dir, user_id):
   return os.path.join(log_dir, f'log_{user_id}.log')
@@ -52,11 +55,20 @@ def get_date_filename(data_dir, user_id):
   return os.path.join(data_dir, f'log_{user_id}.log')
 # user_data_file = f'data/data_user={user_seed}_name={NAME}_debug={DEBUG}.json'
 
+def get_user_lock():
+    user_seed = app.storage.user['seed']
+    if user_seed not in _user_locks:
+        _user_locks[user_seed] = Lock()
+    return _user_locks[user_seed]
+
 def blob_user_filename():
   """filename structure for user data in GCS (cloud)"""
   seed = app.storage.user['seed']
   worker = app.storage.user.get('worker', None)
-  return f'user={seed}_worker={worker}_name={NAME}_debug={DEBUG}'
+  if worker is not None:
+    return f'user={seed}_worker={worker}_name={NAME}_debug={DEBUG}'
+  else:
+    return f'user={seed}_name={NAME}_debug={DEBUG}'
 
 setup_logging(DATA_DIR,
               log_filename_fn=log_filename_fn,
@@ -86,6 +98,7 @@ else:
 all_stages = experiment.all_stages
 
 DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_debug={DEBUG}'
+
 
 
 
@@ -145,27 +158,35 @@ def collect_demographic_info(meta_container, stage_container, button_container):
 #####################################
 # Start/load experiment
 #####################################:
-def update_stage():
-  #-------------------
-  # Update stage index
-  #-------------------
-  stage_idx = app.storage.user['stage_idx']
-  if app.storage.user.get('experiment_finished', False):
-    stage_idx = len(all_stages)
-  if stage_idx < len(all_stages):
-    stage_idx += 1
-  else:
-     stage_idx = len(all_stages)
-  app.storage.user['stage_idx'] = stage_idx
-
+async def update_stage():
   # -------------------
-  # Print stage information
+  # get who called this
   # -------------------
   # Get the current frame and the caller's frame
   current_frame = inspect.currentframe()
   caller_frame = current_frame.f_back
   # Extract the name of the calling function
   fn_name = caller_frame.f_code.co_name if caller_frame else "Unknown"
+  #-------------------
+  # Update stage index
+  #-------------------
+  stage_idx = app.storage.user['stage_idx']
+  if app.storage.user.get('experiment_finished', False):
+    stage_idx = len(all_stages)
+  elif stage_idx < len(all_stages):
+    stage = get_stage(stage_idx)
+    saved_data = stage.get_user_data('saved_data', False)
+    if isinstance(stage, EnvStage) and not saved_data:
+      info = f"update_stage: finished {stage.name}? {stage.get_user_data('finished', False)}"
+      info += f"\stats: {stage.user_stats()}"
+      info += f"\n{fn_name}: leaving stage {stage.name} without saved data"
+      logger.error(info)
+      import os; os._exit(1)
+    stage_idx += 1
+  else:
+     stage_idx = len(all_stages)
+  app.storage.user['stage_idx'] = stage_idx
+
 
   if stage_idx >= len(all_stages):
     name = "Finished experiment"
@@ -236,28 +257,38 @@ async def start_experiment(
         lambda e: handle_key_press(e, meta_container, stage_container, button_container))
   await load_stage(meta_container, stage_container, button_container)
 
+
 async def handle_key_press(e, meta_container, stage_container, button_container):
-  if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
-    ui.notify(
-       'Please enter fullscreen mode to continue experiment',
-       type='negative')
-    return
-  stage = get_stage(app.storage.user['stage_idx'])
-  await stage.handle_key_press(e, stage_container)
-  if stage.get_user_data('finished', False):
-    update_stage()
-    await load_stage(meta_container, stage_container, button_container)
+    # Get or create lock for this specific user
+
+    if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
+        ui.notify(
+            'Please enter fullscreen mode to continue experiment',
+            type='negative')
+        return
+    stage = get_stage(app.storage.user['stage_idx'])
+    await stage.handle_key_press(e, stage_container)
+    stage_over = stage.get_user_data('finished', False)
+    logger.info(f"key_press: finished {stage.name}? {stage_over}")
+    if stage_over:
+        async with get_user_lock():
+          await update_stage()
+        await load_stage(meta_container, stage_container, button_container)
 
 async def handle_button_press(*args, button_container, **kwargs):
+  
   if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
     ui.notify('Please enter fullscreen mode to continue experiment',
               type='negative')
     return
   clear_element(button_container)
   stage = get_stage(app.storage.user['stage_idx'])
-  await stage.handle_button_press()
-  if stage.get_user_data('finished', False):
-    update_stage()
+  await stage.finish_stage()
+  stage_over = stage.get_user_data('finished', False)
+  logger.info(f"button_press: finished {stage.name}? {stage_over}")
+  if stage_over:
+    async with get_user_lock():
+      await update_stage()
     await load_stage(*args, button_container=button_container, **kwargs)
 
 async def handle_timer_finished(*args, button_container, **kwargs):
@@ -276,21 +307,22 @@ async def handle_timer_finished(*args, button_container, **kwargs):
     await button.clicked()
     notification.dismiss()
   if stage.get_user_data('finished', False):
-    update_stage()
+    async with get_user_lock():
+      await update_stage()
     await load_stage(*args, button_container=button_container, **kwargs)
 
 async def save_on_new_block():
     if app.storage.user['block_idx'] == 0: return
     prior_stage = get_stage(app.storage.user['stage_idx']-1)
     stage = get_stage(app.storage.user['stage_idx'])
-    prior_block = prior_stage.metadata['block_metadata'].get('desc', None)
-    block = stage.metadata['block_metadata'].get('desc', None)
+    prior_block = prior_stage.metadata['block_metadata'].get('short', None)
+    block = stage.metadata['block_metadata'].get('short', None)
     if block is None or prior_block is None:
       return
 
     if block != prior_block:
        logger.info("-"*10)
-       logger.info(f"Saving results from block: `{prior_block}`")
+       logger.info(f"Saving results from block: '{prior_block}'")
        asyncio.create_task(save_data(final_save=False))
 
 async def load_stage(meta_container, stage_container, button_container):
@@ -310,9 +342,9 @@ async def load_stage(meta_container, stage_container, button_container):
       await stage.activate(stage_container)
 
     if stage.get_user_data('finished', False):
-      update_stage()
+      async with get_user_lock():
+        await update_stage()
       return await load_stage(meta_container, stage_container, button_container)
-
 
     with button_container.style('align-items: center;'):
       clear_element(button_container)
@@ -411,49 +443,6 @@ async def finish_experiment(meta_container, stage_container, button_container):
             f'### gershman.dyna')
         ui.markdown("#### You may close the browser")
 
-#async def compute_bonus(data_dicts):
-
-#    train_successes = 0
-#    train_episodes = 0
-#    eval_successes = 0
-#    eval_episodes = 0
-#    keys = set()
-#    successes = 0
-#    npossible = 0
-#    for user_data in data_dicts[::-1]:
-#       if 'practice' in user_data['metadata']['block_metadata'].get('desc', ''):
-#          continue
-#       if 'feedback' in user_data['metadata']['block_metadata'].get('desc', ''):
-#          continue
-#       info = get_block_stage_description(user_data)
-#       desc = dict_to_string(info)
-#       if desc not in keys:
-#          keys.add(desc)
-#          first = user_data[0].data['image_seen_time']
-#          last = user_data[-1].data['action_taken_time']
-#          seconds = time_diff(first, last)/1000
-#          timelimit = user_data[0].data['timelimit']
-#          if timelimit is not None:
-#            successes += seconds < timelimit
-#            npossible += 1
-#          if user_data['metadata'].get('eval', False):
-#            eval_successes += user_data['metadata']['nsuccesses']
-#            eval_episodes += user_data['metadata']['episode_idx']
-#          else:
-#            train_successes += user_data['metadata']['nsuccesses']
-#            train_episodes += user_data['metadata']['episode_idx']
-#    train_sr = (train_successes / max(1, train_episodes))
-#    bonus_sr = successes / max(1, npossible)
-#    bonus_sr = bonus_sr*(train_sr > .5)
-
-#    if bonus_sr < .25:
-#       return 0
-#    elif bonus_sr < .5:
-#       return 1
-#    elif bonus_sr < .75:
-#       return 2
-#    else:
-#       return 3
 
 async def save_data(final_save=True, feedback=None, **kwargs):
     user_data_file = experiment.get_user_save_file_fn()
@@ -693,9 +682,10 @@ async def index(request: Request):
 
 
 ui.run(
-   storage_secret='private key to secure the browser session cookie',
+  storage_secret='private key to secure the browser session cookie',
    reload='FLY_ALLOC_ID' not in os.environ,
-   title=APP_TITLE,
-   )
+  #reload=False,
+  title=APP_TITLE,
+  )
 
 

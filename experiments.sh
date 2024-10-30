@@ -6,7 +6,7 @@ rm -r data .nicegui;
 rm -r data/*exp3-v1* .nicegui; INST=1 DEBUG=0 NMAN=0 EXP=4 NAME='exp3-v1' SEED=45 python main.py
 
 # debugging command to test
-rm -r data .nicegui; INST=0 DEBUG=0 NTRAIN=1 EXP=4 MAN='plan' SAY_REUSE=0 SEED=44 python main.py
+rm -r data .nicegui; INST=0 DEBUG=2 NTRAIN=1 EXP=4 MAN='plan' SAY_REUSE=0 SEED=44 python main.py
 
 
 # FULL command

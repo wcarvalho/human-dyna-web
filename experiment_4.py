@@ -35,6 +35,7 @@ GIVE_INSTRUCTIONS = int(os.environ.get('INST', 1))
 DEBUG = int(os.environ.get('DEBUG', 0))
 NAME = os.environ.get('NAME', 'exp')
 MAN = os.environ.get('MAN', 'paths')  # which manipulation
+DATA_DIR = os.environ.get('DATA_DIR', 'data')
 
 #USE_REVERSALS = int(os.environ.get('REV', 0))
 #EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
@@ -43,6 +44,7 @@ SAY_REUSE = int(os.environ.get('SAY_REUSE', 1))
 TIMER = int(os.environ.get('TIMER', 30))
 VERBOSITY = int(os.environ.get('VERBOSITY', 0))
 NTRAIN = int(os.environ.get('NTRAIN', 8))
+TIME_LIMIT = int(os.environ.get('TIME_LIMIT', 10_000_000))
 USE_DONE = DEBUG > 0
 
 
@@ -80,7 +82,7 @@ def reversal_label(reversal):
         raise ValueError(f"reversal: {reversal}")
 
 def get_user_save_file_fn():
-    return f'data/user={app.storage.user.get("seed")}_name={NAME}_debug={DEBUG}.json'
+    return f'{DATA_DIR}/user={app.storage.user.get("seed")}_name={NAME}_debug={DEBUG}.json'
 ##############################################
 # Creating environment stuff
 ##############################################
@@ -95,7 +97,7 @@ def create_env_params(
     training=True,
     force_room=False,
     label=0,
-    time_limit=10_000_000 if DEBUG == 0 else 5,
+    time_limit=TIME_LIMIT,
     default_room=0,
     p_test_sample_train=1.0
 ):
@@ -484,6 +486,7 @@ def make_env_stage(
         custom_data_fn=custom_data_fn,
         duration=duration if not training else None,
         notify_success=True,
+        verbosity=DEBUG>1,
         **kwargs,
     )
 
@@ -657,7 +660,7 @@ def create_practice_block(
         block_char2idx=block_char2idx,
         metadata=dict(manipulation=-1, desc="practice", long="practice"),
         str_transform=str_transform,
-        #appendix=f"_({reversal_label(reversal)})"
+        appendix=f"_({reversal_label(reversal)})"
     )
 
 ####################
@@ -685,7 +688,7 @@ def create_shortcut_manipulation_block(
             short=f'shortcut_{reversal_label(reversal)}'
         ),
         str_transform=str_transform,
-        #appendix=f"_({reversal_label(reversal)})"
+        appendix=f"_({reversal_label(reversal)})"
     )
 
 ####################
@@ -713,7 +716,7 @@ def create_path_manipulation_block(
             short=f'paths_{reversal_label(reversal)}'
         ),
         str_transform=str_transform,
-        #appendix=f"_({reversal_label(reversal)})"
+        appendix=f"_({reversal_label(reversal)})"
     )
 
 ####################
@@ -740,7 +743,7 @@ def create_start_manipulation_block(
             short=f'start_{reversal_label(reversal)}'
         ),
         str_transform=str_transform,
-        #appendix=f"_({reversal_label(reversal)})"
+        appendix=f"_({reversal_label(reversal)})"
     )
 
 
@@ -776,7 +779,7 @@ def create_plan_manipulation_block(
             short=f'plan_{setting}_{reversal_label(reversal)}'
         ),
         str_transform=str_transform,
-        #appendix=f"_({reversal_label(reversal)})"
+        appendix=f"_({reversal_label(reversal)})"
     )
 
 
@@ -786,8 +789,8 @@ def create_plan_manipulation_block(
 ##########################
 
 reversals = [(False, False), (True, False), (False, True), (True, True)]
-#if DEBUG > 1:
-#  reversals = [(False, False)]
+if DEBUG > 1:
+  reversals = [(False, False)]
 
 feedback_block = []
 if MAN == 'start':  # start manipulation (2)
