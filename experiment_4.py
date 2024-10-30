@@ -61,10 +61,10 @@ elif DEBUG == 1:
     max_episodes_train = NTRAIN*num_rooms
     max_episodes_task = NTRAIN
 elif DEBUG == 2:
-    min_success_task = 1
-    min_success_train = 1
-    max_episodes_task = 1
-    max_episodes_train = 1
+    min_success_task = 2
+    min_success_train = 2
+    max_episodes_task = 2
+    max_episodes_train = 2
 
 max_episodes_train = max_episodes_task*num_rooms
 
@@ -649,12 +649,12 @@ def create_practice_block(
     block_groups, block_char2idx = permute_groups(groups)
     return make_block(
         eval_duration=30,
-        min_success=2 if not DEBUG else 1,
-        max_episodes=10 if not DEBUG else 1,
+        min_success=2 if not DEBUG else 2,
+        max_episodes=10 if not DEBUG else 2,
         make_env_kwargs=dict(force_room=True),
         phase_1_text=make_phase_1_text(),
         phase_1_maze_name='big_practice_maze',
-        phase_2_text=make_phase_2_text(30, include_time=False),
+        phase_2_text=make_phase_2_text(10),
         phase_2_cond1_maze_name='big_practice_maze',
         block_groups=block_groups,
         block_char2idx=block_char2idx,

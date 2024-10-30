@@ -527,7 +527,7 @@ async def run_stage(stage, stage_container, button_container):
 
       with button_container:
         button = ui.button("click to continue")
-        await button.clicked()
+        await wait_for_button_or_keypress(button)
         notification.dismiss()
 
       async with get_user_lock():
