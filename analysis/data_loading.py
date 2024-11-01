@@ -17,6 +17,9 @@ from flax.traverse_util import unflatten_dict
 import pickle
 import multiprocessing
 import jax.tree_util as jtu
+import matplotlib.pyplot as plt
+import seaborn as sns
+from absl import logging
 
 from housemaze import utils
 from housemaze.human_dyna import multitask_env
@@ -306,7 +309,7 @@ def get_block_stage_description(datum):
         name=datum['name'],
         block=block_desc,
         manipulation=block_manipulation,
-        episode_idx=datum['metadata']['episode_idx'],
+        episode_idx=datum['metadata']['nepisodes'],
         eval=datum['metadata']['eval'],
         reversal=reversal_label(reversal),
     )
@@ -364,7 +367,7 @@ def make_row(
         block=datum['metadata']['block_metadata']['desc'],
         manipulation=datum['metadata']['block_metadata'].get('manipulation', None),
         global_episode_idx=episode_info['user_episode_idx'], 
-        episode_idx=datum['metadata']['episode_idx'],
+        episode_idx=datum['metadata']['nepisodes'],
         eval=datum['metadata']['eval'],
         task=int(get_task_object(timesteps)),
         room=int(get_task_room(timesteps, task_groups=groups)),
@@ -379,6 +382,9 @@ def make_row(
     pieces = os.path.splitext(os.path.basename(file))[0].split("_")
     pieces = [p.split("=") for p in pieces if "=" in p]
     new_vals = {p[0]: p[1] for p in pieces}
+    # Rename 'name' key to 'exp_name' if it exists
+    if 'name' in new_vals:
+        new_vals['exp_name'] = new_vals.pop('name')
     row.update(new_vals)
 
     name = new_vals.get('name')
@@ -403,6 +409,7 @@ def make_row(
             row[key] = int(value)
     reversal = datum['metadata']['block_metadata'].get('reversal', [False, False])
     row['reversal'] = reversal_label(reversal)
+
     return row
 
 def make_episode_data(
@@ -418,8 +425,7 @@ def make_episode_data(
 
     The dataframe can be used to get indices into the list of EpisodeData for further computation.
     """
-    with open(file, 'r') as f:
-        data = json.load(f)
+    data = read_dict_list_from_file(file)
 
     if len(data) == 0:
         return None, None
@@ -478,6 +484,10 @@ def make_episode_data(
             actions = jnp.asarray([datum['data']['action_idx'] for datum in red])
             timesteps = [get_timestep(datum, example_timestep) for datum in red]
             timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+            expected_step_num = jnp.arange(len(timesteps.state.step_num))
+            correct = jnp.all(timesteps.state.step_num == expected_step_num)
+            if not correct:
+                raise RuntimeError(f"Episode {key} has faulty step indices: {timesteps.state.step_num}")
             positions = timesteps.state.agent_pos
             reaction_times = [compute_reaction_time(datum) for datum in red]
             reaction_times = jnp.asarray(reaction_times)
@@ -538,17 +548,24 @@ def make_all_episode_data(files, example_timestep, debug=False, overwrite_episod
     return DataFrame(episode_df, all_episode_data)
 
 
+def read_dict_list_from_file(filename: str):
+    dictionaries = []
+    with open(filename, 'r') as f:
+        for line in f:
+            # Parse each line as a JSON object (dictionary) and append it to the list
+            dictionaries.append(json.loads(line.strip()))
+    return dictionaries
+
+def user_id_from_filename(filename: str):
+    return int(filename.split('/')[-1].split('.')[0].split('_')[0].split('=')[1])
+
 def compute_experiment_lengths(files, plot: bool = False, condition_name: str = '', verbose: bool = False):
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    from absl import logging
+
     experiment_lengths = {}
 
     for file in files:
-        with open(file, 'r') as f:
-            data = json.load(f)
-
-        user_id = int(file.split('/')[-1].split('.')[0].split('_')[1].split('=')[1])
+        data = read_dict_list_from_file(file)
+        user_id = user_id_from_filename(file)
         if len(data) < 2 or not data[-1].get('finished', False):
             if verbose:
                 print(f"Skipping {user_id} because it's not finished")
@@ -611,7 +628,7 @@ def get_valid_files(searches, plot: bool = False, verbose: bool = False):
         
         # Filter files within 3 standard deviations
         def good_user(file):
-            user_id = int(file.split('/')[-1].split('.')[0].split('_')[1].split('=')[1])
+            user_id = user_id_from_filename(file)
             if user_id not in experiment_lengths:
                 if verbose:
                     print(f"User {user_id} not in experiment_lengths")

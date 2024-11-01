@@ -25,7 +25,7 @@ import nicewebrl
 import nicewebrl.nicejax
 import nicewebrl.stages
 import nicewebrl.utils
-from nicewebrl.stages import ExperimentData, EnvStage
+from nicewebrl.stages import StageStateModel, EnvStage
 from nicewebrl.utils import wait_for_button_or_keypress, clear_element
 from nicewebrl.logging import setup_logging, get_logger
 
@@ -64,7 +64,7 @@ def get_user_lock():
 def blob_user_filename():
   """filename structure for user data in GCS (cloud)"""
   seed = app.storage.user['seed']
-  worker = app.storage.user.get('worker', None)
+  worker = app.storage.user.get('worker_id', None)
   if worker is not None:
     return f'user={seed}_worker={worker}_name={NAME}_debug={DEBUG}'
   else:
@@ -304,6 +304,9 @@ async def save_data(final_save=True, feedback=None, **kwargs):
                     blob_filename=f'data/{blob_user_filename()}.json')
             except Exception as e:
                 logger.info(f"Error saving to GCS (non-final save): {e}")
+
+    #if final_save:
+    #  await StageStateModel.filter(session_id=app.storage.browser['id']).delete()
 
 async def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()

@@ -7,6 +7,7 @@ import jax
 import numpy as np
 from scipy import stats
 from collections import defaultdict
+import pandas as pd
 
 from housemaze.env import KeyboardActions
 from analysis.data_loading import EpisodeData
@@ -55,7 +56,7 @@ DEFAULT_LABEL_SIZE = 12
 DEFAULT_LEGEND_SIZE = 10
 
 def total_rt(e: EpisodeData):
-    return sum(e.reaction_times[:-1]/1000.)
+    return np.sum(e.reaction_times[:-1])/1000.
 
 def avg_rt(e: EpisodeData):
     return np.mean(e.reaction_times[:-1])/1000.
@@ -664,40 +665,111 @@ def reaction_times_dual(
 def reaction_times_difference(
         cond1: DataFrame,
         cond2: DataFrame,
-        rt_types=['first', 'avg'],
+        rt_types=['first', 'avg', 'total'],
+        filter_outliers=False,
         axs=None,
         ylim=None):
 
-    # Compute RT difference for each user for all RT types
-    rt_differences = {rt_type: [] for rt_type in rt_types}
+    # Create empty lists to store data
+    data_rows = []
+    rt_functions = {'first': first_rt, 'avg': avg_rt, 'total': total_rt}
     users = set(cond1['user_id'].unique()) & set(cond2['user_id'].unique())
 
-    def good_number(x):
-        good = not np.isnan(x)
-        good &= x > 0
-        good &= not np.isinf(x)
-        return good
-
-    rt_functions = {'first': first_rt, 'avg': avg_rt, 'total': total_rt}
-
+    # Collect raw reaction times for DataFrame
     for user in users:
         cond1_user = cond1.filter(user_id=user)
         cond2_user = cond2.filter(user_id=user)
 
-        if len(cond1_user.episodes) > 0 and len(cond2_user.episodes) > 0:
-            for rt_type in rt_types:
-                rt_fn = rt_functions[rt_type]
-                assert len(cond1_user.episodes) == len(cond2_user.episodes)
-                assert len(cond1_user.episodes) == 1
-                rt_cond1 = rt_fn(cond1_user.episodes[0])
-                rt_cond2 = rt_fn(cond2_user.episodes[0])
-                if good_number(rt_cond1) and good_number(rt_cond2):
-                    rt_differences[rt_type].append(
-                        rt_cond2 - rt_cond1)  # Off-path minus On-path
-                else:
-                    print(f"Skipping {user}")
+        if len(cond1_user.episodes) == 0 or len(cond2_user.episodes) == 0:
+            continue
+        
+        if len(cond1_user.episodes) != len(cond2_user.episodes):
+            print(f"Skipping {user}: {len(cond1_user.episodes)} != {len(cond2_user.episodes)}")
+            continue
 
-    # Create separate box plots for each RT type
+        nepisodes = len(cond1_user.episodes)
+        
+        # Calculate raw RTs for each episode
+        for i in range(nepisodes):
+            row = {'user_id': user, 'episode': i}
+            
+            # Add RTs for both conditions and both RT types
+            for rt_type, rt_fn in rt_functions.items():
+                row[f'{rt_type}_rt_cond1'] = np.asarray(rt_fn(cond1_user.episodes[i]))
+                row[f'{rt_type}_rt_cond2'] = np.asarray(rt_fn(cond2_user.episodes[i]))
+
+            data_rows.append(row)
+
+    # Create DataFrame with raw RTs
+    df = pd.DataFrame(data_rows)
+
+    # Function to remove outliers using IQR method
+    def remove_outliers_iqr(df, columns, paired=True):
+        """Remove outliers from paired measurements using IQR method.
+        
+        Args:
+            df: DataFrame containing the data
+            columns: List of column pairs to check for outliers
+            paired: If True, removes outliers considering pairs of measurements
+        """
+        original_size = len(df)
+        mask = pd.Series(True, index=df.index)
+        
+        if paired:
+            # For paired data, consider differences between conditions
+            for col1, col2 in columns:
+                differences = df[col2] - df[col1]
+                Q1 = differences.quantile(0.25)
+                Q3 = differences.quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                mask &= (differences >= lower_bound) & (differences <= upper_bound)
+        else:
+            # For unpaired data, consider each column separately
+            for col in columns:
+                Q1 = df[col].quantile(0.25)
+                Q3 = df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                mask &= (df[col] >= lower_bound) & (df[col] <= upper_bound)
+        
+        df_filtered = df[mask]
+        filtered_size = len(df_filtered)
+        print(f"Filtered {original_size - filtered_size} outliers")
+        return df_filtered
+
+    # Remove outliers from both conditions
+    if filter_outliers:
+        column_pairs = [
+            ('first_rt_cond1', 'first_rt_cond2'),
+            ('avg_rt_cond1', 'avg_rt_cond2'),
+            ('total_rt_cond1', 'total_rt_cond2')
+        ]
+        df = remove_outliers_iqr(df, column_pairs, paired=True)
+
+    # Calculate log means per user
+    def log_mean(x):
+        return np.mean(np.log(np.array(x.tolist())))
+
+    user_means = df.groupby('user_id').agg({
+        'first_rt_cond1': log_mean,
+        'first_rt_cond2': log_mean,
+        'avg_rt_cond1': log_mean,
+        'avg_rt_cond2': log_mean,
+        'total_rt_cond1': log_mean,
+        'total_rt_cond2': log_mean
+    }).reset_index()
+
+    # Calculate differences
+    for rt_type in rt_types:
+        user_means[f'{rt_type}_diff'] = user_means[f'{rt_type}_rt_cond2'] - user_means[f'{rt_type}_rt_cond1']
+
+    # Remove any rows with inf or nan
+    user_means = user_means[~user_means.isin([np.inf, -np.inf]).any(axis=1)]
+    user_means = user_means.dropna()
+
     n_plots = len(rt_types)
     if axs is None:
         fig, axs = plt.subplots(1, n_plots, figsize=(6 * n_plots, 4))
@@ -706,12 +778,16 @@ def reaction_times_difference(
     if n_plots == 1:
         axs = [axs]
 
-    def plot_rt_difference(ax, data, title, i=0):
-        data = np.asarray(data)
-        # Calculate the min and max for y-axis limits
-        # Use 1st and 99th percentiles to exclude extreme outliers
+    def plot_rt_difference(ax, data, rt_type, i=0):
+        diff_data = data[f'{rt_type}_diff'].values
+        
+        # Calculate mean and standard deviation
+        mean = np.mean(diff_data)
+        std = np.std(diff_data)/np.sqrt(len(diff_data))
+
+        # Set y-axis limits
         if ylim is None:
-            y_min, y_max = np.percentile(data, [1, 99])
+            y_min, y_max = np.percentile(diff_data, [1, 99])
             y_range = y_max - y_min
             y_min -= 0.1 * y_range  # Add 10% padding
             y_max += 0.1 * y_range
@@ -721,31 +797,45 @@ def reaction_times_difference(
             else:
                 y_min, y_max = ylim
 
-        # Create box plot
-        sns.boxplot(data=data, ax=ax, width=0.5, color='lightblue')
-
+        # Plot mean as a horizontal line
+        ax.axhline(y=mean, color='blue', linestyle='-', linewidth=2, label=f'Mean: {mean:.2f}')
+        
+        # Add standard deviation range
+        ax.axhspan(mean - std, mean + std, alpha=0.2,
+                   color='blue', label=f'SE: {std:.2f}')
+        
         # Add strip plot for individual data points
-        sns.stripplot(data=data, ax=ax, color='black', alpha=0.5, jitter=True)
+        sns.stripplot(data=diff_data, ax=ax, color='black', alpha=0.5, jitter=True)
 
         if rt_type == 'first':
             title = "First Reaction Time Difference"
-            ylabel = "seconds"
+            ylabel = "log seconds"
         elif rt_type == 'avg':
-            title = "Speed Difference"
-            ylabel = "steps/second"
+            title = "Average Reaction Time Difference"
+            ylabel = "log avg(seconds/step) "
+        elif rt_type == 'total':
+            title = "Total Reaction Time Difference"
+            ylabel = "log total(seconds)"
+        
         ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
         ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
-        ax.tick_params(axis='both', which='major',
-                       labelsize=DEFAULT_LABEL_SIZE)
+        ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
 
         # Set y-axis limits
         ax.set_ylim(y_min, y_max)
 
         # Add a horizontal line at y=0
         ax.axhline(y=0, color='r', linestyle='--')
+        
+        # Add legend
+        ax.legend(fontsize=DEFAULT_LEGEND_SIZE)
 
-    for i, (ax, rt_type) in enumerate(zip(axs, rt_types)):
-        plot_rt_difference(ax, rt_differences[rt_type], rt_type.capitalize(), i)
+    # Plot for each RT type using the DataFrame
+    for i, rt_type in enumerate(rt_types):
+        plot_rt_difference(axs[i], user_means, rt_type, i)
+
+    plt.tight_layout()
+    plt.show()
 
 def initial_action_distribution(cond1, cond2, key2model, model_colors, action_indices):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
@@ -1104,12 +1194,12 @@ def plot_m4_example(user_df: DataFrame, setting: str='short'):
     subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
-        input_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        input_settings=dict(eval=False, name=f'big_m4_maze_{setting}'),
         output_settings=dict(manipulation=4),
     )
-    cond0 = subset.filter(maze=f'big_m4_maze_{setting}')
-    cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
-    cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+    cond0 = subset.filter(name=f'big_m4_maze_{setting}')
+    cond1 = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
+    cond2 = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
 
     # Create a figure with 3 subplots for render_path
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
@@ -1130,13 +1220,13 @@ def plot_m4_example(user_df: DataFrame, setting: str='short'):
 def m4_initial_action_distribution(user_df: DataFrame, setting: str='short'):
     assert setting in ['short', 'long']
     subset = user_df.filter_by_group(
-        input_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        input_settings=dict(eval=False, name=f'big_m4_maze_{setting}'),
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_settings=dict(manipulation=4),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
     )
-    cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
-    cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+    cond1 = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
+    cond2 = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
 
     if setting == 'short':
         key2model = {
@@ -1181,13 +1271,13 @@ def m4_reaction_times(user_df: DataFrame, setting='short', rt_type='speed', ylim
             input_episode_filter=partial(group_filter_fn, min_successes=8),
             output_episode_filter=output_filter_fn,
             input_settings=dict(
-                maze=f'big_m4_maze_{setting}',
+                name=f'big_m4_maze_{setting}',
             ),
             output_settings=dict(manipulation=4),
         )
 
-        cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
-        cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+        cond1 = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
+        cond2 = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
 
         if setting == 'short':
             key2model = {
@@ -1279,7 +1369,7 @@ def m4_action_reaction_times(
     subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         input_settings=dict(
-            maze=f'big_m4_maze_{setting}',
+            name=f'big_m4_maze_{setting}',
         ),
         output_settings=dict(manipulation=4),
     )
@@ -1292,8 +1382,8 @@ def m4_action_reaction_times(
         action_cond1 = KeyboardActions.right
         action_cond2 = KeyboardActions.left
 
-    cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
-    cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+    cond1 = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
+    cond2 = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
 
     # Function to get reaction times for a specific action
     def get_rts_for_action(episodes, action):
@@ -1353,15 +1443,15 @@ def m4_reaction_time_difference(
     subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
-        input_settings=dict(eval=False, maze=f'big_m4_maze_{setting}'),
+        input_settings=dict(eval=False, name=f'big_m4_maze_{setting}'),
         output_settings=dict(manipulation=4),
     )
     # SMALLER
-    same_cond = subset.filter(maze=f'big_m4_maze_{setting}_eval_same')
+    same_cond = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
     # LARGER
-    diff_cond = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff')
+    diff_cond = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
 
-    reaction_times_difference(
+    return reaction_times_difference(
         same_cond, diff_cond,
         rt_types=rt_types, **kwargs)
 
@@ -1375,7 +1465,7 @@ def m4_action_reaction_time_difference(
     subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         input_settings=dict(
-            maze=f'big_m4_maze_{setting}',
+            name=f'big_m4_maze_{setting}',
         ),
         output_settings=dict(manipulation=4),
     )
@@ -1389,11 +1479,11 @@ def m4_action_reaction_time_difference(
 
 
     same_cond = subset.filter(
-        maze=f'big_m4_maze_{setting}_eval_same',
+        name=f'big_m4_maze_{setting}_eval_same',
         episode_filter=lambda e: e.actions[0] != same_cond_action
     )
     diff_cond = subset.filter(
-        maze=f'big_m4_maze_{setting}_eval_diff',
+        name=f'big_m4_maze_{setting}_eval_diff',
         episode_filter=lambda e: e.actions[0] != diff_cond_action
     )
 
@@ -1471,7 +1561,7 @@ def m4_condition_reaction_times(
         subset = user_df.filter_by_group(
             input_episode_filter=partial(group_filter_fn, min_successes=8),
             input_settings=dict(
-                maze=f'big_m4_maze_{setting}',
+                name=f'big_m4_maze_{setting}',
             ),
             output_settings=dict(manipulation=4),
         )
@@ -1490,11 +1580,11 @@ def m4_condition_reaction_times(
             diff_episode_filter = None
 
         same_cond = subset.filter(
-            maze=f'big_m4_maze_{setting}_eval_same',
+            name=f'big_m4_maze_{setting}_eval_same',
             episode_filter=same_episode_filter
         )
         diff_cond = subset.filter(
-            maze=f'big_m4_maze_{setting}_eval_diff',
+            name=f'big_m4_maze_{setting}_eval_diff',
             episode_filter=diff_episode_filter
         )
         return same_cond, diff_cond

@@ -3,18 +3,19 @@ rm -r data .nicegui;
 ########################################################
 # Experiment 7 - manipulations done separately
 ##########################################
+flyctl logs --config configs/human-dyna-exp5-v1-r1-t0-plan.toml
 
-#>>>1. paths: no timer, tell
+#1. paths: no timer, tell
 python launch.py exp5-v1-r1-t0-paths --env EXP=4 --env MAN="paths" --env SAY_REUSE=1 --env TIMER=0
 #https://human-dyna-exp5-v1-r1-t0-paths.fly.dev
 flyctl deploy --config configs/human-dyna-exp5-v1-r1-t0-paths.toml
 
-#>>>2. start: no timer, tell
+#2. start: no timer, tell
 python launch.py exp5-v1-r1-t0-start --env EXP=4 --env MAN="start" --env SAY_REUSE=1 --env TIMER=0
 #https://human-dyna-exp5-v1-r1-t0-start.fly.dev
 flyctl deploy --config configs/human-dyna-exp5-v1-r1-t0-start.toml
 
-#>>>3. plan: no timer, tell
+#3. plan: no timer, tell
 python launch.py exp5-v1-r1-t0-plan --env EXP=4 --env MAN="plan" --env SAY_REUSE=1 --env TIMER=0
 #https://human-dyna-exp5-v1-r1-t0-plan.fly.dev
 flyctl deploy --config configs/human-dyna-exp5-v1-r1-t0-plan.toml
