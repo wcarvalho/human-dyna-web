@@ -8,6 +8,7 @@ import numpy as np
 from scipy import stats
 from collections import defaultdict
 import pandas as pd
+import polars as pl
 
 from housemaze.env import KeyboardActions
 from analysis.data_loading import EpisodeData
@@ -27,6 +28,7 @@ model_colors = {
 }
 
 model_names = {
+    'human': 'Human',
     'human_terminate': 'Human (finished)',
     'human_success': 'Human (Succeeded)',
     'qlearning': 'Q-learning',
@@ -56,13 +58,16 @@ DEFAULT_LABEL_SIZE = 12
 DEFAULT_LEGEND_SIZE = 10
 
 def total_rt(e: EpisodeData):
-    return np.sum(e.reaction_times[:-1])/1000.
+    return np.sum(e.reaction_times[:-1])
 
 def avg_rt(e: EpisodeData):
-    return np.mean(e.reaction_times[:-1])/1000.
+    return np.mean(e.reaction_times[:-1])
+
+def post_first_rt(e: EpisodeData):
+    return e.reaction_times[1:-1]
 
 def first_rt(e: EpisodeData):
-    return e.reaction_times[0]/1000.
+    return e.reaction_times[0]
 
 def get_ylim_without_outliers(data):
     q1, q3 = np.percentile(data, [25, 75])
@@ -71,9 +76,12 @@ def get_ylim_without_outliers(data):
     upper_bound = q3 + 1.5 * iqr
     return max(0, lower_bound), upper_bound
 
-def bar_plot_results(model_dict, figsize=(8, 4), error_bars=True, title="", ylabel=""):
-    # Set up the plot style
-    plt.figure(figsize=figsize)
+def bar_plot_results(model_dict, ax=None, figsize=(8, 4), error_bars=True, title="", ylabel="", autolabel=True):
+    # Create figure and axis if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    
+    # Set style
     sns.set_style("whitegrid")
 
     # Prepare data for plotting
@@ -83,26 +91,32 @@ def bar_plot_results(model_dict, figsize=(8, 4), error_bars=True, title="", ylab
               for model, arr in model_dict.items()] if error_bars else None
 
     # Create the bar plot with consistent colors
-    bars = plt.bar([model_names.get(model, model) for model in models], values, 
-                   yerr=errors, capsize=5, 
-                   color=[model_colors.get(model, '#333333') for model in models])
+    bars = ax.bar([model_names.get(model, model) for model in models], values, 
+                  yerr=errors, capsize=5, 
+                  color=[model_colors.get(model, '#333333') for model in models])
 
     # Customize the plot
-    plt.title(title, fontsize=16)
-    plt.xlabel("Data source", fontsize=12)
-    plt.ylabel(ylabel, fontsize=12)
-    plt.xticks(rotation=45, ha='right')
+    ax.set_title(title, fontsize=16)
+    ax.set_ylabel(ylabel, fontsize=12)
+    
+    # Rotate x-axis labels and set alignment
+    ax.tick_params(axis='x', rotation=45)
+    ax.set_xticklabels(ax.get_xticklabels(), ha='right')
 
     # Add value labels on top of each bar
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                 f'{height:.2f}',
-                 ha='center', va='bottom')
+    if autolabel:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.2f}',
+                   ha='center', va='bottom')
 
-    # Adjust layout and display the plot
-    plt.tight_layout()
-    plt.show()
+    # Adjust layout if we created the figure
+    if ax is None:
+        plt.tight_layout()
+        plt.show()
+        
+    return ax
 
 def success_termination_results(success_dict, termination_dict, title="", ylabel=""):
     # Set up the plot style
@@ -157,6 +171,275 @@ def success_termination_results(success_dict, termination_dict, title="", ylabel
     # Adjust layout and display the plot
     fig.tight_layout()
     plt.show()
+
+def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
+    """Add a 'reuse' column to the DataFrame indicating whether each episode reused paths.
+    
+    Args:
+        df (DataFrame): Input DataFrame
+        manipulation (int, optional): Manipulation number. Defaults to 3.
+        mazes (List[str], optional): List of maze names. Defaults to None.
+        overlap_threshold (float, optional): Threshold for path reuse. Defaults to 0.15.
+    
+    Returns:
+        DataFrame: DataFrame with added 'reuse' column
+    """
+
+    # Create a dictionary to store reuse values
+    reuse_dict = {}
+    def update_reuse_dict(manipulation, train_mazes, test_mazes):
+        # Get unique users
+        users = df.filter(manipulation=manipulation)['user_id'].unique()
+
+        # Process each user's data
+        for user in users:
+            for train_maze, test_maze in zip(train_mazes, test_mazes):
+                # Get train episodes
+                train = df.filter(
+                    user=user, maze=train_maze, room=0, eval=False,
+                    episode_filter=lambda e: not success(e)
+                )
+
+                if len(train.episodes) == 0:
+                    continue
+
+                # Create map for training episodes
+                train_map = housemaze_utils.create_maps(train.episodes).sum(0)
+
+                # Get test episodes
+                test = df.filter(user=user, maze=test_maze, eval=True)
+
+                # Process each test episode
+                for idx, row in enumerate(test._df.iter_rows(named=True)):
+                    global_index = row['global_episode_idx']
+                    episode = test.episodes[idx]
+                    # Create map for single test episode
+                    test_map = housemaze_utils.create_maps([episode]).sum(0)
+                    overlap = housemaze_utils.overlap(train_map, test_map)
+
+                    # Store the reuse value
+                    episode_id = (user, test_maze, global_index)
+                    reuse_dict[episode_id] = overlap.mean() > overlap_threshold
+
+    #-----------------
+    # paths manipulation (3)
+    #-----------------
+    # Define mazes if not provided
+    manipulation = 3
+    train_mazes = test_mazes = [
+        'big_m3_maze1_(F,F)',
+        'big_m3_maze1_(F,T)',
+        'big_m3_maze1_(T,F)',
+        'big_m3_maze1_(T,T)',
+    ]
+    update_reuse_dict(manipulation, train_mazes, test_mazes)
+    #-----------------
+    # shortcut manipulation (1)
+    #-----------------
+    # Define mazes if not provided
+    manipulation = 1
+    train_mazes  = [
+        'big_m1_maze3_(F,F)',
+        'big_m1_maze3_(F,T)',
+        'big_m1_maze3_(T,F)',
+        'big_m1_maze3_(T,T)',
+    ]
+
+    test_mazes = [
+        'big_m1_maze3_shortcut_(F,F)',
+        'big_m1_maze3_shortcut_(F,T)',
+        'big_m1_maze3_shortcut_(T,F)',
+        'big_m1_maze3_shortcut_(T,T)',
+    ]
+    update_reuse_dict(manipulation, train_mazes, test_mazes)
+
+    #-----------------
+    # add everything
+    #-----------------
+    # Create a new column with reuse values
+    reuse_values = pl.Series([
+        reuse_dict.get((row['user_id'], row['maze'], row['global_episode_idx']), None)
+        for row in df.iter_rows(named=True)
+    ])
+
+    # Add the new column to the DataFrame
+    new_df = df.with_columns([
+        pl.Series("reuse", reuse_values)
+    ])
+
+    return new_df
+
+# Function to remove outliers using IQR method
+
+
+def coplot_dists(df1, df2, val, settings: dict):
+    mdf1 = df1.filter(**settings)
+    mdf2 = df2.filter(**settings)
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(6, 3))
+
+    # Combine data to calculate shared bins
+    all_data = np.concatenate([mdf1[val], mdf2[val]])
+    bins = np.histogram_bin_edges(all_data, bins=30)
+
+    # Create overlaid histograms with shared bins
+    sns.histplot(
+        data=mdf1[val],
+        bins=bins,
+        color='skyblue',
+        alpha=0.5,
+        ax=ax,
+        label='User DF'
+    )
+
+    sns.histplot(
+        data=mdf2[val],
+        bins=bins,
+        color='red',
+        alpha=0.5,
+        ax=ax,
+        label='Filtered DF'
+    )
+
+    # Add title and legend
+    ax.set_title(f'Distribution of {val}')
+    ax.legend()
+
+    plt.show()
+
+def filter_outliers(
+        df: DataFrame,
+        filter_settings: dict,
+        filter_columns: List[str],
+        method: str = 'iqr',
+        threshold: float = 1.5) -> DataFrame:
+    """Filter outliers from reaction time columns using various methods.
+    
+    Args:
+        df (DataFrame): Input DataFrame
+        filter_settings (dict): Settings to filter evaluation data
+        filter_columns (list): List of reaction time column names to check
+        method (str): Method to use for outlier detection ('iqr', 'zscore', or 'percentile')
+        threshold (float): Threshold for outlier detection:
+            - For IQR: Number of IQRs to use (default: 1.5)
+            - For zscore: Number of standard deviations (default: 3)
+            - For percentile: Percentile range from 0-100 (default: 1, meaning 1st-99th percentile)
+    
+    Returns:
+        DataFrame: Filtered DataFrame with outliers removed
+    """
+    original_size = len(df)
+    
+    # Get evaluation data and indices once
+    eval_data = df.filter(**filter_settings, reindex=False)
+    eval_indices = eval_data['index'].to_numpy()
+    
+    # Create numpy array for the mask (all True initially)
+    eval_mask = np.ones(len(eval_data), dtype=bool)
+    bounds = {}
+
+    # Check each RT column
+    bounds = {}
+    for col in filter_columns:
+        # Get values for calculations
+        values = np.array(eval_data[col])
+        
+        if method == 'iqr':
+            # Calculate quartiles and IQR
+            q1 = np.percentile(values, 25)
+            q3 = np.percentile(values, 75)
+            iqr = q3 - q1
+            
+            # Calculate bounds
+            lower_bound = q1 - threshold * iqr
+            upper_bound = q3 + threshold * iqr
+            
+        elif method == 'zscore':
+            # Calculate mean and standard deviation
+            mean = np.mean(values)
+            std = np.std(values)
+            
+            # Calculate bounds
+            lower_bound = mean - threshold * std
+            upper_bound = mean + threshold * std
+            
+        elif method == 'percentile':
+            # Calculate percentile bounds
+            lower_bound = np.percentile(values, threshold)
+            upper_bound = np.percentile(values, 100 - threshold)
+            
+        else:
+            raise ValueError(f"Unknown method: {method}")
+        
+        bounds[col] = {
+            'lower': lower_bound,
+            'upper': upper_bound
+        }
+        
+        # Update eval_mask with column constraints
+        col_mask = (values >= lower_bound) & (values <= upper_bound)
+        eval_mask &= col_mask
+
+    # Create full mask (all True)
+    full_mask = np.ones(len(df), dtype=bool)
+    # Update only the evaluation indices in the full mask
+    full_mask[eval_indices] = eval_mask
+
+    # Apply the mask to filter outliers
+    #filtered_df = df.filter(full_mask)
+    filtered_df = df.filter(pl.Series(full_mask))
+    removed_df = eval_data.reindex().filter(pl.Series(~eval_mask))
+
+    # Print how many were filtered
+    n_filtered = original_size - len(filtered_df)
+    if n_filtered > 0:
+        users_removed = set()
+        print(f"Filtered {n_filtered} outliers from {len(eval_mask)} rows using {method} method")
+        for row in removed_df.iter_rows(named=True):
+            user = str(row['user_id'])
+            users_removed.add(user)
+            for col in filter_columns:
+                val = row[col]
+                bound = bounds[col]
+                if val < bound['lower'] or val > bound['upper']:
+                    print(
+                        f"\t{user}. {col}:{val} \t(bounds: {bound['lower']} to {bound['upper']})")
+        print(f"Users removed: {users_removed}")
+
+    return filtered_df
+
+def filter_rt_outliers(episodes: List[EpisodeData], rt_fn: Callable, n_std: float = 3.0) -> List[EpisodeData]:
+    """Filter episodes whose reaction times are outside n standard deviations from the mean.
+    
+    Args:
+        episodes (List[EpisodeData]): List of episodes to filter
+        rt_fn (Callable): Function to calculate reaction time for an episode
+        n_std (float): Number of standard deviations for threshold (default: 3.0)
+    
+    Returns:
+        List[EpisodeData]: Filtered list of episodes
+    """
+    # Calculate log reaction times
+    rts = np.log([rt_fn(e) for e in episodes])
+
+    # Calculate mean and std
+    mean_rt = np.mean(rts)
+    std_rt = np.std(rts)
+    threshold = n_std * std_rt
+
+    # Create mask for valid data points
+    mask = np.abs(rts - mean_rt) <= threshold
+
+    # Apply mask and return filtered episodes
+    filtered_episodes = [ep for ep, keep in zip(episodes, mask) if keep]
+
+    # Print how many were filtered
+    n_filtered = len(episodes) - len(filtered_episodes)
+    if n_filtered > 0:
+        print(f"Filtered {n_filtered} outliers from {len(episodes)} episodes")
+
+    return filtered_episodes
 
 ###################
 # Training (1) reaction times (2) success rate (3) episode count
@@ -620,45 +903,174 @@ def plot_episode_length_seconds(user_df: DataFrame, settings=None, **kwargs):
 #########################################################
 # Manipulation-specific plots
 #########################################################
+def plot_compare_rt(
+    rts1: np.ndarray,
+    rts2: np.ndarray,
+    label1: str = 'RT1',
+    label2: str = 'RT2',
+    title: str = 'Reaction Time Comparison',
+    ylabel: str = 'log seconds',
+    ylim: Optional[tuple] = None,
+    ax=None,
+):
+    """Compare two sets of reaction times with visualization.
+    
+    Args:
+        rts1 (np.ndarray): First set of reaction times
+        rts2 (np.ndarray): Second set of reaction times
+        label1 (str): Label for first set
+        label2 (str): Label for second set
+        title (str): Plot title
+        ylabel (str): Y-axis label
+        ylim (tuple, optional): Y-axis limits (min, max)
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 4))
+
+    # Calculate log reaction times
+    log_rts1 = np.log(rts1)
+    log_rts2 = np.log(rts2)
+
+    # Calculate means and standard errors
+    mean1, mean2 = np.mean(log_rts1), np.mean(log_rts2)
+    std1 = np.std(log_rts1) / np.sqrt(len(log_rts1))
+    std2 = np.std(log_rts2) / np.sqrt(len(log_rts2))
+
+    # Set y-axis limits
+    if ylim is None:
+        all_rts = np.concatenate([log_rts1, log_rts2])
+        y_min, y_max = np.percentile(all_rts, [1, 99])
+        y_range = y_max - y_min
+        y_min -= 0.1 * y_range
+        y_max += 0.1 * y_range
+    else:
+        y_min, y_max = ylim
+
+    # Plot means as horizontal lines
+    ax.axhline(y=mean1, color='blue',
+               linestyle='-', linewidth=2, label=f'{label1} Mean: {mean1:.2f}')
+    ax.axhspan(mean1 - std1, mean1 + std1,
+               alpha=0.2, color='blue', label=f'{label1} SE: {std1:.2f}')
+
+    # Add standard error ranges
+    ax.axhline(y=mean2, color='green',
+               linestyle='-', linewidth=2, label=f'{label2} Mean: {mean2:.2f}')
+    ax.axhspan(mean2 - std2, mean2 + std2,
+               alpha=0.2, color='green', label=f'{label2} SE: {std2:.2f}')
+
+    # Add strip plot for individual data points
+    x_jitter1 = np.random.normal(0.25, 0.02, size=len(log_rts1))
+    x_jitter2 = np.random.normal(0.75, 0.02, size=len(log_rts2))
+    ax.scatter(x_jitter1, log_rts1, color='black', alpha=0.5)
+    ax.scatter(x_jitter2, log_rts2, color='black', alpha=0.5)
+
+    # Customize plot
+    ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+    ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
+    ax.set_xticks([0.25, 0.75])
+    ax.set_xticklabels([label1, label2], ha='center')
+    ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
+    ax.set_ylim(y_min, y_max)
+    ax.legend(fontsize=DEFAULT_LEGEND_SIZE, loc='lower center')
+
+    # Add statistical test
+    t_stat, p_value = stats.ttest_ind(log_rts1, log_rts2)
+    ax.text(0.5, 0.98, f't-stat: {t_stat:.3f}\np-value: {p_value:.3f}',
+            transform=ax.transAxes,
+            verticalalignment='top',
+            horizontalalignment='center',
+            bbox=dict(facecolor='white', alpha=0.8))
 
 def reaction_times_dual(
         episodes1: List[EpisodeData],
         episodes2: List[EpisodeData],
         label1='group1',
         label2='group2',
-        rt_types=['speed', 'first'],
+        rt_types=['first', 'speed'],
         ylim=None):
     rt_functions = {
         'speed': avg_rt,
+        'post_first': lambda e: np.mean(post_first_rt(e)),
         'first': first_rt,
         'total': total_rt
     }
 
-    fig, axes = plt.subplots(1, len(rt_types), figsize=(4 * len(rt_types), 4))
+    fig, axs = plt.subplots(1, len(rt_types), figsize=(5 * len(rt_types), 6))
     
     # Ensure axes is always a list, even for a single subplot
     if len(rt_types) == 1:
-        axes = [axes]
-    
-    for i, (ax, rt_type) in enumerate(zip(axes, rt_types)):
-        rt_fn = rt_functions[rt_type]
-        group1_rts = np.array([rt_fn(e) for e in episodes1])
-        group2_rts = np.array([rt_fn(e) for e in episodes2])
+        axs = [axs]
+
+    def plot_rt_comparison(ax, rt_type, rt_fn, i=0):
+        # Calculate log reaction times for both groups
+        rts1 = np.log([rt_fn(e)*1000 for e in filter_rt_outliers(episodes1, rt_fn)])
+        rts2 = np.log([rt_fn(e)*1000 for e in filter_rt_outliers(episodes2, rt_fn)])
+        
+        # Calculate means and standard errors
+        mean1, mean2 = np.mean(rts1), np.mean(rts2)
+        std1 = np.std(rts1) / np.sqrt(len(rts1))
+        std2 = np.std(rts2) / np.sqrt(len(rts2))
+
+        # Set y-axis limits
+        if ylim is None:
+            all_rts = np.concatenate([rts1, rts2])
+            y_min, y_max = np.percentile(all_rts, [1, 99])
+            y_range = y_max - y_min
+            y_min -= 0.1 * y_range
+            y_max += 0.1 * y_range
+        else:
+            if len(ylim) == len(rt_types):
+                y_min, y_max = ylim[i]
+            else:
+                y_min, y_max = ylim
 
         # Create box plot with individual points
-        box_data = [group1_rts, group2_rts]
+        #box_data = [rts1, rts2]
         labels = [label1, label2]
         
-        sns.boxplot(data=box_data, ax=ax, width=0.5, palette=['red', 'green'])
-        sns.stripplot(data=box_data, ax=ax, color='black', alpha=0.5, jitter=True)
+        # Plot means as horizontal lines
+        ax.axhline(y=mean1, color='blue', 
+                   linestyle='-', linewidth=2, label=f'{label1} Mean: {mean1:.2f}')
+        ax.axhspan(mean1 - std1, mean1 + std1,
+                   alpha=0.2, color='blue', label=f'{label1} SE: {std1:.2f}')
 
-        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=DEFAULT_LABEL_SIZE)
-        ax.set_ylabel('Reaction Time', fontsize=DEFAULT_LABEL_SIZE)
-        ax.set_title(f'{rt_type.capitalize()}', fontsize=DEFAULT_TITLE_SIZE)
+        # Add standard error ranges
+        ax.axhline(y=mean2, color='green', 
+                   linestyle='-', linewidth=2, label=f'{label2} Mean: {mean2:.2f}')
+        ax.axhspan(mean2 - std2, mean2 + std2,
+                   alpha=0.2, color='green', label=f'{label2} SE: {std2:.2f}')
+        
+        # Add strip plot for individual data points
+        x_jitter1 = np.random.normal(0.25, 0.02, size=len(rts1))
+        x_jitter2 = np.random.normal(0.75, 0.02, size=len(rts2))
+        ax.scatter(x_jitter1, rts1, color='black', alpha=0.5)
+        ax.scatter(x_jitter2, rts2, color='black', alpha=0.5)
+
+        if rt_type == 'first':
+            title = "First Reaction Time"
+            ylabel = "log seconds"
+        elif rt_type == 'speed':
+            title = "Average Reaction Time"
+            ylabel = "log avg(seconds/step)"
+        elif rt_type == 'total':
+            title = "Total Reaction Time"
+            ylabel = "log total(seconds)"
+        elif rt_type == 'post_first':
+            title = "Average Post-First Reaction Time"
+            ylabel = "log avg(seconds/step)"
+        
+        ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+        ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_xticks([0.25, 0.75])
+        ax.set_xticklabels(labels, ha='right')
         ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
-        if ylim is not None:
-            assert len(ylim) == len(rt_types)
-            ax.set_ylim(*ylim[i])
+        ax.set_ylim(y_min, y_max)
+        ax.legend(fontsize=DEFAULT_LEGEND_SIZE)
+
+    # Plot for each RT type
+    for i, rt_type in enumerate(rt_types):
+        plot_rt_comparison(axs[i], rt_type, rt_functions[rt_type], i)
+
     plt.tight_layout()
     plt.show()
 
@@ -744,7 +1156,7 @@ def reaction_times_difference(
     if filter_outliers:
         column_pairs = [
             ('first_rt_cond1', 'first_rt_cond2'),
-            ('avg_rt_cond1', 'avg_rt_cond2'),
+            #('avg_rt_cond1', 'avg_rt_cond2'),
             ('total_rt_cond1', 'total_rt_cond2')
         ]
         df = remove_outliers_iqr(df, column_pairs, paired=True)
@@ -901,106 +1313,6 @@ def group_filter_fn(df: DataFrame, min_successes: int = 16):
         print(f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{min_successes}/{len(successes)}")
     return remove
 
-#########################################################
-# Paths manipulation (3)
-#########################################################
-
-def plot_m3_example(user_df: DataFrame, finished=False):
-    if finished:
-        output_episode_filter = lambda e: not success(e)
-    else:
-        output_episode_filter = lambda e: not success_or_not_terminate(e)
-
-    subset = user_df.filter_by_group(
-        input_episode_filter=group_filter_fn,
-        output_episode_filter=output_episode_filter,
-        input_settings=dict(eval=False),
-        output_settings=dict(manipulation=3),
-    )
-    old_path_cond = subset.filter(
-        eval=True,
-        episode_filter=lambda e: not went_to_junction(e, junction=(14, 25))
-    )
-    new_path_cond = subset.filter(
-        eval=True,
-        episode_filter=lambda e: not went_to_junction(e, junction=(14, 0))
-    )
-
-    # Create a figure with 3 subplots for render_path
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-
-    housemaze_utils.render_path(old_path_cond.episodes[0], ax=axs[0])
-    axs[0].set_title('Using prior path')
-
-    housemaze_utils.render_path(new_path_cond.episodes[0], ax=axs[1])
-    axs[1].set_title('Using new path')
-
-    plt.tight_layout()
-    plt.show()
-
-def m3_reaction_times(user_df: DataFrame, **kwargs):
-    manipulation = 3
-
-    subset = user_df.filter_by_group(
-        input_episode_filter=group_filter_fn,
-        #output_episode_filter=lambda e: not success_or_not_terminate(e),
-        output_episode_filter=lambda e: not success_or_not_terminate(e),
-        input_settings=dict(eval=False),
-        output_settings=dict(manipulation=manipulation),
-    )
-    old_path_cond = subset.filter(
-        eval=True,
-        episode_filter=lambda e: not went_to_junction(e, junction=(14, 25))
-    )
-    new_path_cond = subset.filter(
-        eval=True,
-        episode_filter=lambda e: not went_to_junction(e, junction=(14, 0))
-    )
-
-    # Plot reaction times
-    reaction_times_dual(
-        new_path_cond.episodes,
-        old_path_cond.episodes,
-        label1='Used new path',
-        label2='Used old path',
-        **kwargs
-    )
-
-def reaction_times_across_conditions_m3(
-        episodes1: List[EpisodeData],
-        episodes2: List[EpisodeData],
-        episodes3: List[EpisodeData], label1='group1', label2='group2', label3='group3', ylim=None):
-    rt_types = ['speed', 'first']
-    rt_functions = [avg_rt, first_rt]
-
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-
-    for i, (ax, rt_fn, rt_type) in enumerate(zip(axes, rt_functions, rt_types)):
-        group1_rts = np.array([rt_fn(e) for e in episodes1])
-        group2_rts = np.array([rt_fn(e) for e in episodes2])
-        group3_rts = np.array([rt_fn(e) for e in episodes3])
-
-        # Create box plot with individual points
-        box_data = [group2_rts, group3_rts]
-        labels = [label2, label3]
-
-        sns.boxplot(data=box_data, ax=ax, width=0.5,
-                    palette=['red', 'green'])
-        sns.stripplot(data=box_data, ax=ax, color='black',
-                      alpha=0.5, jitter=True)
-
-        ax.set_xticklabels(labels, rotation=45, ha='right',
-                           fontsize=DEFAULT_LABEL_SIZE)
-        ax.set_ylabel('Reaction Time', fontsize=DEFAULT_LABEL_SIZE)
-        ax.set_title(f'{rt_type.capitalize()} Reaction Time',
-                     fontsize=DEFAULT_TITLE_SIZE)
-        ax.tick_params(axis='both', which='major',
-                       labelsize=DEFAULT_LABEL_SIZE)
-        if ylim is not None:
-            ax.set_ylim(*ylim[i])
-
-    plt.tight_layout()
-    plt.show()
 
 def success_termination_results(success_dict, termination_dict, title="", ylabel=""):
     # Set up the plot style
@@ -1056,35 +1368,136 @@ def success_termination_results(success_dict, termination_dict, title="", ylabel
     fig.tight_layout()
     plt.show()
 
-def create_success_termination_results_m3(user_df: DataFrame, model_df: DataFrame):
+
+
+#########################################################
+# Paths manipulation (3)
+#########################################################
+
+def plot_m3_example(user_df: DataFrame, finished=False):
+    if finished:
+        output_episode_filter = lambda e: not success(e)
+    else:
+        output_episode_filter = lambda e: not success_or_not_terminate(e)
+
+    subset = user_df.filter_by_group(
+        input_episode_filter=group_filter_fn,
+        output_episode_filter=output_episode_filter,
+        input_settings=dict(eval=False),
+        output_settings=dict(manipulation=3, maze='big_m3_maze1_(F,F)'),
+    )
+    old_path_cond = subset.filter(reuse=True)
+    new_path_cond = subset.filter(reuse=False)
+
+
+    # Create a figure with 3 subplots for render_path
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+    housemaze_utils.render_path(old_path_cond.episodes[0], ax=axs[0])
+    axs[0].set_title('Using prior path')
+
+    housemaze_utils.render_path(new_path_cond.episodes[0], ax=axs[1])
+    axs[1].set_title('Using new path')
+
+    plt.tight_layout()
+    plt.show()
+
+def m3_reaction_times(user_df: DataFrame, **kwargs):
     manipulation = 3
+
+    subset = user_df.filter_by_group(
+        input_episode_filter=group_filter_fn,
+        #output_episode_filter=lambda e: not success_or_not_terminate(e),
+        output_episode_filter=lambda e: not success_or_not_terminate(e),
+        input_settings=dict(eval=False),
+        output_settings=dict(manipulation=manipulation, eval=True),
+    )
+
+    # Split episodes based on reuse column
+    reuse_episodes = subset.filter(reuse=True).episodes
+    no_reuse_episodes = subset.filter(reuse=False).episodes
+
+    # Plot reaction times
+    reaction_times_dual(
+        no_reuse_episodes,
+        reuse_episodes,
+        label1='Used New Path',
+        label2='Partially reused path',
+        **kwargs
+    )
+
+def reaction_times_across_conditions_m3(
+        episodes1: List[EpisodeData],
+        episodes2: List[EpisodeData],
+        episodes3: List[EpisodeData], label1='group1', label2='group2', label3='group3', ylim=None):
+    rt_types = ['speed', 'first']
+    rt_functions = [avg_rt, first_rt]
+
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+
+    for i, (ax, rt_fn, rt_type) in enumerate(zip(axes, rt_functions, rt_types)):
+        group1_rts = np.array([rt_fn(e) for e in episodes1])
+        group2_rts = np.array([rt_fn(e) for e in episodes2])
+        group3_rts = np.array([rt_fn(e) for e in episodes3])
+
+        # Create box plot with individual points
+        box_data = [group2_rts, group3_rts]
+        labels = [label2, label3]
+
+        sns.boxplot(data=box_data, ax=ax, width=0.5,
+                    palette=['red', 'green'])
+        sns.stripplot(data=box_data, ax=ax, color='black',
+                      alpha=0.5, jitter=True)
+
+        ax.set_xticklabels(labels, rotation=45, ha='right',
+                           fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_ylabel('Reaction Time', fontsize=DEFAULT_LABEL_SIZE)
+        ax.set_title(f'{rt_type.capitalize()} Reaction Time',
+                     fontsize=DEFAULT_TITLE_SIZE)
+        ax.tick_params(axis='both', which='major',
+                       labelsize=DEFAULT_LABEL_SIZE)
+        if ylim is not None:
+            ax.set_ylim(*ylim[i])
+
+    plt.tight_layout()
+    plt.show()
+
+
+def create_success_termination_results_m3(user_df: DataFrame, model_df: DataFrame, **kwargs):
     model_setting = dict(maze_name='big_m3_maze1', eval=True)
 
     def post_fn(x):
         return np.array(x)[0]
 
-    def output_transform(l: List):
-        return np.concatenate(l)
+    #def output_transform(l: List):
+    #    return np.concatenate(l)
 
-    def get_human_data(fn):
-        return user_df.apply_by_group(
-            fn=fn,
-            input_episode_filter=group_filter_fn,
-            input_settings=dict(manipulation=manipulation, eval=False),
-            output_settings=dict(manipulation=manipulation, eval=True),
-            output_transform=output_transform
-        )
+    #def get_human_data(fn):
+    #    return user_df.apply_by_group(
+    #        fn=fn,
+    #        input_episode_filter=group_filter_fn,
+    #        input_settings=dict(manipulation=manipulation, eval=False),
+    #        output_settings=dict(manipulation=manipulation, eval=True),
+    #        output_transform=output_transform
+    #    )
+    #succeeded = get_human_data(success_fn)
 
-    def model_fn(e): return jax.vmap(success)(e)
+    manipulation = 3
+    m3_df = user_df.filter(manipulation=manipulation, eval=True)
+    succeeded = m3_df.group_by('user_id').agg(
+        pl.col('success').mean()).select('success').to_numpy().flatten()
 
-    succeeded = get_human_data(success)
-    finished = get_human_data(terminated)
+
+    
+    success_fn = lambda e: 100*success(e)
+    def model_fn(e): return jax.vmap(success_fn)(e)
 
     # Success rate data
     data = {
-        'human_success': succeeded,
+        'human': 100*succeeded,
         #'human_terminate': finished,
         'qlearning': model_df.apply(fn=model_fn, output_transform=post_fn, algo="qlearning", **model_setting),
+        'usfa': model_df.apply(fn=model_fn, output_transform=post_fn, algo="usfa", **model_setting),
         'dyna': model_df.apply(fn=model_fn, output_transform=post_fn, algo="dynaq_shared", **model_setting),
         'bfs': model_df.apply(fn=model_fn, output_transform=post_fn, algo='bfs', **model_setting),
         'dfs': model_df.apply(fn=model_fn, output_transform=post_fn, algo='dfs', **model_setting),
@@ -1093,54 +1506,240 @@ def create_success_termination_results_m3(user_df: DataFrame, model_df: DataFram
     bar_plot_results(
         data,
         # data_termination,
-        #title='Success Rate',
-        ylabel='Rate'
+        title='Success Rate',
+        #ylabel='Pr'
+        error_bars=False,
+        autolabel=False,
+        **kwargs
     )
 
-def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ylim=None):
-    manipulation = 3
-    model_setting = dict(maze_name='big_m3_maze1', eval=True)
-    fn = partial(went_to_junction, junction=(14, 25))
-    # fn = partial(went_to_junction, junction=(17, 17))
-    def model_fn(e): return jax.vmap(fn)(e)
+def _reuse_bar_plot_results(
+    user_df: DataFrame,
+    model_df: DataFrame,
+    manipulation: int,
+    junction: tuple,
+    maze_name: str,
+    ax=None,
+    ylim=None
+) -> tuple:
+    """Helper function to create bar plot results for path reuse analysis.
+    
+    Args:
+        user_df (DataFrame): User data
+        model_df (DataFrame): Model data
+        manipulation (int): Manipulation number
+        junction (tuple): Junction coordinates to check
+        maze_name (str): Name of the maze
+        ax (Optional[Axes]): Matplotlib axes to plot on. If None, creates new figure/axes
+        ylim (Optional[tuple]): Y-axis limits
+        
+    Returns:
+        tuple: (figure, axes) - The matplotlib figure and axes objects
+    """
+    # Calculate statistics
+    user_df = user_df.filter(manipulation=manipulation, eval=True)
+    human_means = user_df.group_by('user_id').agg(
+        pl.col('reuse').mean()).select('reuse').to_numpy().flatten()*100
+    human_mean = human_means.mean()
+    human_std = human_means.std()
+    human_se = human_std / np.sqrt(len(human_means))
 
-    def post_fn(x):
-        return np.array(x)[0]
+    # Perform one-sample t-test against chance (0.5)
+    t_stat, p_value = stats.ttest_1samp(human_means, 0.5)
 
-    # Human data with first filter
-    human_data_1 = user_df.apply_by_group(
-        fn=fn,
-        input_episode_filter=group_filter_fn,
-        input_settings=dict(manipulation=manipulation, eval=False),
-        output_episode_filter=lambda e: not success_or_not_terminate(e),
-        output_settings=dict(manipulation=manipulation, eval=True),
-    )
-    # Human data with second filter
-    human_data_2 = user_df.apply_by_group(
-        fn=fn,
-        input_episode_filter=group_filter_fn,
-        input_settings=dict(manipulation=manipulation, eval=False),
-        output_episode_filter=lambda e: not success(e),
-        output_settings=dict(manipulation=manipulation, eval=True),
-    )
+    # Create figure and axes if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    else:
+        fig = ax.figure
 
+    sns.set_style("whitegrid")
+
+    model_setting = dict(maze_name=maze_name, eval=True)
+    fn = partial(went_to_junction, junction=junction)
+    def model_fn(e): return 100*jax.vmap(fn)(e)
+    def post_fn(x): return np.array(x)[0]
+
+    # Create bar plot data
     data = {
-        'human': human_data_1,
-        'human_success': human_data_2,
+        'human': human_means,
         'qlearning': model_df.apply(fn=model_fn, output_transform=post_fn, algo="qlearning", **model_setting),
         'usfa': model_df.apply(fn=model_fn, output_transform=post_fn, algo="usfa", **model_setting),
         'dyna': model_df.apply(fn=model_fn, output_transform=post_fn, algo="dynaq_shared", **model_setting),
         'bfs': model_df.apply(fn=model_fn, output_transform=post_fn, algo='bfs', **model_setting),
         'dfs': model_df.apply(fn=model_fn, output_transform=post_fn, algo='dfs', **model_setting),
     }
-    figsize = (10, 6)
-    plt.figure(figsize=figsize)
-    sns.set_style("whitegrid")
+    #data = jax.tree_map(lambda x: 100*x, data)
+
+    # Plot bars
+    ax.bar([model_names.get(model, model) for model in data.keys()],
+                      [np.mean(arr) for arr in data.values()],
+                      yerr=[np.std(arr)/np.sqrt(len(arr)) for model, arr in data.items()],
+                      capsize=5,
+                      color=[model_colors.get(model, '#333333') for model in data.keys()])
+
+    # Add individual dots for human data with jitter
+    x_pos = 0  # Position of human bar
+    x_jitter = np.random.normal(0, 0.15, size=len(human_means))
+    ax.scatter([x_pos + j for j in x_jitter], human_means,
+               color='black', alpha=0.5, zorder=3)
+
+    # Add chance level line
+    ax.axhline(y=50, color='r', linestyle='--', alpha=0.5, label='Chance level')
+
+    # Add statistics annotations
+    stats_text = (f"Human mean: {human_mean:.3f} ± {human_se:.3f}\n"
+                 f"t-stat: {t_stat:.3f}\n"
+                 f"p-value: {p_value:.3f}")
+    ax.text(0.98, 0.98, stats_text,
+            transform=ax.transAxes,
+            verticalalignment='top',
+            horizontalalignment='right',
+            bbox=dict(facecolor='white', alpha=0.8))
+
+    # Add p-value annotation
+    ax.text(x_pos, ax.get_ylim()[1], f'p = {p_value:.3f}',
+            horizontalalignment='center', verticalalignment='bottom')
+
+    ax.set_title('Path Reuse Analysis', fontsize=16)
+    ax.set_ylabel('Proportion of Path Reuse', fontsize=12)
+    ax.set_xticks(range(len(data)))
+    ax.set_xticklabels([model_names.get(model, model) for model in data.keys()],
+                       rotation=45, ha='right')
+
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    return fig, ax
+
+def create_bar_plot_results_m1(user_df: DataFrame, model_df: DataFrame, ax=None, ylim=None):
+    """Create bar plot results for manipulation 1."""
+    return _reuse_bar_plot_results(
+        user_df=user_df,
+        model_df=model_df,
+        manipulation=1,
+        junction=(2, 14),
+        maze_name='big_m1_maze3_shortcut',
+        ax=ax,
+        ylim=ylim
+    )
+
+def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ax=None, ylim=None):
+    """Create bar plot results for manipulation 3."""
+    return _reuse_bar_plot_results(
+        user_df=user_df,
+        model_df=model_df,
+        manipulation=3,
+        junction=(14, 25),
+        maze_name='big_m3_maze1',
+        ax=ax,
+        ylim=ylim
+    )
+
+#########################################################
+# Shortcut manipulation (3)
+#########################################################
+
+
+def plot_m1_example(user_df: DataFrame):
+
+    old_path_cond = user_df.filter(manipulation=1, reuse=True, eval=True)
+    new_path_cond = user_df.filter(manipulation=1, reuse=False, eval=True)
+
+    # Create a figure with 3 subplots for render_path
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+    housemaze_utils.render_path(old_path_cond.episodes[0], ax=axs[0])
+    axs[0].set_title('Using prior path')
+
+    housemaze_utils.render_path(new_path_cond.episodes[0], ax=axs[1])
+    axs[1].set_title('Using new path')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def create_success_termination_results_m1(user_df: DataFrame, model_df: DataFrame, **kwargs):
+    manipulation = 1
+    model_setting = dict(maze_name='big_m1_maze3_shortcut', eval=True)
+
+    def post_fn(x):
+        return np.array(x)[0]
+    def success_fn(e): return 100*success(e)
+    def model_fn(e): return jax.vmap(success_fn)(e)
+
+    m1_df = user_df.filter(manipulation=manipulation, eval=True)
+    human_success = m1_df.group_by('user_id').agg(
+        pl.col('success').mean()).select('success').to_numpy().flatten()
+
+    # Success rate data
+    data = {
+        'human': human_success*100,
+        # 'human_terminate': finished,
+        'qlearning': model_df.apply(fn=model_fn, output_transform=post_fn, algo="qlearning", **model_setting),
+        'usfa': model_df.apply(fn=model_fn, output_transform=post_fn, algo="usfa", **model_setting),
+        'dyna': model_df.apply(fn=model_fn, output_transform=post_fn, algo="dynaq_shared", **model_setting),
+        'bfs': model_df.apply(fn=model_fn, output_transform=post_fn, algo='bfs', **model_setting),
+        'dfs': model_df.apply(fn=model_fn, output_transform=post_fn, algo='dfs', **model_setting),
+    }
 
     bar_plot_results(
         data,
-        title = 'Partially reused training path when shorter path exists',
-        ylabel = 'Proportion',
+        # data_termination,
+        title='Success Rate',
+        # ylabel='Pr'
+        error_bars=True,
+        autolabel=False,
+        **kwargs
+    )
+
+
+def create_bar_plot_results_m1(user_df: DataFrame, model_df: DataFrame, ax=None, ylim=None):
+    """Create bar plot results for manipulation 1."""
+    return _reuse_bar_plot_results(
+        user_df=user_df,
+        model_df=model_df,
+        manipulation=1,
+        junction=(2, 14),
+        maze_name='big_m1_maze3_shortcut',
+        ax=ax,
+        ylim=ylim
+    )
+
+def create_bar_plot_results_m3(user_df: DataFrame, model_df: DataFrame, ax=None, ylim=None):
+    """Create bar plot results for manipulation 3."""
+    return _reuse_bar_plot_results(
+        user_df=user_df,
+        model_df=model_df,
+        manipulation=3,
+        junction=(14, 25),
+        maze_name='big_m3_maze1',
+        ax=ax,
+        ylim=ylim
+    )
+
+def m1_reaction_times(user_df: DataFrame, **kwargs):
+    manipulation = 1
+
+    subset = user_df.filter_by_group(
+        input_episode_filter=group_filter_fn,
+        #output_episode_filter=lambda e: not success_or_not_terminate(e),
+        output_episode_filter=lambda e: not success_or_not_terminate(e),
+        input_settings=dict(eval=False),
+        output_settings=dict(manipulation=manipulation, eval=True),
+    )
+
+    # Split episodes based on reuse column
+    reuse_episodes = subset.filter(reuse=True).episodes
+    no_reuse_episodes = subset.filter(reuse=False).episodes
+
+    # Plot reaction times
+    reaction_times_dual(
+        no_reuse_episodes,
+        reuse_episodes,
+        label1='Used New Path',
+        label2='Partially reused path',
+        **kwargs
     )
 
 #########################################################
@@ -1155,9 +1754,13 @@ def plot_m2_example(user_df: DataFrame):
         output_settings=dict(manipulation=2),
     )
     # SHOULD BE SMALLER
-    cond1 = subset.filter(manipulation=2, eval=True, condition=1)  # On-path
+    cond1 = subset.filter(
+        maze='big_m2_maze2_onpath_(F,F)',
+        manipulation=2, eval=True, condition=1)  # On-path
     # SHOULD BE LARGER
-    cond2 = subset.filter(manipulation=2, eval=True, condition=2)  # Off-path
+    cond2 = subset.filter(
+        maze='big_m2_maze2_offpath_(F,F)',
+        manipulation=2, eval=True, condition=2)  # Off-path
 
     # Create a figure with 3 subplots for render_path
     fig, axs = plt.subplots(1, 2, figsize=(15, 5))
@@ -1189,17 +1792,23 @@ def m2_reaction_time_difference(user_df: DataFrame, rt_types=['first', 'avg'], *
 # Planning manipulation (4)
 #########################################################
 
-def plot_m4_example(user_df: DataFrame, setting: str='short'):
+def plot_m4_example(user_df: DataFrame, setting: str='short', version: str = 'regular'):
     assert setting in ['short', 'long']
+    assert version in ['blind', 'regular']
     subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
-        input_settings=dict(eval=False, name=f'big_m4_maze_{setting}'),
+        input_settings=dict(eval=False),
         output_settings=dict(manipulation=4),
     )
-    cond0 = subset.filter(name=f'big_m4_maze_{setting}')
-    cond1 = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
-    cond2 = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
+    if version == 'regular':
+        cond0 = subset.filter(maze=f'big_m4_maze_{setting}_(F,F)')
+        cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same_(F,F)')
+        cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff_(F,F)')
+    elif version == 'blind':
+        cond0 = subset.filter(maze=f'big_m4_maze_{setting}_blind_(F,F)')
+        cond1 = subset.filter(maze=f'big_m4_maze_{setting}_eval_same_blind_(F,F)')
+        cond2 = subset.filter(maze=f'big_m4_maze_{setting}_eval_diff_(F,F)')
 
     # Create a figure with 3 subplots for render_path
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
@@ -1438,18 +2047,34 @@ def m4_reaction_time_difference(
         user_df: DataFrame,
         setting='short',
         rt_types=['first', 'avg'],
+        extra_settings=None,
+        version: str = 'regular',
         **kwargs):
     assert setting in ['short', 'long']
+    if version == 'regular':
+        input_settings = dict(eval=False, name=f'big_m4_maze_{setting}')
+    elif version == 'blind':
+        input_settings = dict(eval=False, name=f'big_m4_maze_{setting}_blind')
+    else:
+        raise ValueError(f"Unknown version: {version}")
+
     subset = user_df.filter_by_group(
         input_episode_filter=partial(group_filter_fn, min_successes=8),
         output_episode_filter=lambda e: not success_or_not_terminate(e),
-        input_settings=dict(eval=False, name=f'big_m4_maze_{setting}'),
+        input_settings=input_settings,
         output_settings=dict(manipulation=4),
     )
+
+    extra_settings = extra_settings or {}
     # SMALLER
-    same_cond = subset.filter(name=f'big_m4_maze_{setting}_eval_same')
+    if version == 'regular':
+        same_cond = subset.filter(name=f'big_m4_maze_{setting}_eval_same', **extra_settings)
+    elif version == 'blind':
+        same_cond = subset.filter(
+            name=f'big_m4_maze_{setting}_eval_same_blind', **extra_settings)
+
     # LARGER
-    diff_cond = subset.filter(name=f'big_m4_maze_{setting}_eval_diff')
+    diff_cond = subset.filter(name=f'big_m4_maze_{setting}_eval_diff', **extra_settings)
 
     return reaction_times_difference(
         same_cond, diff_cond,

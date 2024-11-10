@@ -1,3 +1,5 @@
+from typing import List, NamedTuple
+
 import seaborn as sns
 import jax
 import jax.numpy as jnp
@@ -10,6 +12,8 @@ import jax.tree_util as jtu
 import polars as pl
 import pickle
 
+from flax import struct
+
 from housemaze import renderer
 from housemaze.human_dyna import utils
 from housemaze.human_dyna import mazes
@@ -17,7 +21,7 @@ from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import experiments as housemaze_experiments
 
 from analysis import data_loading
-from analysis.data_loading import EpisodeData
+
 
 image_dict = utils.load_image_dict()
 
@@ -26,7 +30,28 @@ char2idx, groups, task_objects = mazes.get_group_set(num_groups)
 idx2key = {idx: image_dict['keys'][idx] for char, idx in char2idx.items()}
 task_runner = multitask_env.TaskRunner(task_objects=task_objects)
 
-if data_loading.is_in_notebook():
+
+class EpisodeData(NamedTuple):
+    actions: jax.Array
+    timesteps: multitask_env.TimeStep
+    positions: jax.Array = None
+    reaction_times: jax.Array = None
+    transitions: struct.PyTreeNode = None
+
+
+def is_in_notebook():
+    try:
+        from IPython import get_ipython
+        if 'IPKernelApp' in get_ipython().config:
+            return True
+        else:
+            return False
+    except ImportError:
+        return False
+    except AttributeError:
+        return False
+
+if is_in_notebook():
     from tqdm.notebook import tqdm
     try:
         import ipywidgets
@@ -365,16 +390,7 @@ def create_episode_reaction_times_video(
      return display(HTML(video))
   return video
 
-
-def make_sf_video(
-      e,
-      idx=0,
-      output_file='/tmp/housemaze_analysis/sf_video.mp4',
-      fps=1,
-      html=True,
-      n=1e8,
-      line_mask=None,
-      line_names=None):
+def episode_sf_value(e, idx=None):
     actions = e.actions
     preds = e.transitions.extras['preds']
     sf_values = preds.sf  # [T, N, A, W]
@@ -387,14 +403,78 @@ def make_sf_video(
 
     in_episode = get_in_episode(e.timesteps)
     sf_values = sf_values[in_episode]
-    sf_values = sf_values[:, idx]  # [T', ... ]
+    # [T', ... ]
+    if idx is not None:
+        sf_values = sf_values[:, idx]
+    return sf_values
+
+def plot_sf_values(e, idx=None, line_mask=None, line_names=None, ax=None, colors=None, styles=None):
+    """Plot successor feature values as lines.
+    
+    Args:
+        e: Episode data
+        idx: Optional index for SF values
+        line_mask: Optional boolean mask of length N to filter which lines to plot
+        line_names: Optional list of names for each line
+        ax: Optional matplotlib axis to plot on
+        colors: Optional list of colors for each line pair
+        styles: Optional list of linestyles for first/second half
+    
+    Returns:
+        matplotlib axis object
+    """
+    sf_values = episode_sf_value(e, idx)
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(7, 5))
+    
+    # Default colors and styles if not provided
+    colors = colors or ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']  # Default matplotlib colors
+    styles = styles or ['-', '--']  # Solid for first half, dashed for second half
+    
+    time_steps = np.arange(sf_values.shape[0])
+    n_total = sf_values.shape[1]
+    n_half = n_total // 2
+    
+    for i in range(sf_values.shape[1]):
+        if line_mask is not None and not line_mask[i]:
+            continue
+            
+        # Determine color and style indices
+        color_idx = i % n_half  # Cycle through colors for each half
+        style_idx = i // n_half  # First half gets style[0], second half gets style[1]
+        
+        label = line_names[i] if line_names and i < len(line_names) else None
+        ax.plot(time_steps, sf_values[:, i], 
+                label=label,
+                color=colors[color_idx],
+                linestyle=styles[style_idx])
+    
+    if line_names is not None:
+        ax.legend()
+    
+    ax.set_title('Successor Feature Predictions')
+    ax.set_xlabel('Time Step')
+    ax.set_ylabel('SF Value')
+    ax.set_xlim(0, sf_values.shape[0] - 1)
+    
+    return ax
+
+def make_sf_video(
+      e,
+      idx=0,
+      output_file='/tmp/housemaze_analysis/sf_video.mp4',
+      fps=1,
+      html=True,
+      n=1e8,
+      line_mask=None,
+      line_names=None):
+
+    in_episode = get_in_episode(e.timesteps)
     states = e.timesteps.state
 
     states = jax.tree_map(lambda x: x[in_episode], states)  # [T', ... ]
     images = jax.vmap(housemaze_render_fn)(states)
-
-    #sf_values = jax.tree_map(lambda x: x[:-1], sf_values)  # [T', ... ]
-    #states = jax.tree_map(lambda x: x[:-1], states)  # [T', ... ]
 
     # Ensure the directory exists
     output_dir = os.path.dirname(output_file)
@@ -409,24 +489,11 @@ def make_sf_video(
     # Initialize the plots
     im1 = ax1.imshow(images[0])
     
-    # Plot SF values as lines instead of an image
-
-    time_steps = np.arange(sf_values.shape[0])
-    for i in range(sf_values.shape[1]):
-        if line_mask is not None and not line_mask[i]:
-            continue
-        label = line_names[i] if line_names and i < len(line_names) else None
-        ax2.plot(time_steps, sf_values[:, i], label=label)
-    
-    ax2.legend()
+    # Plot SF values using the extracted function
+    plot_sf_values(e, line_mask=line_mask, line_names=line_names, ax=ax2)
     red_bar = ax2.axvline(x=0, color='red', linewidth=2)
     
     ax1.set_title('Environment')
-    ax2.set_title('SF Values')
-    ax2.set_xlabel('Time Step')
-    ax2.set_ylabel('SF Value')
-    ax2.set_xlim(0, sf_values.shape[0] - 1)
-    ax2.set_ylim(sf_values.min(), sf_values.max())
 
     def update(frame):
         # Update left panel (environment image)
@@ -448,6 +515,7 @@ def make_sf_video(
         from IPython.display import HTML, display
         return display(HTML(video))
     return video
+
 ###################
 # Metrics
 ###################
@@ -662,4 +730,33 @@ def went_to_junction(episode_data, junction=(0, 11)):
     return match.any().astype(jnp.float32)  # if any matched
 
 
+def create_maps(episode_data_list: List[EpisodeData]):
+    maps = []
+    for episode_data in episode_data_list:
+        timesteps = episode_data.timesteps
 
+        # [T, H, W, 1]
+        # Assuming grid is 3D with time as first dimension
+        grid_shape = timesteps.state.grid.shape
+
+        # skip the time dimension and final channel dimension
+        grid = jnp.zeros(grid_shape[1:-1], dtype=jnp.int32)
+
+        # go through each position and set the corresponding index to 1
+        for pos in episode_data.positions:
+            grid = grid.at[pos[0], pos[1]].set(1)
+        maps.append(grid)
+    return np.array(maps)
+
+
+def overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
+    """map1: HxW, map2: HxW"""
+    """Calculate the overlap between two maps."""
+    nonzero_indices = np.argwhere(map1 > 0)
+    values_map1 = (map1[nonzero_indices[:, 0], nonzero_indices[:, 1]] > 0).astype(np.float32)
+    values_map2 = (map2[nonzero_indices[:, 0], nonzero_indices[:, 1]] > 0).astype(np.float32)
+
+    overlap = ((values_map1 + values_map2) > 1)[:final_t]
+    if final_t is not None:
+        overlap = overlap[-final_t:]
+    return overlap

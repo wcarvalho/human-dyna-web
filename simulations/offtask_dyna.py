@@ -768,7 +768,6 @@ class DynaAgentEnvModel(nn.Module):
     def __call__(self, rnn_state, x: TimeStep, rng: jax.random.PRNGKey) -> Tuple[Predictions, RnnState]:
 
         embedding = self.observation_encoder(x.observation)
-
         rnn_in = vbb.RNNInput(obs=embedding, reset=x.first())
         rng, _rng = jax.random.split(rng)
         new_rnn_state, rnn_out = self.rnn(rnn_state, rnn_in, _rng)
@@ -872,7 +871,7 @@ def make_agent(
         env_params: environment.EnvParams,
         example_timestep: TimeStep,
         rng: jax.random.PRNGKey,
-        model_env_params: environment.EnvParams,
+        model_env_params: Optional[environment.EnvParams] = None,
         ObsEncoderCls: nn.Module = KeyroomObsEncoder,
         ) -> Tuple[nn.Module, Params, vbb.AgentResetFn]:
 
@@ -893,7 +892,7 @@ def make_agent(
         observation_encoder=ObsEncoderCls(),
         rnn=rnn,
         env=env,
-        env_params=env_params,
+        env_params=model_env_params,
     )
 
     rng, _rng = jax.random.split(rng)

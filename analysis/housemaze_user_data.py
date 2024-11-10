@@ -370,12 +370,120 @@ def make_row(
     return row
 
 
+def compute_overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
+    """map1: HxW, map2: HxW"""
+    """Calculate the overlap between two maps."""
+    nonzero_indices = np.argwhere(map1 > 0)
+    values_map1 = (map1[nonzero_indices[:, 0],
+                   nonzero_indices[:, 1]] > 0).astype(np.float32)
+    values_map2 = (map2[nonzero_indices[:, 0],
+                   nonzero_indices[:, 1]] > 0).astype(np.float32)
+
+    overlap = ((values_map1 + values_map2) > 1)[:final_t]
+    if final_t is not None:
+        overlap = overlap[-final_t:]
+    return overlap
+
+
+def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
+    """Add a 'reuse' column to the DataFrame indicating whether each episode reused paths.
+    
+    TODO: move this function into make_episode_data at end. just once per user. then saved.c
+    Args:
+        df (DataFrame): Input DataFrame
+        manipulation (int, optional): Manipulation number. Defaults to 3.
+        mazes (List[str], optional): List of maze names. Defaults to None.
+        overlap_threshold (float, optional): Threshold for path reuse. Defaults to 0.15.
+    
+    Returns:
+        DataFrame: DataFrame with added 'reuse' column
+    """
+
+    # Create a dictionary to store reuse values
+    reuse_dict = {}
+
+    def update_reuse_dict(train_mazes, test_mazes):
+        # Get unique users
+
+        for train_maze, test_maze in zip(train_mazes, test_mazes):
+            # Get train episodes
+            train = df.filter(maze=train_maze, room=0, eval=False, success=1)
+
+            if len(train.episodes) == 0:
+                continue
+
+            # Create map for training episodes
+            train_map = create_maps(train.episodes).sum(0)
+
+            # Get test episodes
+            test = df.filter(maze=test_maze, eval=True)
+
+            # Process each test episode
+            for idx, row in enumerate(test._df.iter_rows(named=True)):
+                global_index = row['global_episode_idx']
+                episode = test.episodes[idx]
+                # Create map for single test episode
+                test_map = create_maps([episode]).sum(0)
+                overlap = compute_overlap(train_map, test_map)
+
+                # Store the reuse value
+                episode_id = (test_maze, global_index)
+                reuse_dict[episode_id] = overlap.mean() > overlap_threshold
+
+    # -----------------
+    # paths manipulation (3)
+    # -----------------
+    # Define mazes if not provided
+    # manipulation = 3
+    train_mazes = test_mazes = [
+        'big_m3_maze1_(F,F)',
+        'big_m3_maze1_(F,T)',
+        'big_m3_maze1_(T,F)',
+        'big_m3_maze1_(T,T)',
+    ]
+    update_reuse_dict(train_mazes, test_mazes)
+    # -----------------
+    # shortcut manipulation (1)
+    # -----------------
+    # Define mazes if not provided
+    # manipulation = 1
+    train_mazes = [
+        'big_m1_maze3_(F,F)',
+        'big_m1_maze3_(F,T)',
+        'big_m1_maze3_(T,F)',
+        'big_m1_maze3_(T,T)',
+    ]
+
+    test_mazes = [
+        'big_m1_maze3_shortcut_(F,F)',
+        'big_m1_maze3_shortcut_(F,T)',
+        'big_m1_maze3_shortcut_(T,F)',
+        'big_m1_maze3_shortcut_(T,T)',
+    ]
+    update_reuse_dict(train_mazes, test_mazes)
+
+    # -----------------
+    # add everything
+    # -----------------
+    # Create a new column with reuse values
+    reuse_values = pl.Series([
+        reuse_dict.get((row['maze'], row['global_episode_idx']), None)
+        for row in df.iter_rows(named=True)
+    ])
+    # Add the new column to the DataFrame
+    new_df = df.with_columns([
+        pl.Series("reuse", reuse_values).cast(pl.Boolean)
+    ])
+
+    return new_df
+
 def make_episode_data(
         file: str,
         example_timestep: multitask_env.TimeStep,
         debug: bool = False,
         overwrite_episode_data: bool = False,
         overwrite_episode_info: bool = False,
+        verbose: bool = False,
 ):
     """This groups all of the data by block/stage information and prepares 
         (1) a list of EpisodeData objects per block/stage
@@ -425,7 +533,8 @@ def make_episode_data(
 
     nbefore = len(data)
     data = [datum for datum in data if not filter_fn(datum)]
-    print(f"Filtered {nbefore-len(data)} data points")
+    if verbose:
+        print(f"Filtered {nbefore-len(data)} data points")
 
     #####################
     # separate data by block/stage
@@ -555,6 +664,30 @@ def make_episode_data(
         def first_rt(e: EpisodeData):
             return e.reaction_times[0]
 
+        def max_rt(e: EpisodeData):
+            return np.max(e.reaction_times[:-1])
+        
+        def max_post_rt(e: EpisodeData):
+            return np.max(e.reaction_times[1:-1])
+
+        def max_init_post_rt(e: EpisodeData):
+            n = len(e.reaction_times[:-1])//2 + 1 
+            try:
+                return np.max(e.reaction_times[1:n])
+            except:
+                import pdb; pdb.set_trace()
+                return np.nan
+
+        def max_final_rt(e: EpisodeData):
+            n = len(e.reaction_times[:-1])//2 + 1
+            return np.max(e.reaction_times[-n:-1])
+
+        def max_end_rt(e: EpisodeData):
+            return np.max(e.reaction_times[-11:-1])
+
+        def avg_post_rt(e: EpisodeData):
+            return np.mean(e.reaction_times[1:-1])
+
         def path_length(e: EpisodeData):
             return len(e.actions[:-1])
 
@@ -565,6 +698,12 @@ def make_episode_data(
             'first_rt': first_rt,
             'avg_rt': avg_rt,
             'total_rt': total_rt,
+            'avg_post_rt': avg_post_rt,
+            'max_rt': max_rt,
+            'max_post_rt': max_post_rt,
+            'max_init_post_rt': max_init_post_rt,
+            'max_end_rt': max_end_rt,
+            'max_final_rt': max_final_rt,
         }
         computed_values = {key: [] for key in measures}
 
@@ -577,6 +716,9 @@ def make_episode_data(
         episode_info = episode_info.with_columns([
             pl.Series(key, values) for key, values in computed_values.items()
         ])
+        _temp_df = DataFrame(episode_info, episode_data)
+        _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
+        episode_info = _temp_df._df
 
         episode_info.write_csv(episode_info_filename)
 
@@ -627,107 +769,6 @@ def create_maps(episode_data_list: List[EpisodeData]):
     return np.array(maps)
 
 
-
-def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
-    """Add a 'reuse' column to the DataFrame indicating whether each episode reused paths.
-    
-    Args:
-        df (DataFrame): Input DataFrame
-        manipulation (int, optional): Manipulation number. Defaults to 3.
-        mazes (List[str], optional): List of maze names. Defaults to None.
-        overlap_threshold (float, optional): Threshold for path reuse. Defaults to 0.15.
-    
-    Returns:
-        DataFrame: DataFrame with added 'reuse' column
-    """
-
-    # Create a dictionary to store reuse values
-    reuse_dict = {}
-
-    def update_reuse_dict(manipulation, train_mazes, test_mazes):
-        # Get unique users
-        users = df.filter(manipulation=manipulation)['user_id'].unique()
-
-        # Process each user's data
-        for user in users:
-            for train_maze, test_maze in zip(train_mazes, test_mazes):
-                # Get train episodes
-                train = df.filter(
-                    user=user, maze=train_maze, room=0, eval=False,
-                    episode_filter=lambda e: not success(e)
-                )
-
-                if len(train.episodes) == 0:
-                    continue
-
-                # Create map for training episodes
-                train_map = create_maps(train.episodes).sum(0)
-
-                # Get test episodes
-                test = df.filter(user=user, maze=test_maze, eval=True)
-
-                # Process each test episode
-                for idx, row in enumerate(test._df.iter_rows(named=True)):
-                    global_index = row['global_episode_idx']
-                    episode = test.episodes[idx]
-                    # Create map for single test episode
-                    test_map = create_maps([episode]).sum(0)
-                    overlap = overlap(train_map, test_map)
-
-                    # Store the reuse value
-                    episode_id = (user, test_maze, global_index)
-                    reuse_dict[episode_id] = overlap.mean() > overlap_threshold
-
-    # -----------------
-    # paths manipulation (3)
-    # -----------------
-    # Define mazes if not provided
-    manipulation = 3
-    train_mazes = test_mazes = [
-        'big_m3_maze1_(F,F)',
-        'big_m3_maze1_(F,T)',
-        'big_m3_maze1_(T,F)',
-        'big_m3_maze1_(T,T)',
-    ]
-    update_reuse_dict(manipulation, train_mazes, test_mazes)
-    # -----------------
-    # shortcut manipulation (1)
-    # -----------------
-    # Define mazes if not provided
-    manipulation = 1
-    train_mazes = [
-        'big_m1_maze3_(F,F)',
-        'big_m1_maze3_(F,T)',
-        'big_m1_maze3_(T,F)',
-        'big_m1_maze3_(T,T)',
-    ]
-
-    test_mazes = [
-        'big_m1_maze3_shortcut_(F,F)',
-        'big_m1_maze3_shortcut_(F,T)',
-        'big_m1_maze3_shortcut_(T,F)',
-        'big_m1_maze3_shortcut_(T,T)',
-    ]
-    update_reuse_dict(manipulation, train_mazes, test_mazes)
-
-    # -----------------
-    # add everything
-    # -----------------
-    # Create a new column with reuse values
-    reuse_values = pl.Series([
-        reuse_dict.get((row['user_id'], row['maze'],
-                       row['global_episode_idx']), None)
-        for row in df.iter_rows(named=True)
-    ])
-
-    # Add the new column to the DataFrame
-    new_df = df.with_columns([
-        pl.Series("reuse", reuse_values)
-    ])
-
-    return new_df
-
-
 def get_human_data(
         valid_files,
         overwrite_episode_data=False,
@@ -766,7 +807,7 @@ def get_human_data(
       return remove
 
   initial_user_df = initial_user_df.filter(episode_filter=bad_episode)
-  initial_user_df = add_reuse_columns(initial_user_df)
+
   return initial_user_df
 
 if __name__ == "__main__":

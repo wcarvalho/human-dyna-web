@@ -235,9 +235,7 @@ def get_dynaq_fns(
   return AlgorithmConstructor(
     make_agent=functools.partial(
         offtask_dyna.make_agent,
-        ObsEncoderCls=HouzemazeObsEncoder,
-        model_env_params=env_params.replace(
-            p_test_sample_train=jnp.array(0))),
+        ObsEncoderCls=HouzemazeObsEncoder),
     make_optimizer=offtask_dyna.make_optimizer,
     make_loss_fn_class=functools.partial(
         offtask_dyna.make_loss_fn_class,

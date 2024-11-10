@@ -21,12 +21,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from absl import logging
 
+from jaxneurorl.agents import value_based_basics as vbb
 from housemaze import utils
 from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import mazes
+
 from nicewebrl import nicejax
 from nicewebrl.dataframe import DataFrame
-from jaxneurorl.agents import value_based_basics as vbb
+
 
 class EpisodeData(NamedTuple):
     actions: jax.Array
@@ -265,7 +267,7 @@ def time_diff(t1, t2) -> float:
     time_difference = t2 - t1
 
     # Convert the time difference to milliseconds
-    return time_difference.total_seconds() * 1000
+    return time_difference.total_seconds()
 
 def compute_reaction_time(datum) -> float:
     # Calculate the time difference
@@ -287,7 +289,6 @@ def dict_to_string(data):
 
     # Join all pairs with ", " separator
     return ", ".join(pairs)
-
 
 def get_block_stage_description(datum):
     ####################
@@ -343,7 +344,6 @@ def separate_data_by_block_stage(data: List[dict]):
         infos[updated_key] = info
     return grouped_data, infos
 
-
 def make_row(
         datum: dict,
         timesteps: multitask_env.TimeStep,
@@ -387,7 +387,7 @@ def make_row(
         new_vals['exp_name'] = new_vals.pop('name')
     row.update(new_vals)
 
-    name = new_vals.get('name')
+    name = new_vals.get('exp_name')
     if name is not None:
         # example 'exp4-v1-r1-t0-plan'
         # split on '-' and take the first element
@@ -402,7 +402,6 @@ def make_row(
             if k in name:
                 name_info[v] = name.split(k)[1].split('-')[0]
         row.update(name_info)
-
     # Convert all numeric strings to integers
     for key, value in row.items():
         if isinstance(value, str) and value.isdigit():
@@ -474,32 +473,53 @@ def make_episode_data(
     #####################
     # Load or create episode_data
     #####################
+    episode_data = None
     if os.path.exists(episode_data_filename) and not overwrite_episode_data:
-        with open(episode_data_filename, 'rb') as f:
-            episode_data = pickle.load(f)
-    else:
+        try:
+            with open(episode_data_filename, 'rb') as f:
+                    episode_data = pickle.load(f)
+        except Exception as e:
+            logging.warning(f"Error loading episode_data from {episode_data_filename}: {e}")
+            episode_data = None
+    
+    if not episode_data:
         episode_data = [None] * len(gds.keys())
         for key in tqdm(gds.keys(), desc="Processing episodes"):
             red = raw_episode_data = gds[key]
             actions = jnp.asarray([datum['data']['action_idx'] for datum in red])
             timesteps = [get_timestep(datum, example_timestep) for datum in red]
             timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+
             expected_step_num = jnp.arange(len(timesteps.state.step_num))
             correct = jnp.all(timesteps.state.step_num == expected_step_num)
             if not correct:
-                raise RuntimeError(f"Episode {key} has faulty step indices: {timesteps.state.step_num}")
+                # Get sorting indices
+                sort_indices = jnp.argsort(timesteps.state.step_num)
+                
+                # Check if sorting fixes the sequence
+                sorted_steps = timesteps.state.step_num[sort_indices]
+                if jnp.all(sorted_steps == expected_step_num):
+                    # Fix the ordering of all relevant data
+                    actions = actions[sort_indices]
+                    timesteps = jtu.tree_map(
+                        lambda x: x[sort_indices] if isinstance(x, (jnp.ndarray, np.ndarray)) else x,
+                        timesteps
+                    )
+                    logging.info(f"{user_filename}: Fixed step indices for episode {key} through sorting")
+                else:
+                    logging.warning(f"{user_filename}: Skipping episode {key} due to invalid step indices that cannot be fixed")
+                    raise RuntimeError(
+                        f"{user_filename}: episode {key} has faulty step indices: {timesteps.state.step_num}")
             positions = timesteps.state.agent_pos
-            reaction_times = [compute_reaction_time(datum) for datum in red]
-            reaction_times = jnp.asarray(reaction_times)
             episode_idx = gd_infos[key]['user_episode_idx']
             episode_data[episode_idx] = EpisodeData(
                 actions=actions,
                 positions=positions,
-                reaction_times=reaction_times,
                 timesteps=timesteps,
             )
         with open(episode_data_filename, 'wb') as f:
             pickle.dump(episode_data, f)
+
 
     #####################
     # Load or create episode_info
@@ -507,6 +527,9 @@ def make_episode_data(
     if os.path.exists(episode_info_filename) and not overwrite_episode_info:
         episode_info = pl.read_csv(episode_info_filename)
     else:
+        # --------------
+        # first make df with raw data from file
+        # --------------
         episode_info = [None] * len(gds.keys())
         for key in gds.keys():
             raw_episode_data = gds[key]
@@ -518,11 +541,69 @@ def make_episode_data(
                 timesteps=timesteps,
                 file=file,
             )
+
+            reaction_times=[compute_reaction_time(datum) for datum in raw_episode_data]
+            reaction_times=jnp.asarray(reaction_times)
+
+            episode_data[episode_idx] = episode_data[episode_idx]._replace(
+                reaction_times=reaction_times,
+            )
+
         episode_info = pl.DataFrame(episode_info)
+        # --------------
+        # next, augment df with success, termination, first_rt, avg_rt, total_rt
+        # --------------
+        def success(e: EpisodeData):
+            rewards = e.timesteps.reward
+            # return rewards
+            assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
+            success = rewards > .5
+            return success.any().astype(np.float32)
+
+
+        def features_achieved(e):
+            features = e.timesteps.state.task_state.features
+            achieved = features.sum(-1) > 0
+            return achieved.any().astype(np.float32)
+
+        def terminated(e):
+            return features_achieved(e)
+
+        def total_rt(e: EpisodeData):
+            return np.sum(e.reaction_times[:-1])
+
+        def avg_rt(e: EpisodeData):
+            return np.mean(e.reaction_times[:-1])
+
+        def first_rt(e: EpisodeData):
+            return e.reaction_times[0]
+
+        def path_length(e: EpisodeData):
+            return len(e.actions[:-1])
+
+        measures = {
+            'success': success,
+            'path_length': path_length,
+            'termination': terminated,
+            'first_rt': first_rt,
+            'avg_rt': avg_rt,
+            'total_rt': total_rt,
+        }
+        computed_values = {key: [] for key in measures}
+
+        # Calculate values for each episode
+        for episode in episode_data:
+            for key, fn in measures.items():
+                computed_values[key].append(fn(episode))
+
+        # Create a new DataFrame with the additional columns
+        episode_info = episode_info.with_columns([
+            pl.Series(key, values) for key, values in computed_values.items()
+        ])
+
         episode_info.write_csv(episode_info_filename)
 
     return episode_info, episode_data
-
 
 def make_all_episode_data(files, example_timestep, debug=False, overwrite_episode_data=False, overwrite_episode_info=False):
     def process_file(file):
@@ -538,7 +619,7 @@ def make_all_episode_data(files, example_timestep, debug=False, overwrite_episod
     all_episode_data = []
     episode_df_list = []
 
-    for episode_df, episode_data in results:
+    for episode_df, episode_data in tqdm(results, desc="Combining results", total=len(files)):
         if episode_df is not None and episode_data is not None:
             all_episode_data.extend(episode_data)
             episode_df_list.append(episode_df)
@@ -546,7 +627,6 @@ def make_all_episode_data(files, example_timestep, debug=False, overwrite_episod
     episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
 
     return DataFrame(episode_df, all_episode_data)
-
 
 def read_dict_list_from_file(filename: str):
     dictionaries = []
@@ -612,7 +692,6 @@ def compute_experiment_lengths(files, plot: bool = False, condition_name: str = 
 
     return experiment_lengths
 
-
 def get_valid_files(searches, plot: bool = False, verbose: bool = False):
     all_valid_files = {}
 
@@ -650,4 +729,3 @@ def get_valid_files(searches, plot: bool = False, verbose: bool = False):
         all_valid_files_list.extend(condition_files)
     
     return all_valid_files_list
-

@@ -12,11 +12,6 @@ import numpy as np
 import polars as pl
 import pickle
 import os
-import msgpack
-from jax.tree_util import tree_map
-import jax.tree_util as jtu
-from typing import Any
-import base64
 from flax import serialization
 
 from jaxneurorl.agents import value_based_basics as vbb
@@ -26,8 +21,7 @@ from housemaze.human_dyna import web_env
 from housemaze.human_dyna import mazes
 from housemaze.human_dyna import experiments as housemaze_experiments
 
-from nicewebrl.dataframe import DataFrame
-from nicewebrl import nicejax
+from nicewebrl.dataframe import DataFrame, concat_list
 
 # for tqdm both in notebook and terminal
 try:
@@ -97,10 +91,8 @@ def make_env_params(maze_str):
   )
 
 
-def load_env_and_example_timestep(num_categories: int = 200):
+def load_env(num_categories: int = 200):
 
-  dummy_env_params = make_env_params(mazes.big_practice_maze)
-  dummy_rng = jax.random.PRNGKey(42)
   task_runner = multitask_env.TaskRunner(
       task_objects=task_objects)
   base_env = web_env.HouseMaze(
@@ -108,8 +100,7 @@ def load_env_and_example_timestep(num_categories: int = 200):
       num_categories=num_categories,
   )
   env = utils.AutoResetWrapper(base_env)
-  example_timestep = env.reset(dummy_rng, dummy_env_params)
-  return env, example_timestep
+  return env
 
 
 def get_in_episode(timestep):
@@ -328,7 +319,8 @@ def get_algorithm_data(
   ##############################
   if all_episodes is None:
     all_episodes = []
-    for maze_name in tqdm(maze_names, desc="Generating maze episodes"):
+    for maze_name in tqdm(maze_names,
+                          desc=f"{algorithm.name}: Generating maze episodes"):
       env_params = make_env_params(getattr(mazes, maze_name))
       for task in tasks:
 
@@ -338,7 +330,11 @@ def get_algorithm_data(
 
           # Split episodes
           for i in range(nepisodes):
-              all_episodes.append(jax.tree.map(lambda x: x[i], episodes))
+              # minimize space requirements
+              episode = jax.tree.map(lambda x: x[i], episodes)
+              in_episode = get_in_episode(episode.timesteps)
+              episode = jax.tree.map(lambda x: x[in_episode], episode)
+              all_episodes.append(episode)
 
     # Save serialized data
     with open(timesteps_filename, 'wb') as f:
@@ -355,11 +351,19 @@ def get_algorithm_data(
   ##############################
   # If no DataFrame, compute metrics
   ##############################
+
+  def went_to_junction(episode_data, junction=(0, 11)):
+      positions = episode_data.timesteps.state.agent_pos
+      match = jnp.array(junction) == positions
+      match = (match).sum(-1) == 2  # both x and y matches
+      return int(match.any())
+
   if df is None:
     # Calculate number of episodes per task/maze combination
     all_info = []
     episode_idx = 0
-    for maze_name in tqdm(maze_names, desc="Generating maze information"):
+    for maze_name in tqdm(maze_names,
+                          desc=f"{algorithm.name}: Generating maze information"):
       nepisodes = len(all_episodes) // len(label2name)
       for _ in range(nepisodes):
         episode = all_episodes[episode_idx]
@@ -377,7 +381,12 @@ def get_algorithm_data(
             manipulation=maze_to_manipulation.get(maze_name),
             **extra_info,
         )
-
+        if maze_name == 'big_m1_maze3_shortcut':
+          info['reuse'] = int(went_to_junction(episode, (2, 14)))
+        elif maze_name == 'big_m3_maze1':
+          info['reuse'] = int(went_to_junction(episode, (14, 25)))
+        else:
+          info['reuse'] = 2  # neither
         all_info.append(info)
         episode_idx += 1
 
@@ -390,7 +399,7 @@ def get_algorithm_data(
 def get_qlearning_data(
         paths: str,
         num_episodes: int = 25,
-        max_steps: int = 600,
+        max_steps: int = 200,
         overwrite_episodes: bool = False,
         overwrite_df: bool = False):
   from simulations.networks import CategoricalHouzemazeObsEncoder
@@ -401,7 +410,7 @@ def get_qlearning_data(
      raise ValueError(f"No paths found for {paths_str}")
 
   # Create environment once outside the loop
-  env, _ = load_env_and_example_timestep()
+  env = load_env()
   dummy_env_params = make_env_params(mazes.big_practice_maze)
   model_df_list = []
   model_episodes_list = []
@@ -457,7 +466,7 @@ def get_qlearning_data(
 def get_usfa_data(
         paths: str,
         num_episodes: int = 25,
-        max_steps: int = 400,
+        max_steps: int = 200,
         overwrite_episodes: bool = False,
         overwrite_df: bool = False,
         vis_coeff=0.1,
@@ -549,7 +558,7 @@ def get_usfa_data(
 def get_dyna_data(
         paths: str,
         num_episodes: int = 25,
-        max_steps: int = 300,
+        max_steps: int =200,
         overwrite_episodes: bool = False,
         overwrite_df: bool = False,
         **kwargs):
@@ -566,7 +575,7 @@ def get_dyna_data(
      raise ValueError(f"No paths found for {paths_str}")
 
   # Create environment once outside the loop
-  env, _ = load_env_and_example_timestep()
+  env = load_env()
   dummy_env_params = make_env_params(mazes.big_practice_maze)
   model_df_list = []
   model_episodes_list = []
@@ -624,7 +633,7 @@ def get_dyna_data(
 ###################
 
 def actions_from_search(env_params, rng, task, algo, budget):
-    map_init = jax.tree_map(lambda x: x[0], env_params.reset_params.map_init)
+    map_init = jax.tree.map(lambda x: x[0], env_params.reset_params.map_init)
     grid = np.asarray(map_init.grid)
     agent_pos = tuple(int(o) for o in map_init.agent_pos)
     goal = np.array([task])
@@ -658,9 +667,9 @@ def collect_search_episodes(
         struct.PyTree: [T+1, ...]
     """
     def concat_pytrees(tree1, tree2, **kwargs):
-        return jax.tree_map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
+        return jax.tree.map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
 
-    def add_time(v): return jax.tree_map(lambda x: x[None], v)
+    def add_time(v): return jax.tree.map(lambda x: x[None], v)
     return concat_pytrees(add_time(first), rest)
 
   @jax.jit
@@ -675,8 +684,8 @@ def collect_search_episodes(
     init_timestep = env.reset(rng, env_params)
     initial_carry = (rng, init_timestep)
     (rng, _), timesteps = jax.lax.scan(step_fn, initial_carry, actions)
-    init_timestep = jax.tree_map(jnp.asarray, init_timestep)
-    timesteps = jax.tree_map(jnp.asarray, timesteps)
+    init_timestep = jax.tree.map(jnp.asarray, init_timestep)
+    timesteps = jax.tree.map(jnp.asarray, timesteps)
     return concat_first_rest(init_timestep, timesteps)
   #######################
   # first get actions from n different runs
@@ -685,7 +694,7 @@ def collect_search_episodes(
   rngs = jax.random.split(rng, n)
 
   # First, get all actions
-  for idx in range(n):
+  for idx in tqdm(range(n), f'{algorithm}: planning'):
       actions = actions_from_search(
           env_params, rngs[idx], task,
           algo=getattr(utils, algorithm),
@@ -724,7 +733,7 @@ def get_bfs_dfs_data(
     num_episodes: int = 100,
     **kwargs,
 ):
-  env, _ = load_env_and_example_timestep()
+  env = load_env()
 
   model_df_list = []
   model_episodes_list = []
@@ -747,7 +756,9 @@ def get_bfs_dfs_data(
           algorithm = Algorithm(
             config={},
             name=algorithm,
-            eval_fn=eval_fn),
+            eval_fn=eval_fn,
+            path=path,
+          ),
           overwrite_episodes=overwrite_episodes,
           overwrite_df=overwrite_df,
           data_task_runner=task_runner,
@@ -761,36 +772,111 @@ def get_bfs_dfs_data(
       episodes=model_episodes_list,
   )
 
-if __name__ == "__main__":
-    data_dir = '/Users/wilka/git/research/results/human_dyna'
 
+def get_model_data(
+    qlearning_path: str,
+    sf_path: str,
+    dyna_path: str,
+    search_path: str,
+    overwrite_episodes: bool = False,
+    overwrite_df: bool = False,
+    cache_dir: str = None,
+):
+    """Load and process data from different model types.
+    
+    NOTE: here, we use pickle since different models use different EpisodeData structures
+      internal function deserialize in a more portable way with 
+      flax.serialization.from_bytes
+
+    Args:
+        qlearning_path: Path to Q-learning model data
+        sf_path: Path to Successor Features model data  
+        dyna_path: Path to Dyna model data
+        search_path: Path to search algorithms data
+        overwrite_episodes: If True, regenerate episode data even if it exists
+        overwrite_df: If True, regenerate DataFrame even if it exists
+    
+    Returns:
+        DataFrame containing combined model data
+    """
+    # Create cache filenames based on the paths
+    cache_dir = cache_dir or os.path.dirname(qlearning_path)
+    cache_base = os.path.join(cache_dir, "model_data_cache")
+    df_cache_path = f"{cache_base}_df.csv"
+    episodes_cache_path = f"{cache_base}_episodes.pickle"
+
+    # Try to load cached data if not overwriting
+    if not (overwrite_episodes or overwrite_df) and os.path.exists(df_cache_path) and os.path.exists(episodes_cache_path):
+        try:
+            df = pl.read_csv(df_cache_path)
+            with open(episodes_cache_path, 'rb') as f:
+                episodes = pickle.load(f)
+            return DataFrame(df=df, episodes=episodes)
+        except Exception as e:
+            print(f"Error loading cached model data: {e}")
+
+    # If we need to regenerate the data:
     ##############################
     # Q-learning
     ##############################
-    path = f'ql/save_data/ql-big-2/tota=40000000,exp=exp2'
-    paths = f'{data_dir}/model_data/{path}/seed=*'
-    qlearning_df = get_qlearning_data(paths, overwrite_episodes=True, overwrite_df=True)
+    qlearning_df = get_qlearning_data(
+        qlearning_path,
+        overwrite_episodes=overwrite_episodes,
+        overwrite_df=overwrite_df)
 
     ##############################
     # Successor Features
     ##############################
-    path = f'usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2'
-    paths = f'{data_dir}/model_data/{path}/seed=*'
-    sf_df = get_usfa_data(paths, overwrite_episodes=True, overwrite_df=True)
+    sf_df = get_usfa_data(
+        sf_path,
+        overwrite_episodes=overwrite_episodes,
+        overwrite_df=overwrite_df)
 
     ##############################
     # Multitask Preplay/Off-task Dyna
     ##############################
-    path = f'dynaq_shared/save_data/dynaq-big-4/alg=dynaq_shared,agen=256,tota=100000000,exp=exp2'
-    paths = f'{data_dir}/model_data/{path}/seed=*'
-    dyna_df = get_dyna_data(paths, overwrite_episodes=True, overwrite_df=True)
+    dyna_df = get_dyna_data(
+        dyna_path,
+        overwrite_episodes=overwrite_episodes,
+        overwrite_df=overwrite_df,
+        )
 
     ##############################
     # Breadth-first search and Depth-first search
     ##############################
     search_df = get_bfs_dfs_data(
-        path=f'{data_dir}/search_algos',
-        overwrite_episodes=True,
-        overwrite_df=True,
+        path=search_path,
+        overwrite_episodes=overwrite_episodes,
+        overwrite_df=overwrite_df,
         num_episodes=100,
+    )
+
+    model_df = concat_list(
+        qlearning_df,
+        sf_df,
+        dyna_df,
+        search_df)
+    
+    # Cache the results
+    os.makedirs(os.path.dirname(cache_base), exist_ok=True)
+    model_df._df.write_csv(df_cache_path)
+    with open(episodes_cache_path, 'wb') as f:
+        pickle.dump(model_df.episodes, f)
+        print(f"Cached model data to {episodes_cache_path}")
+
+    return model_df
+
+
+
+
+if __name__ == "__main__":
+    data_dir = '/Users/wilka/git/research/results/human_dyna'
+    get_model_data(
+       qlearning_path=f'{data_dir}/model_data/ql/save_data/ql-big-2/tota=40000000,exp=exp2/seed=*',
+       sf_path=f'{data_dir}/model_data/usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2/seed=*',
+       dyna_path=f'{data_dir}/model_data/dynaq_shared/save_data/dynaq-big-4/alg=dynaq_shared,agen=256,tota=100000000,exp=exp2/seed=*',
+       search_path=f'{data_dir}/search_algos',  
+       overwrite_episodes=True,
+       overwrite_df=True,
+       cache_dir=f'{data_dir}/model_data/cache',
     )

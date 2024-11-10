@@ -197,7 +197,7 @@ class CategoricalHouzemazeObsEncoder(nn.Module):
     - observation encoder: CNN over binary inputs
     - MLP with truncated-normal-initialized Linear layer as initial layer for other inputs
     """
-    num_categories: int
+    num_categories: int = 10000
     include_task: bool = True
     embed_hidden_dim: int = 64
     mlp_hidden_dim: int = 256
