@@ -65,6 +65,7 @@ model_names = {
     'human_success': 'Human (Succeeded)',
     'qlearning': 'Q-learning',
     'usfa': 'Successor features',
+    'dyna': 'Dyna',
     'dynaq_shared': 'Multi-task preplay',
     'bfs': 'Breadth-first search',
     'dfs': 'Depth-first search',
@@ -75,6 +76,7 @@ model_order = [
     'human_success',
     'human_terminate',
     'usfa',
+    'dyna',
     'dynaq_shared',
     'qlearning',
     'bfs',
@@ -290,8 +292,8 @@ def render_paths(episode_list, render_both: bool=False, colors=None, from_model=
     
     render_both = render_both and len(episode_list) > 1
     if render_both:
-       state_1 = jax.tree_map(lambda x: x[0], episode_list[1].timesteps.state)
-       positions = [state_0.agent_pos, state_1.agent_pos]
+       positions = [jax.tree_map(lambda x: x[0], ep.timesteps.state).agent_pos 
+                   for ep in episode_list]
     else:
        positions = [state_0.agent_pos]
     img = renderer.create_image_from_grid(
@@ -665,9 +667,8 @@ def plot_bar_rt_comparison_columns(
 
 
 def plot_rt_condition_differences(
-    df: DataFrame,
-    cond1_settings: dict,
-    cond2_settings: dict,
+    cond1_df: DataFrame,
+    cond2_df: DataFrame,
     rt_columns: List[str],
     filter_columns: List[str] = None,
     ax=None,
@@ -678,6 +679,7 @@ def plot_rt_condition_differences(
     remove_outliers: bool = True,
     outlier_threshold: float = 1.5,
     stats_file=None,
+    verbosity: int = 1,
 ):
     """Plot reaction time differences between two conditions for multiple RT measures.
     
@@ -706,18 +708,20 @@ def plot_rt_condition_differences(
     if colors is None:
         colors = default_colors.values()
 
-    # Get data for each condition
-    cond1_df = df.filter(**cond1_settings)
-    cond2_df = df.filter(**cond2_settings)
-    
     # Get common users between conditions
     users = set(cond1_df['user_id'].unique()) & set(cond2_df['user_id'].unique())
     
+    ##################
+    # Create a new dataframe with following columns:
+    # user_id, rt_col, log_rt, raw_rt
+    ##################
     # Dictionary to store valid differences for each RT column
     all_diffs = {}
+    all_raw_diffs = {}  # New dictionary for raw differences
     
     for rt_col in set(rt_columns + (filter_columns or [])):
         valid_diffs = []
+        valid_raw_diffs = []  # New list for raw differences
         valid_users = []
 
         for user in users:
@@ -727,77 +731,110 @@ def plot_rt_condition_differences(
             mazes1 = sorted(user_cond1['maze'].unique())
             mazes2 = sorted(user_cond2['maze'].unique())
             
+            #import pdb; pdb.set_trace()
+            def strip_version(s):
+                return s.split('_(')[1]
             for maze1, maze2 in zip(mazes1, mazes2):
+                s1 = strip_version(maze1)
+                s2 = strip_version(maze2) 
+                assert s1 == s2, f"{s1} != {s2}"
                 maze_cond1 = user_cond1.filter(maze=maze1)
                 maze_cond2 = user_cond2.filter(maze=maze2)
-                
+
                 if len(maze_cond1) == 0 or len(maze_cond2) == 0:
                     continue
                     
-                # Calculate log RTs for this maze/condition pair
-                rt1 = np.log(maze_cond1[rt_col].to_numpy())
-                rt2 = np.log(maze_cond2[rt_col].to_numpy())
+                # Calculate raw RTs for this maze/condition pair
+                rt1 = maze_cond1[rt_col].to_numpy()
+                rt2 = maze_cond2[rt_col].to_numpy()
+                assert len(rt1) == len(rt2) == 1
                 
                 # Calculate mean for each condition
                 mean1 = np.mean(rt1)
                 mean2 = np.mean(rt2)
-                diff = mean2 - mean1
+                raw_diff = mean2 - mean1
                 
-                valid_diffs.append(diff)
+                # Calculate log differences
+                log_rt1 = np.log(100*rt1)
+                log_rt2 = np.log(100*rt2)
+                log_mean1 = np.mean(log_rt1)
+                log_mean2 = np.mean(log_rt2)
+                log_diff = log_mean2 - log_mean1
+                
+                valid_diffs.append(log_diff)
+                valid_raw_diffs.append(raw_diff)
                 valid_users.append(user)
-        
+
         all_diffs[rt_col] = (np.array(valid_diffs), valid_users)
+        all_raw_diffs[rt_col] = (np.array(valid_raw_diffs), valid_users)
     
-    # Apply outlier detection if requested
+    # Apply outlier detection if requested using raw values
     if remove_outliers:
         shared_mask = np.ones(len(valid_users), dtype=bool)
         
         # Only use specified filter columns for outlier detection
         for rt_col in filter_columns or []:
-            diffs, users = all_diffs[rt_col]
-            q1 = np.percentile(diffs, 25)
-            q3 = np.percentile(diffs, 75)
+            raw_diffs, users = all_diffs[rt_col]  # Use raw diffs for outlier detection
+            q1 = np.percentile(raw_diffs, 25)
+            q3 = np.percentile(raw_diffs, 75)
             iqr = q3 - q1
             lower_bound = q1 - outlier_threshold * iqr
             upper_bound = q3 + outlier_threshold * iqr
             
-            col_mask = (diffs >= lower_bound) & (diffs <= upper_bound)
+            col_mask = (raw_diffs >= lower_bound) & (raw_diffs <= upper_bound)
             shared_mask &= col_mask
 
             # Print outlier information
-            if not col_mask.all():
+            if not col_mask.all() and verbosity > 1:
                 print(f"\nOutliers identified for {rt_col}:")
                 print(f"Bounds: {lower_bound:.3f} to {upper_bound:.3f}")
-                for i, (diff, user) in enumerate(zip(diffs, users)):
+                for i, (diff, user) in enumerate(zip(raw_diffs, users)):
                     if not col_mask[i]:
-                        print(f"User {user}, Maze diff: {diff:.3f}")
+                        print(f"User {user}, Raw RT diff: {diff:.3f}")
 
-        if not shared_mask.all():
-            print(f"\nTotal measurements removed: {(~shared_mask).sum()}")
-            
-        # Apply mask to all RT columns
+        if not shared_mask.all() and verbosity > 0:
+            print(f"\nTotal measurements removed: {(~shared_mask).sum()}/{len(shared_mask)} ({(~shared_mask).sum()/len(shared_mask)*100:.1f}%)")
+
+        # Apply mask to both log and raw RT columns
         for rt_col in rt_columns:
             diffs, users = all_diffs[rt_col]
+            raw_diffs, _ = all_raw_diffs[rt_col]
             all_diffs[rt_col] = (diffs[shared_mask], np.array(users)[shared_mask])
+            all_raw_diffs[rt_col] = (raw_diffs[shared_mask], np.array(users)[shared_mask])
 
     # Calculate statistics and create plot
     means = []
     sems = []
     all_plot_diffs = []
-    
-    for rt_col in rt_columns:
-        diffs, _ = all_diffs[rt_col]
-        analyze_rt_differences(
-            diffs, rt_col, stats_file=stats_file)
-        all_plot_diffs.append(diffs)
-        means.append(np.mean(diffs))
-        sems.append(np.std(diffs) / np.sqrt(len(diffs)))
 
+    for rt_col in rt_columns:
+        diffs, users = all_diffs[rt_col]
+        # Create DataFrame with user IDs and differences
+        user_df = pl.DataFrame({
+            'user_id': users,
+            'diff': diffs
+        })
+        # Compute mean per user
+        user_means = user_df.group_by('user_id').agg(
+            pl.col('diff').mean()
+        ).select('diff')
+
+        analyze_rt_differences(
+            user_means.to_numpy().flatten(), rt_col, stats_file=stats_file)
+
+        # Get array of user means
+        user_mean_diffs = user_means.to_numpy().flatten()
+        all_plot_diffs.append(user_mean_diffs)
+
+        # Compute grand mean and SE across users
+        means.append(np.mean(user_mean_diffs))
+        sems.append(np.std(user_mean_diffs) / np.sqrt(len(user_mean_diffs)))
     # Create/get axis
     if ax is None:
         fig, ax = plt.subplots(figsize=(5, 4))
     else:
         fig = ax.figure
+    
 
     # Create bar plot
     x_pos = np.arange(len(rt_columns))
@@ -824,7 +861,7 @@ def plot_rt_condition_differences(
     all_data = np.concatenate(all_plot_diffs)
     y_min, y_max = np.percentile(all_data, [1, 99])
     y_range = y_max - y_min
-    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+    ax.set_ylim(y_min-0.1*y_range, y_max+0.1*y_range)
 
     return fig, ax
 
@@ -972,7 +1009,6 @@ def analyze_proportion_test(data, mu=0.5, alpha=0.05, plot=False, stats_file=Non
 
     return results
 
-
 def power_analysis_between_groups(data1, data2, alpha=0.05, power=0.8, stats_file=None):
     """Perform power analysis for between-groups comparison and calculate required sample size.
     
@@ -1104,7 +1140,6 @@ def power_analysis_between_groups(data1, data2, alpha=0.05, power=0.8, stats_fil
 
     return results
 
-
 def analyze_rt_differences(differences, rt_col, alpha=0.05, stats_file=None):
     """Analyze RT differences between conditions with appropriate statistical tests.
     
@@ -1150,24 +1185,78 @@ def analyze_rt_differences(differences, rt_col, alpha=0.05, stats_file=None):
         test_name = "Paired t-test"
         test_stat = t_stat
 
+        # Power analysis for paired t-test
+        analysis = TTestPower()
+        actual_power = analysis.power(
+            effect_size=abs(d),
+            nobs=n,
+            alpha=alpha,
+            alternative='larger'
+        )
+
+        # Calculate required sample sizes for different power levels
+        power_levels = [0.8, 0.9, 0.95]
+        required_n = {}
+        for power in power_levels:
+            n_required = analysis.solve_power(
+                effect_size=abs(d),
+                alpha=alpha,
+                power=power,
+                alternative='larger'
+            )
+            required_n[power] = ceil(n_required)
+
     else:
         # One-sided Wilcoxon signed-rank test
         w_stat, p_value = stats.wilcoxon(differences, alternative='greater')
-
-        # Calculate r effect size for Wilcoxon test
-        z = stats.zscore(differences)
-        r = np.abs(np.mean(z)) / np.sqrt(n)
-        effect_size = {'name': 'r', 'value': r}
-
         test_name = "Wilcoxon signed-rank test"
         test_stat = w_stat
+
+        # Calculate r effect size for Wilcoxon test
+        # Convert p-value to z-score using inverse normal CDF
+        z = stats.norm.ppf(1 - p_value)  # One-sided p-value
+        r = z / np.sqrt(n)  # Standardize by sample size
+        effect_size = {'name': 'r', 'value': r}
+
+        # Convert r to d for power analysis
+        # Formula: d = 2r/sqrt(1-r^2)
+        d = 2 * r / sqrt(1 - r**2) if abs(r) < 1 else float('inf')
+
+        # Power analysis using t-test as approximation (with 95% efficiency adjustment)
+        analysis = TTestPower()
+        actual_power = analysis.power(
+            effect_size=abs(d),
+            nobs=n,
+            alpha=alpha,
+            alternative='larger'
+        ) * 0.95  # Adjust for Wilcoxon efficiency
+
+        # Calculate required sample sizes for different power levels
+        power_levels = [0.8, 0.9, 0.95]
+        required_n = {}
+        for power in power_levels:
+            n_required = analysis.solve_power(
+                effect_size=abs(d),
+                alpha=alpha,
+                power=power,
+                alternative='larger'
+            )
+            # Adjust for Wilcoxon efficiency
+            required_n[power] = ceil(n_required / 0.95)
 
     if stats_file:
         stats_file.write(f"{test_name}:\n")
         stats_file.write(f"statistic = {test_stat:.3f}\n")
         stats_file.write(f"p = {p_value:.3f}\n\n")
         stats_file.write(f"Effect Size ({effect_size['name']}):\n")
-        stats_file.write(f"{effect_size['value']:.3f}\n")
+        stats_file.write(f"{effect_size['value']:.3f}\n\n")
+        
+        # Add power analysis results
+        stats_file.write("Power Analysis:\n")
+        stats_file.write(f"Achieved power with current N={n}: {actual_power:.3f}\n")
+        stats_file.write("Required sample sizes:\n")
+        for power, n_req in required_n.items():
+            stats_file.write(f"  {power*100:g}% power: N ≥ {n_req}\n")
         stats_file.write("\n" + "="*50 + "\n")
 
     return {
@@ -1176,27 +1265,16 @@ def analyze_rt_differences(differences, rt_col, alpha=0.05, stats_file=None):
         'se': se,
         'normality': {'is_normal': is_normal, 'p_value': normality_p},
         'test': {'name': test_name, 'statistic': test_stat, 'p_value': p_value},
-        'effect_size': effect_size
+        'effect_size': effect_size,
+        'power_analysis': {
+            'actual_power': actual_power,
+            'required_n': required_n
+        }
     }
 
 ######################################
 # Model Analysis
 ######################################
-
-def episode_q_values(e, reduce: bool = False):
-    actions = e.actions
-    preds = e.transitions.extras['preds']
-    q_values = preds.q_vals  # [T, A]
-    actions = e.actions  # [T]
-
-    if reduce:
-      q_values = jnp.take_along_axis(q_values, actions[:, None], axis=-1)  # [T, 1]
-      q_values = jnp.squeeze(q_values, axis=-1)  # [T]
-
-    in_episode = get_in_episode(e.timesteps)
-    q_values = q_values[in_episode]
-    # [T', ... ]
-    return q_values
 
 def episode_sf_value(e, idx=None):
     actions = e.actions
@@ -1456,7 +1534,7 @@ def experiment_1_results(
           mean=pl.col('reuse').mean() * 100,
           se=(pl.col('reuse').std() /
               pl.col('reuse').count().sqrt()) * 100
-      ))
+  ))
 
   fig, ax = plt.subplots(figsize=(6, 3))
   bar_plot_error(
@@ -1496,6 +1574,24 @@ def experiment_1_results(
       [no_reuse_episodes, reuse_episodes],
       'first_rt',
       title='First Reaction Time',
+      ylabel='log milliseconds',
+      xlabels=['New Path', 'Partial Reuse'],
+      colors=[default_colors['nice purple'], default_colors['bluish green']],
+      stats_file=stats_file,
+      ax=ax)
+  if save_figs:
+    fig.savefig(
+        os.path.join(save_dir, 'exp1_4_bar_first_rt.pdf'),
+        bbox_inches='tight')
+  if display_figs:
+    plt.show()
+
+  # Max RT bar comparison
+  fig, ax = plt.subplots(figsize=(3, 3))
+  plot_bar_rt_comparison(
+      [no_reuse_episodes, reuse_episodes],
+      'max_rt',
+      title='Max Reaction Time',
       ylabel='log milliseconds',
       xlabels=['New Path', 'Partial Reuse'],
       colors=[default_colors['nice purple'], default_colors['bluish green']],
@@ -1600,7 +1696,6 @@ def experiment_1_results(
   stats_file.close()
   with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
     print(f.read())
-
 
 def experiment_2_results(
     user_df: DataFrame,
@@ -1742,8 +1837,7 @@ def experiment_2_results(
           mean=pl.col('reuse').mean() * 100,
           se=(pl.col('reuse').std() /
               pl.col('reuse').count().sqrt()) * 100
-      )
-  )
+  ))
 
   fig, ax = plt.subplots(figsize=(6, 3))
   bar_plot_error(
@@ -1768,7 +1862,6 @@ def experiment_2_results(
   stats_file.close()
   with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
     print(f.read())
-
 
 def experiment_3_results(
     user_df: DataFrame,
@@ -1811,15 +1904,6 @@ def experiment_3_results(
   ).filter(eval=True)
 
   ##################
-  # filter outliers based on episode path length and max reaction time
-  ##################
-  # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-  # Check if reuse column is string type
-  exp3_eval_df = filter_outliers(
-      exp3_eval_df,
-      filter_columns=['path_length'],
-  )
-  ##################
   # Create example paths
   ##################
   # Convert reuse column from string to boolean
@@ -1850,21 +1934,25 @@ def experiment_3_results(
   if display_figs:
     plt.show()
 
+  ##################
+  # Create reaction time difference plot
+  ##################
   # Create filter string for filename
   filter_str = ','.join(filter_columns)
 
+  cond1_df = exp3_eval_df.filter(manipulation=2, eval=True, condition=1)
+  cond2_df = exp3_eval_df.filter(manipulation=2, eval=True, condition=2)
   fig, ax = plot_rt_condition_differences(
-      df=exp3_eval_df,
-      cond1_settings=dict(manipulation=2, eval=True, condition=1),
-      cond2_settings=dict(manipulation=2, eval=True, condition=2),
-      rt_columns=['first_rt', 'avg_rt'],
+      cond1_df=cond1_df,
+      cond2_df=cond2_df,
+      rt_columns=['first_rt', 'max_rt', 'avg_rt'],
       filter_columns=filter_columns,
-      colors=[default_colors['google blue'], default_colors["google orange"]],
+      colors=[default_colors['google blue'], default_colors['sky blue'], default_colors["google orange"]],
       title="Exp 3 Reaction Time Difference",
       ylabel="log milliseconds",
-      xlabels=['First', 'Average'],
+      xlabels=['First', 'Max', 'Average'],
       stats_file=stats_file,
-      ax=ax
+      remove_outliers=True if filter_columns else False,
   )
   if save_figs:
       fig.savefig(
@@ -1883,6 +1971,8 @@ def experiment_4_results(
     filter_columns: List[str] = None,
     display_figs: bool = False,
     save_figs: bool = True,
+    filter_individual: bool = False,
+    verbosity: int = 1,
 ):
   """Analyze results from experiment 4.
 
@@ -1898,7 +1988,7 @@ def experiment_4_results(
   save_dir = os.path.join(save_dir, 'exp4')
   os.makedirs(save_dir, exist_ok=True)
   # Default to ['avg_rt'] if no filter columns specified
-  filter_columns = filter_columns or ['avg_rt']
+  filter_columns = filter_columns or []
 
   def get_eval_df(setting: str, version: str):
     if version == 'regular':
@@ -1912,7 +2002,7 @@ def experiment_4_results(
     # get all episodes for users who achieved at least 16 successes during training
     ##################
     exp4_eval_df = user_df.filter_by_group(
-        input_episode_filter=partial(filter_train_by_min_success, min_successes=8*4),
+        input_episode_filter=partial(filter_train_by_min_success, min_successes=8),
         input_settings=dict(eval=False, **same_cond),
         output_settings=dict(manipulation=4),
         group_key='user_id',
@@ -1921,12 +2011,12 @@ def experiment_4_results(
     ##################
     # filter outliers based on episode path length and max reaction time
     ##################
-    # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-    # Check if reuse column is string type
-    exp4_eval_df = filter_outliers(
-        exp4_eval_df,
-        filter_columns=['path_length'],
-    )
+    ## TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
+    ## Check if reuse column is string type
+    #exp4_eval_df = filter_outliers(
+    #    exp4_eval_df,
+    #    filter_columns=['path_length'],
+    #)
     return exp4_eval_df
   ##################
   # Create example paths
@@ -1937,22 +2027,22 @@ def experiment_4_results(
     exp4_eval_df = get_eval_df(setting, version)
     if version == 'regular':
         cond0 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_(F,F)').sort('path_length', descending=True)
-        #user = cond0['user_id'].unique()[0]
-        #cond1 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_eval_same_(F,F)', user_id=user)
-        #cond2 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_eval_diff_(F,F)', user_id=user)
+        user = cond0['user_id'].unique()[0]
+        cond1 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_eval_same_(F,F)', user_id=user)
+        cond2 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_eval_diff_(F,F)', user_id=user)
     elif version == 'blind':
         cond0 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_blind_(F,F)').sort('path_length', descending=True)
-        #user = cond0['user_id'].unique()[0]
-        #cond1 = exp4_eval_df.filter(
-        #    maze=f'big_m4_maze_{setting}_eval_same_blind_(F,F)', user_id=user)
-        #cond2 = exp4_eval_df.filter(
-        #    maze=f'big_m4_maze_{setting}_eval_diff_(F,F)', user_id=user)
+        user = cond0['user_id'].unique()[0]
+        cond1 = exp4_eval_df.filter(
+            maze=f'big_m4_maze_{setting}_eval_same_blind_(F,F)', user_id=user)
+        cond2 = exp4_eval_df.filter(
+            maze=f'big_m4_maze_{setting}_eval_diff_(F,F)', user_id=user)
 
     fig, ax = plt.subplots(figsize=(6, 6))
     render_paths(
-        episode_list=[cond0.episodes[0]],
+        episode_list=[cond0.episodes[0], cond1.episodes[0], cond2.episodes[0]],
         #render_both=True,
-        colors=[default_colors['white']],
+        colors=[default_colors['white'], model_colors['dynaq_shared'], model_colors['dfs']],
         ax=ax)
     if save_figs:
         fig.savefig(
@@ -1964,6 +2054,7 @@ def experiment_4_results(
   #plot_example(setting='short', version='regular')
   #plot_example(setting='short', version='blind')
   #plot_example(setting='long', version='regular')
+  #plot_example(setting='long', version='blind')
 
   def plot_rt_diff(setting: str = 'short', version: str = 'regular', ax=None):
     assert setting in ['short', 'long']
@@ -1989,23 +2080,36 @@ def experiment_4_results(
     )[version]
 
     # Create filter string for filename
-    filter_str = ','.join(filter_columns)
+    filter_str = ','.join(filter_columns) if filter_columns else ''
 
     fig = None
     if ax is None:
         fig, ax = plt.subplots(figsize=(5, 4))
-    
+
+    cond1_df = exp4_eval_df.filter(**same_cond)
+    cond2_df = exp4_eval_df.filter(**diff_cond)
+
+    remove_outliers = True if filter_columns else False
+    if filter_individual and filter_columns:
+      cond1_df = filter_outliers(
+         cond1_df,
+         filter_columns=list(set(filter_columns)))
+      cond2_df = filter_outliers(cond2_df,
+         filter_columns=list(set(filter_columns)))
+      remove_outliers = False
+
     plot_rt_condition_differences(
-        df=exp4_eval_df,
-        cond1_settings=same_cond,
-        cond2_settings=diff_cond,
-        rt_columns=['first_rt', 'avg_rt'],
+        cond1_df=cond1_df,
+        cond2_df=cond2_df,
+        rt_columns=['first_rt', 'max_rt', 'avg_rt'],
         filter_columns=filter_columns,
-        colors=[default_colors['google blue'], default_colors["google orange"]],
+        colors=[default_colors['google blue'], default_colors['sky blue'], default_colors["google orange"]],
         title=f"Exp 4 RT Diff ({label} x {v})",
         ylabel="log milliseconds",
-        xlabels=['First', 'Average'],
-        ax=ax
+        xlabels=['First', 'Max', 'Average'],
+        ax=ax,
+        remove_outliers=remove_outliers,
+        verbosity=verbosity,
     )
     
     # Save individual figure if one was created
@@ -2019,14 +2123,14 @@ def experiment_4_results(
 
     return ax
 
-  # Create individual plots
-  plot_rt_diff(setting='short', version='regular')
-  plot_rt_diff(setting='short', version='blind')
-  plot_rt_diff(setting='long', version='regular')
-  plot_rt_diff(setting='long', version='blind')
+  ## Create individual plots
+  #plot_rt_diff(setting='short', version='regular')
+  #plot_rt_diff(setting='short', version='blind')
+  #plot_rt_diff(setting='long', version='regular')
+  #plot_rt_diff(setting='long', version='blind')
 
   # Create combined figure
-  fig, axs = plt.subplots(1, 4, figsize=(20, 4))
+  fig, axs = plt.subplots(1, 4, figsize=(20, 10), sharey=True)
   #fig.suptitle('Experiment 4: Reaction Time Differences', fontsize=DEFAULT_TITLE_SIZE)
   
   # Plot all conditions in the combined figure
@@ -2035,6 +2139,8 @@ def experiment_4_results(
   plot_rt_diff(setting='long', version='regular', ax=axs[2])
   plot_rt_diff(setting='long', version='blind', ax=axs[3])
   
+  #axs[0].set_ylim(y_min-0.1*y_range, y_max+0.1*y_range)
+
   # Adjust layout
   plt.tight_layout()
   

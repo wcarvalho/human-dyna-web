@@ -316,7 +316,8 @@ async def stage_display_fn(stage, container):
                 axs[i].axis("off")
             # Adjust layout
             fig.tight_layout()
-    await asyncio.sleep(5)
+    #ui.markdown(f"Please wait {3} seconds before starting.")
+    await asyncio.sleep(3)
 
 def make_image_html(src):
     html = '''
@@ -329,7 +330,9 @@ def make_image_html(src):
 async def env_reset_display_fn(
         stage,
         container,
-        timestep):
+        timestep,
+        pause: int = 0,
+        ):
     category = keys[timestep.state.task_object]
     image = image_data['images'][timestep.state.task_object]
     image = resize(image, (64, 64, 3),
@@ -339,6 +342,11 @@ async def env_reset_display_fn(
     with container.style('align-items: center;'):
         clear_element(container)
         ui.markdown(f"#### Goal object: {category}")
+        if pause > 0:
+            ui.markdown(f"Please wait {pause} seconds before starting.")
+            await asyncio.sleep(pause)
+            clear_element(container)
+            ui.markdown(f"#### Goal object: {category}")
         if DEBUG:
             ui.markdown(debug_info(stage))
         ui.html(make_image_html(src=image))
@@ -446,6 +454,7 @@ def make_env_stage(
         name='stage',
         use_done=False,
         force_random_room: bool = False,
+        pause: int = 0,
         **kwargs,
         ):
     metadata = metadata or {}
@@ -475,7 +484,7 @@ def make_env_stage(
         env_params=env_params,
         render_fn=render_fn,
         vmap_render_fn=vmap_render_fn,
-        reset_display_fn=env_reset_display_fn,
+        reset_display_fn=partial(env_reset_display_fn, pause=pause),
         display_fn=env_stage_display_fn,
         evaluate_success_fn=lambda t: int(t.reward > .5),
         check_finished=lambda t: t.finished,
@@ -524,7 +533,6 @@ def make_block(
             max_episodes=max_episodes,
             duration=duration,
             groups=block_groups,
-            char2idx=block_char2idx,
             training=training,
             user_save_file_fn=get_user_save_file_fn,
             **make_env_kwargs,
@@ -538,6 +546,7 @@ def make_block(
               maze_name=phase_1_maze_name,
               metadata=dict(maze=phase_1_maze_name+appendix, condition=0),
               training=True,
+              char2idx=block_char2idx,
               min_success=min_success or min_success_train,
               max_episodes=max_episodes or max_episodes_train),
             create_stage('Phase 2', phase_2_text),
@@ -550,10 +559,15 @@ def make_block(
               max_episodes=1,
               duration=eval_duration if TIMER else None,
               end_on_final_timestep=True,
+              pause=3,
+              char2idx=block_char2idx,
               **phase2_cond1_env_kwargs,
               ),
       ]
+    randomize = []
     if phase_2_cond2_maze_name is not None:
+        #randomize = [False, False, False, True, True]
+        block_groups, block_char2idx = permute_groups(groups)
         stages.append(
             create_env_stage(
               name=phase_2_cond2_name or phase_2_cond2_maze_name,
@@ -564,16 +578,18 @@ def make_block(
               max_episodes=1,
               duration=eval_duration if TIMER else None,
               end_on_final_timestep=True,
+              char2idx=block_char2idx,
+              pause=3,
               **phase2_cond2_env_kwargs,
               ))
-
     block = Block(
         metadata=dict(
             **metadata,
             groups=make_serializable(block_groups),
             char2idx=jax.tree_map(int, block_char2idx)
         ),
-        stages=stages
+        stages=stages,
+        randomize=randomize,
     )
     return block
 

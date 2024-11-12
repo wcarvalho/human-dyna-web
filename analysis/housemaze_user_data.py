@@ -722,6 +722,11 @@ def make_episode_data(
 
         episode_info.write_csv(episode_info_filename)
 
+        # Save using Flax serialization
+        with open(episode_data_filename, 'wb') as f:
+            serialized_data = serialization.to_bytes(episode_data)
+            f.write(serialized_data)
+
     return episode_info, episode_data
 
 
