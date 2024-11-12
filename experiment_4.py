@@ -446,6 +446,7 @@ def make_env_stage(
         max_episodes=1,
         min_success=1,
         training=True,
+        default_room=0,
         force_room=False,
         metadata=None,
         randomize_agent: bool = True,
@@ -469,7 +470,8 @@ def make_env_stage(
         randomize_agent=randomize_agent,
         use_done=use_done,
         training=training,
-        force_room=force_room
+        force_room=force_room,
+        default_room=default_room,
     )
 
     if force_random_room:
@@ -526,62 +528,64 @@ def make_block(
     phase2_cond1_env_kwargs = phase2_cond1_env_kwargs or {}
     phase2_cond2_env_kwargs = phase2_cond2_env_kwargs or {}
     def create_env_stage(name, maze_name, training, min_success, max_episodes, duration=None, **kwargs):
-        return make_env_stage(
-            name=f"{name}",
-            maze_str=str_transform(getattr(mazes, maze_name)),
-            min_success=min_success,
-            max_episodes=max_episodes,
-            duration=duration,
-            groups=block_groups,
-            training=training,
-            user_save_file_fn=get_user_save_file_fn,
-            **make_env_kwargs,
-            **kwargs,
+        all_kwargs = dict(
+          name=f"{name}",
+          maze_str=str_transform(getattr(mazes, maze_name)),
+          min_success=min_success,
+          max_episodes=max_episodes,
+          duration=duration,
+          groups=block_groups,
+          training=training,
+          user_save_file_fn=get_user_save_file_fn,
         )
+        all_kwargs.update(make_env_kwargs)
+        all_kwargs.update(kwargs)
+        return make_env_stage(**all_kwargs)
 
+    phase2_cond1_kwargs = dict(
+        name=phase_2_cond1_name or phase_2_cond1_maze_name,
+        maze_name=phase_2_cond1_maze_name,
+        metadata=dict(maze=phase_2_cond1_maze_name+appendix, condition=1),
+        training=False,
+        min_success=1,
+        max_episodes=1,
+        duration=eval_duration if TIMER else None,
+        end_on_final_timestep=True,
+        pause=3,
+        char2idx=block_char2idx,
+    )
+    phase2_cond1_kwargs.update(phase2_cond1_env_kwargs)
     stages=[
-            create_stage('Phase 1', phase_1_text),
-            create_env_stage(
-              name=phase_1_maze_name,
-              maze_name=phase_1_maze_name,
-              metadata=dict(maze=phase_1_maze_name+appendix, condition=0),
-              training=True,
-              char2idx=block_char2idx,
-              min_success=min_success or min_success_train,
-              max_episodes=max_episodes or max_episodes_train),
-            create_stage('Phase 2', phase_2_text),
-            create_env_stage(
-              name=phase_2_cond1_name or phase_2_cond1_maze_name,
-              maze_name=phase_2_cond1_maze_name,
-              metadata=dict(maze=phase_2_cond1_maze_name+appendix, condition=1),
-              training=False,
-              min_success=1,
-              max_episodes=1,
-              duration=eval_duration if TIMER else None,
-              end_on_final_timestep=True,
-              pause=3,
-              char2idx=block_char2idx,
-              **phase2_cond1_env_kwargs,
-              ),
+        create_stage('Phase 1', phase_1_text),
+        create_env_stage(
+          name=phase_1_maze_name,
+          maze_name=phase_1_maze_name,
+          metadata=dict(maze=phase_1_maze_name+appendix, condition=0),
+          training=True,
+          char2idx=block_char2idx,
+          min_success=min_success or min_success_train,
+          max_episodes=max_episodes or max_episodes_train),
+        create_stage('Phase 2', phase_2_text),
+        create_env_stage(**phase2_cond1_kwargs),
       ]
     randomize = []
     if phase_2_cond2_maze_name is not None:
-        #randomize = [False, False, False, True, True]
-        block_groups, block_char2idx = permute_groups(groups)
-        stages.append(
-            create_env_stage(
-              name=phase_2_cond2_name or phase_2_cond2_maze_name,
-              maze_name=phase_2_cond2_maze_name,
-              metadata=dict(maze=phase_2_cond2_maze_name+appendix, condition=2),
-              training=False,
-              min_success=1,
-              max_episodes=1,
-              duration=eval_duration if TIMER else None,
-              end_on_final_timestep=True,
-              char2idx=block_char2idx,
-              pause=3,
-              **phase2_cond2_env_kwargs,
-              ))
+        randomize = [False, False, False, True, True]
+        phase2_cond2_kwargs = dict(
+            name=phase_2_cond2_name or phase_2_cond2_maze_name,
+            maze_name=phase_2_cond2_maze_name,
+            metadata=dict(maze=phase_2_cond2_maze_name+appendix, condition=2),
+            training=False,
+            min_success=1,
+            max_episodes=1,
+            duration=eval_duration if TIMER else None,
+            end_on_final_timestep=True,
+            char2idx=block_char2idx,
+            pause=3,
+        )
+        phase2_cond2_kwargs.update(phase2_cond2_env_kwargs)
+        stages.append(create_env_stage(**phase2_cond2_kwargs))
+
     block = Block(
         metadata=dict(
             **metadata,
@@ -777,14 +781,18 @@ def create_plan_manipulation_block(
         min_success=min_success_task,
         max_episodes=max_episodes_task,
         eval_duration=5 if setting == 'short' else 15,
-        make_env_kwargs=dict(force_room=True),
+        make_env_kwargs=dict(
+            default_room=0, force_room=True),
         phase2_cond1_env_kwargs={} if SAY_REUSE else dict(force_random_room=True),
+        phase2_cond2_env_kwargs=dict(
+            # force to focus on train object from "2nd room"
+            force_room=True, default_room=1, training=True),
         # regular commands
         phase_1_text=make_phase_1_text(),
         phase_1_maze_name=f'big_m4_maze_{setting}' if SAY_REUSE else f'big_m4_maze_{setting}_blind',
         phase_2_text=make_phase_2_text(time=5 if setting == 'short' else 15),
         phase_2_cond1_maze_name=f'big_m4_maze_{setting}_eval_same' if SAY_REUSE else f'big_m4_maze_{setting}_eval_same_blind',
-        phase_2_cond2_maze_name=f'big_m4_maze_{setting}_eval_diff',
+        phase_2_cond2_maze_name=f'big_m4_maze_{setting}_eval_diff' if SAY_REUSE else f'big_m4_maze_{setting}_eval_diff_blind',
         block_groups=block_groups,
         block_char2idx=block_char2idx,
         metadata=dict(
