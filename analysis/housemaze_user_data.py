@@ -154,34 +154,41 @@ def compute_experiment_lengths(files, plot: bool = False, condition_name: str = 
 
     return experiment_lengths
 
-def get_valid_files(searches, plot: bool = False, verbose: bool = False):
+def get_valid_files(
+        searches,
+        filter: bool = False,
+        plot: bool = False,
+        verbose: bool = False):
     all_valid_files = {}
 
     for condition_name, search in searches.items():
         files = list(set(glob(search)))
-        experiment_lengths = compute_experiment_lengths(
-            files, condition_name=condition_name, plot=plot)
+        if filter:
+          experiment_lengths = compute_experiment_lengths(
+              files, condition_name=condition_name, plot=plot)
 
-        # Calculate mean and standard deviation
-        lengths = np.array(list(experiment_lengths.values()))
-        mean = np.mean(lengths)
-        std = np.std(lengths)
+          # Calculate mean and standard deviation
+          lengths = np.array(list(experiment_lengths.values()))
+          mean = np.mean(lengths)
+          std = np.std(lengths)
 
-        # Filter files within 3 standard deviations
-        def good_user(file):
-            user_id = user_id_from_filename(file)
-            if user_id not in experiment_lengths:
-                if verbose:
-                    print(f"User {user_id} not in experiment_lengths")
-                return False
-            user_val = experiment_lengths[user_id]
-            good = abs(user_val - mean) <= 3 * std
-            if not good:
-                if verbose:
-                    print(
-                        f"User {user_id} > 3 std. x: {user_val}, mean: {mean}, 3*std: {mean+3*std}")
-            return good
-        valid_files = [file for file in files if good_user(file)]
+          # Filter files within 3 standard deviations
+          def good_user(file):
+              user_id = user_id_from_filename(file)
+              if user_id not in experiment_lengths:
+                  if verbose:
+                      print(f"User {user_id} not in experiment_lengths")
+                  return False
+              user_val = experiment_lengths[user_id]
+              good = abs(user_val - mean) <= 3 * std
+              if not good:
+                  if verbose:
+                      print(
+                          f"User {user_id} > 3 std. x: {user_val}, mean: {mean}, 3*std: {mean+3*std}")
+              return good
+          valid_files = [file for file in files if good_user(file)]
+        else:
+          valid_files = files
 
         all_valid_files[condition_name] = valid_files
         print(f"{condition_name}: {len(valid_files)}/{len(files)} valid files")
@@ -344,6 +351,9 @@ def make_row(
         new_vals['exp_name'] = new_vals.pop('name')
     row.update(new_vals)
 
+    ####################
+    # add version, tell_reuse, timer
+    ####################
     name = new_vals.get('exp_name')
     if name is not None:
         # example 'exp4-v1-r1-t0-plan'
@@ -366,6 +376,15 @@ def make_row(
     reversal = datum['metadata']['block_metadata'].get(
         'reversal', [False, False])
     row['reversal'] = reversal_label(reversal)
+
+    ####################
+    # add optimal path length
+    ####################
+    path = utils.find_optimal_path(
+        grid=timesteps.state.grid[0],  # first time-step
+        agent_pos=tuple([int(i) for i in timesteps.state.agent_pos[0]]),
+        goal=timesteps.state.task_object[0])
+    row['optimal_length'] = len(path) - 1 # includes done
 
     return row
 
@@ -620,6 +639,7 @@ def make_episode_data(
             raw_episode_data = gds[key]
             episode_idx = gd_infos[key]['user_episode_idx']
             timesteps = episode_data[episode_idx].timesteps
+
             episode_info[episode_idx] = make_row(
                 datum=raw_episode_data[0],
                 episode_info=gd_infos[key],
@@ -655,38 +675,37 @@ def make_episode_data(
         def terminated(e):
             return features_achieved(e)
 
+        def get_rt(e: EpisodeData):
+            return np.log(e.reaction_times + 1e-5)
+
         def total_rt(e: EpisodeData):
-            return np.sum(e.reaction_times[:-1])
+            return np.sum(get_rt(e)[:-1])
 
         def avg_rt(e: EpisodeData):
-            return np.mean(e.reaction_times[:-1])
+            return np.mean(get_rt(e)[:-1])
 
         def first_rt(e: EpisodeData):
-            return e.reaction_times[0]
+            return get_rt(e)[0]
 
         def max_rt(e: EpisodeData):
-            return np.max(e.reaction_times[:-1])
-        
+            return np.max(get_rt(e)[:-1])
+
         def max_post_rt(e: EpisodeData):
-            return np.max(e.reaction_times[1:-1])
+            return np.max(get_rt(e)[1:-1])
 
         def max_init_post_rt(e: EpisodeData):
-            n = len(e.reaction_times[:-1])//2 + 1 
-            try:
-                return np.max(e.reaction_times[1:n])
-            except:
-                import pdb; pdb.set_trace()
-                return np.nan
+            n = len(get_rt(e)[:-1]) // 2 + 1
+            return np.max(get_rt(e)[1:n])
 
         def max_final_rt(e: EpisodeData):
-            n = len(e.reaction_times[:-1])//2 + 1
-            return np.max(e.reaction_times[-n:-1])
+            n = len(get_rt(e)[:-1]) // 2 + 1
+            return np.max(get_rt(e)[-n:-1])
 
         def max_end_rt(e: EpisodeData):
-            return np.max(e.reaction_times[-11:-1])
+            return np.max(get_rt(e)[-11:-1])
 
         def avg_post_rt(e: EpisodeData):
-            return np.mean(e.reaction_times[1:-1])
+            return np.mean(get_rt(e)[1:-1])
 
         def path_length(e: EpisodeData):
             return len(e.actions[:-1])
@@ -695,15 +714,15 @@ def make_episode_data(
             'success': success,
             'path_length': path_length,
             'termination': terminated,
-            'first_rt': first_rt,
-            'avg_rt': avg_rt,
-            'total_rt': total_rt,
-            'avg_post_rt': avg_post_rt,
-            'max_rt': max_rt,
-            'max_post_rt': max_post_rt,
-            'max_init_post_rt': max_init_post_rt,
-            'max_end_rt': max_end_rt,
-            'max_final_rt': max_final_rt,
+            'log_first_rt': first_rt,
+            'log_avg_rt': avg_rt,
+            'log_total_rt': total_rt,
+            'log_avg_post_rt': avg_post_rt,
+            'log_max_rt': max_rt,
+            'log_max_post_rt': max_post_rt,
+            'log_max_init_post_rt': max_init_post_rt,
+            'log_max_end_rt': max_end_rt,
+            'log_max_final_rt': max_final_rt,
         }
         computed_values = {key: [] for key in measures}
 
@@ -716,6 +735,9 @@ def make_episode_data(
         episode_info = episode_info.with_columns([
             pl.Series(key, values) for key, values in computed_values.items()
         ])
+        episode_info = episode_info.with_columns(
+            pl.col('path_length').sub(pl.col('optimal_length')).alias('optimal_length_deviance')
+        )
         _temp_df = DataFrame(episode_info, episode_data)
         _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
         episode_info = _temp_df._df
@@ -821,10 +843,13 @@ if __name__ == "__main__":
 
   searches = {
       'Paths': f'{data_dir}/user_data/*exps*/*v1*paths*.json',
+      'Path-notell': f'{data_dir}/user_data/*exps*/*v2*r0*paths*.json',
       'Start': f'{data_dir}/user_data/*exps*/*v1*start*.json',
-      'Plan (Tell)': f'{data_dir}/user_data/*exps*/*v1*r1-t0-plan*.json',
-      "Plan (Don't Tell)": f'{data_dir}/user_data/*exps*/*v1*r0-t0-plan*.json',
+      #'Start-notell': f'{data_dir}/user_data/*exps*/*v2*r0*start*.json',
+      'Plan (Tell)': f'{data_dir}/user_data/*exps*/*v2*r1-t0-plan*.json',
+      "Plan (Don't Tell)": f'{data_dir}/user_data/*exps*/*v2*r0-t0-plan*.json',
       'Shortcut': f'{data_dir}/user_data/*exps*/*v1*shortcut*.json',
+      'Shortcut-notell': f'{data_dir}/user_data/*exps*/*v2*r0*shortcut*.json',
   }
 
   valid_files = get_valid_files(searches, verbose=True, plot=False)

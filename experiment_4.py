@@ -615,7 +615,7 @@ if SAY_REUSE:
       You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds. 
       """
       phase_2_text += f"""
-      You have a <span style="color: red; font-weight: bold;">time-limit</span>{time_str}. Try to reuse what you learned as best you can.
+      You have a <span style="color: red; font-weight: bold;">time-limit</span>{time_str}.
       """ if TIMER else ''
       if MAN == 'shortcut':
         phase_2_text += f"""

@@ -1,4 +1,4 @@
-from typing import NamedTuple, List
+from typing import NamedTuple, List, Tuple
 
 from functools import partial
 from flax import struct
@@ -11,12 +11,10 @@ import os.path
 from scipy import stats
 import seaborn as sns
 
-from housemaze import renderer
+#from analysis.housemaze_analysis_garbarge import plot_rt_condition_differences
 from housemaze.human_dyna import utils
-from housemaze.human_dyna import multitask_env
 from math import sqrt, ceil
 from statsmodels.stats.power import TTestPower, TTestIndPower
-
 
 from analysis.housemaze_model_data import get_model_data
 from analysis.housemaze_user_data import get_human_data
@@ -234,141 +232,6 @@ def filter_outliers(
   return filtered_df
 
 
-def housemaze_render_fn(state: multitask_env.EnvState):
-    return renderer.create_image_from_grid(
-        state.grid,
-        state.agent_pos,
-        state.agent_dir,
-        image_dict)
-
-
-def render_path(episode_data, from_model=True, ax=None):
-    # get actions that are in episode
-    timesteps = episode_data.timesteps
-    actions = episode_data.actions
-    if from_model:
-      in_episode = get_in_episode(timesteps)
-      actions = actions[in_episode][:-1]
-      positions = jax.tree_map(
-          lambda x: x[in_episode][:-1], timesteps.state.agent_pos)
-    else:
-       positions = timesteps.state.agent_pos[:-1]
-    # positions in episode
-
-    state_0 = jax.tree_map(lambda x: x[0], timesteps.state)
-
-    # doesn't matter
-    maze_height, maze_width, _ = timesteps.state.grid[0].shape
-
-    if ax is None:
-      fig, ax = plt.subplots(1, figsize=(5, 5))
-    img = housemaze_render_fn(state_0)
-
-    renderer.place_arrows_on_image(
-        img, positions, actions, maze_height, maze_width, arrow_scale=5, ax=ax)
-
-
-def render_paths(episode_list, render_both: bool=False, colors=None, from_model=True, ax=None):
-    """Renders multiple paths on the same maze image.
-    
-    Args:
-        episode_list: List of episode data to render
-        colors: List of colors for each path. If None, uses default color cycle
-        from_model: Whether the data is from a model or human
-        ax: Matplotlib axis to plot on. If None, creates new figure
-    """
-    if not episode_list:
-        raise ValueError("Episode list cannot be empty")
-
-    if colors is None:
-        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-
-    # Get base image from first episode
-    state_0 = jax.tree_map(lambda x: x[0], episode_list[0].timesteps.state)
-    maze_height, maze_width, _ = episode_list[0].timesteps.state.grid[0].shape
-
-    if ax is None:
-        fig, ax = plt.subplots(1, figsize=(5, 5))
-    
-    render_both = render_both and len(episode_list) > 1
-    if render_both:
-       positions = [jax.tree_map(lambda x: x[0], ep.timesteps.state).agent_pos 
-                   for ep in episode_list]
-    else:
-       positions = [state_0.agent_pos]
-    img = renderer.create_image_from_grid(
-        state_0.grid,
-        positions,
-        state_0.agent_dir,
-        image_dict)
-
-    # Plot each path
-    for i, episode_data in enumerate(episode_list):
-        timesteps = episode_data.timesteps
-        actions = episode_data.actions
-
-        if from_model:
-            in_episode = get_in_episode(timesteps)
-            actions = actions[in_episode][:-1]
-            positions = jax.tree_map(
-                lambda x: x[in_episode][:-1], timesteps.state.agent_pos)
-        else:
-            positions = timesteps.state.agent_pos[:-1]
-
-        color = colors[i % len(colors)]
-        renderer.place_arrows_on_image(
-            img, positions, actions, maze_height, maze_width,
-            arrow_scale=10, ax=ax, arrow_color=color)
-
-
-def render_optimal_paths(episode_list, colors=None, from_model=True, ax=None, **kwargs):
-    """Renders multiple optimal paths on the same maze image.
-    
-    Args:
-        episode_list: List of episode data to render
-        colors: List of colors for each path. If None, uses default color cycle
-        from_model: Whether the data is from a model or human
-        ax: Matplotlib axis to plot on. If None, creates new figure
-    """
-    if not episode_list:
-        raise ValueError("Episode list cannot be empty")
-
-    if colors is None:
-        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-
-    # Get base image from first episode
-    state_0 = jax.tree_map(lambda x: x[0], episode_list[0].timesteps.state)
-    maze_height, maze_width, _ = episode_list[0].timesteps.state.grid[0].shape
-
-    if ax is None:
-        fig, ax = plt.subplots(1, figsize=(5, 5))
-
-    starting_positions = []
-    for episode_data in episode_list:
-        state = jax.tree_map(lambda x: x[0], episode_data.timesteps.state)
-        starting_positions.append(state.agent_pos)
-
-    img = renderer.create_image_from_grid(
-        state_0.grid,
-        starting_positions,
-        state_0.agent_dir,
-        image_dict)
-
-    # Plot each path
-    for i, episode_data in enumerate(episode_list):
-        grid = episode_data.timesteps.state.grid[0]  # only have 1 map
-        agent_pos = episode_data.timesteps.state.agent_pos[0]
-        agent_pos = tuple([int(i) for i in agent_pos])
-        goal = episode_data.timesteps.state.task_object[0]
-        positions = utils.find_optimal_path(grid, agent_pos, goal)
-        actions = utils.actions_from_path(positions)
-
-        color = colors[i % len(colors)]
-        renderer.place_arrows_on_image(
-            img, positions, actions, maze_height, maze_width,
-            arrow_scale=10, ax=ax, arrow_color=color)
-
-
 def bar_plot_error(human_data, model_stats, ax=None, ylim=None, legend=True, xlabels=False):
     """Plot bar chart comparing human and model performance with error bars.
     
@@ -430,7 +293,7 @@ def bar_plot_error(human_data, model_stats, ax=None, ylim=None, legend=True, xla
     if legend:
         legend_elements = bars
         legend_labels = [model_names[k] for k in ordered_keys]
-        ax.legend(legend_elements, legend_labels)
+        ax.legend(legend_elements, legend_labels, loc='lower right')
 
     ax.grid(True, linestyle='--', alpha=0.7)
 
@@ -438,7 +301,7 @@ def bar_plot_error(human_data, model_stats, ax=None, ylim=None, legend=True, xla
 
 
 def plot_bar_rt_comparison(
-      dfs,
+      df,
       rt_column,
       ax=None,
       title=None,
@@ -446,6 +309,7 @@ def plot_bar_rt_comparison(
       xlabels=None,
       colors=None,
       stats_file=None,
+      percentile_ylim: bool = True,
       ):
     """Plot comparison of reaction times between multiple conditions.
     
@@ -462,35 +326,29 @@ def plot_bar_rt_comparison(
     Returns:
         matplotlib axis
     """
-    if colors is None:
-        colors = [default_colors["vermillion"], default_colors["bluish green"]]
-        # Extend colors if needed
-        while len(colors) < len(dfs):
-            colors.extend(colors)
     
-    if ax is None:
-        _, ax = plt.subplots(figsize=(5, 4))
-
-    # Calculate log RTs and group by user for each set
-    log_col = f'log_{rt_column}'
-    all_data = []
-    for episodes in dfs:
-        stats = (episodes
-                .with_columns((1000*pl.col(rt_column)).log().alias(log_col)))
-        all_data.append(stats[log_col].to_numpy())
-
-    # Calculate means and standard errors
-    means = [np.mean(data) for data in all_data]
-    sems = [np.std(data) / np.sqrt(len(data)) for data in all_data]
+    power_results = power_analysis_rt_across_groups(
+        df, measure=rt_column, stats_file=stats_file)
+    means = (
+        power_results['descriptive']['means']['no_reuse'],
+        power_results['descriptive']['means']['reuse']
+    )
+    sems = (
+        power_results['descriptive']['ses']['no_reuse'],
+        power_results['descriptive']['ses']['reuse']
+    )
 
     # Create bar plot
-    x_pos = np.arange(len(dfs))
-    bars = ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[:len(dfs)])
+    x_pos = np.arange(len(means))
+    ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[:len(means)])
 
     # Add individual points with jitter
-    for i, data in enumerate(all_data):
+    all_data = []
+    for i, key in enumerate(['no_reuse', 'reuse']):
+        data = power_results['raw_means'][key]
         x_jitter = np.random.normal(i, 0.04, size=len(data))
         ax.scatter(x_jitter, data, alpha=0.3, color='black', s=20)
+        all_data.append(data)
 
     # Customize plot
     ax.set_xticks(x_pos)
@@ -500,100 +358,14 @@ def plot_bar_rt_comparison(
     ax.set_title(title or f'{rt_column} Comparison', fontsize=DEFAULT_TITLE_SIZE)
     ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
     ax.grid(True, linestyle='--', alpha=0.7)
-    
-    all_data_combined = np.concatenate(all_data)
-    y_min, y_max = np.percentile(all_data_combined, [1, 99])
-    y_range = y_max - y_min
-    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
-    
-    power_results = power_analysis_between_groups(
-        all_data[0], all_data[1], stats_file=stats_file)
-    return ax
 
-
-def plot_mean_rt_comparison(
-    dfs,
-    rt_column,
-    ax=None,
-    display_stats=True,
-    title=None,
-    ylabel=None,
-    xlabels=None,
-    colors=None,
-):
-    """Plot comparison of reaction times between multiple conditions.
-    
-    Args:
-        episode_sets: List of DataFrames, each containing episodes for one condition
-        rt_column: Name of reaction time column to analyze (e.g. 'first_rt', 'avg_rt')
-        ax: Optional matplotlib axis to plot on
-        display_stats: Whether to print statistical test results
-        title: Custom title
-        ylabel: Custom y-axis label
-        xlabels: List of labels for x-axis ticks
-        colors: Optional list of colors for bars
-    
-    Returns:
-        matplotlib axis
-    """
-    if ax is None:
-        _, ax = plt.subplots(figsize=(5, 4))
-
-    # Set default colors if none provided
-    if colors is None:
-        colors = [default_colors["vermillion"], default_colors["bluish green"]]
-        # Extend colors if needed
-        while len(colors) < len(dfs):
-            colors.extend(colors)
-
-    # Calculate log RTs and group by user for each set
-    log_col = f'log_{rt_column}'
-    all_data = []
-    for episodes in dfs:
-        stats = (episodes
-                .with_columns((1000*pl.col(rt_column)).log().alias(log_col)))
-        all_data.append(stats[log_col].to_numpy())
-
-    # Calculate means and standard errors
-    means = [np.mean(data) for data in all_data]
-    sems = [np.std(data) / np.sqrt(len(data)) for data in all_data]
-
-    # Create horizontal lines for means
-    x_pos = np.linspace(0.25, 0.75, len(dfs))
-
-    # Plot means as horizontal lines with standard error ranges
-    for i in range(len(dfs)):
-        ax.axhline(y=means[i], color=colors[i],
-                  linestyle='-', linewidth=2,
-                  label=f'Mean: {means[i]:.2f}')
-        ax.axhspan(means[i] - sems[i], means[i] + sems[i],
-                  alpha=0.2, color=colors[i],
-                  label=f'SE: {sems[i]:.2f}')
-
-    # Add individual points with jitter
-    for i, data in enumerate(all_data):
-        x_jitter = np.random.normal(x_pos[i], 0.02, size=len(data))
-        ax.scatter(x_jitter, data, alpha=0.3, color='black', s=20)
-
-    # Customize plot
-    ax.set_xticks(x_pos)
-    if xlabels:
-        ax.set_xticklabels(xlabels, ha='center')
-    ax.set_ylabel(ylabel or f'Log {rt_column}', fontsize=DEFAULT_LABEL_SIZE)
-    ax.set_title(title or f'{rt_column} Comparison', fontsize=DEFAULT_TITLE_SIZE)
-    ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
-    ax.grid(True, linestyle='--', alpha=0.7)
-    #ax.legend(fontsize=DEFAULT_LEGEND_SIZE)
-
-    # Calculate y-axis limits based on all data
-    all_data_combined = np.concatenate(all_data)
-    y_min, y_max = np.percentile(all_data_combined, [1, 99])
-    y_range = y_max - y_min
-    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
-    ax.set_xlim(0, 1)
+    if percentile_ylim:
+      all_data_combined = np.concatenate(all_data)
+      y_min, y_max = np.percentile(all_data_combined, [1, 99])
+      y_range = y_max - y_min
+      ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
 
     return ax
-
 
 def plot_bar_rt_comparison_columns(
     df,
@@ -665,183 +437,47 @@ def plot_bar_rt_comparison_columns(
 
     return ax
 
-
-def plot_rt_condition_differences(
-    cond1_df: DataFrame,
-    cond2_df: DataFrame,
-    rt_columns: List[str],
-    filter_columns: List[str] = None,
-    ax=None,
-    title=None,
-    ylabel="Log RT Difference (Cond2 - Cond1)",
-    xlabels=None,
+def plot_rt_differences(
+    difference_df: pl.DataFrame,
+    ax: plt.Axes,
+    measures: List[str],
+    title: str,
     colors=None,
-    remove_outliers: bool = True,
-    outlier_threshold: float = 1.5,
+    ylabel="Log RT Difference (Cond2 - Cond1)",
     stats_file=None,
-    verbosity: int = 1,
-):
-    """Plot reaction time differences between two conditions for multiple RT measures.
+    xlabels=None,
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Plot RT differences between conditions.
     
-    Args:
-        df: DataFrame containing the data
-        cond1_settings: Filter settings for condition 1 
-        cond2_settings: Filter settings for condition 2
-        rt_columns: List of RT column names to analyze
-        filter_columns: List of columns to use for outlier filtering
-        ax: Optional matplotlib axis to plot on
-        title: Custom title
-        ylabel: Custom y-axis label
-        xlabels: List of labels for x-axis ticks (defaults to rt_columns)
-        colors: List of colors for bars
-        remove_outliers: Whether to remove outliers using IQR method
-        outlier_threshold: Number of IQRs to use for outlier detection (default: 1.5)
-    
-    Returns:
-        matplotlib axis
+    First compute a power analysis for each measure, seeing if its statistically significantly above 0.
+    - note we have repeated measures per user, corresponding to the 'reversal column'.
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(5, 4))
-    else:
-        fig = ax.figure
-
-    if colors is None:
-        colors = default_colors.values()
-
-    # Get common users between conditions
-    users = set(cond1_df['user_id'].unique()) & set(cond2_df['user_id'].unique())
-    
-    ##################
-    # Create a new dataframe with following columns:
-    # user_id, rt_col, log_rt, raw_rt
-    ##################
-    # Dictionary to store valid differences for each RT column
-    all_diffs = {}
-    all_raw_diffs = {}  # New dictionary for raw differences
-    
-    for rt_col in set(rt_columns + (filter_columns or [])):
-        valid_diffs = []
-        valid_raw_diffs = []  # New list for raw differences
-        valid_users = []
-
-        for user in users:
-            user_cond1 = cond1_df.filter(user_id=user)
-            user_cond2 = cond2_df.filter(user_id=user)
-            # For each maze
-            mazes1 = sorted(user_cond1['maze'].unique())
-            mazes2 = sorted(user_cond2['maze'].unique())
-            
-            #import pdb; pdb.set_trace()
-            def strip_version(s):
-                return s.split('_(')[1]
-            for maze1, maze2 in zip(mazes1, mazes2):
-                s1 = strip_version(maze1)
-                s2 = strip_version(maze2) 
-                assert s1 == s2, f"{s1} != {s2}"
-                maze_cond1 = user_cond1.filter(maze=maze1)
-                maze_cond2 = user_cond2.filter(maze=maze2)
-
-                if len(maze_cond1) == 0 or len(maze_cond2) == 0:
-                    continue
-                    
-                # Calculate raw RTs for this maze/condition pair
-                rt1 = maze_cond1[rt_col].to_numpy()
-                rt2 = maze_cond2[rt_col].to_numpy()
-                assert len(rt1) == len(rt2) == 1
-                
-                # Calculate mean for each condition
-                mean1 = np.mean(rt1)
-                mean2 = np.mean(rt2)
-                raw_diff = mean2 - mean1
-                
-                # Calculate log differences
-                log_rt1 = np.log(100*rt1)
-                log_rt2 = np.log(100*rt2)
-                log_mean1 = np.mean(log_rt1)
-                log_mean2 = np.mean(log_rt2)
-                log_diff = log_mean2 - log_mean1
-                
-                valid_diffs.append(log_diff)
-                valid_raw_diffs.append(raw_diff)
-                valid_users.append(user)
-
-        all_diffs[rt_col] = (np.array(valid_diffs), valid_users)
-        all_raw_diffs[rt_col] = (np.array(valid_raw_diffs), valid_users)
-    
-    # Apply outlier detection if requested using raw values
-    if remove_outliers:
-        shared_mask = np.ones(len(valid_users), dtype=bool)
-        
-        # Only use specified filter columns for outlier detection
-        for rt_col in filter_columns or []:
-            raw_diffs, users = all_diffs[rt_col]  # Use raw diffs for outlier detection
-            q1 = np.percentile(raw_diffs, 25)
-            q3 = np.percentile(raw_diffs, 75)
-            iqr = q3 - q1
-            lower_bound = q1 - outlier_threshold * iqr
-            upper_bound = q3 + outlier_threshold * iqr
-            
-            col_mask = (raw_diffs >= lower_bound) & (raw_diffs <= upper_bound)
-            shared_mask &= col_mask
-
-            # Print outlier information
-            if not col_mask.all() and verbosity > 1:
-                print(f"\nOutliers identified for {rt_col}:")
-                print(f"Bounds: {lower_bound:.3f} to {upper_bound:.3f}")
-                for i, (diff, user) in enumerate(zip(raw_diffs, users)):
-                    if not col_mask[i]:
-                        print(f"User {user}, Raw RT diff: {diff:.3f}")
-
-        if not shared_mask.all() and verbosity > 0:
-            print(f"\nTotal measurements removed: {(~shared_mask).sum()}/{len(shared_mask)} ({(~shared_mask).sum()/len(shared_mask)*100:.1f}%)")
-
-        # Apply mask to both log and raw RT columns
-        for rt_col in rt_columns:
-            diffs, users = all_diffs[rt_col]
-            raw_diffs, _ = all_raw_diffs[rt_col]
-            all_diffs[rt_col] = (diffs[shared_mask], np.array(users)[shared_mask])
-            all_raw_diffs[rt_col] = (raw_diffs[shared_mask], np.array(users)[shared_mask])
-
-    # Calculate statistics and create plot
+    # Calculate statistics for each measure
     means = []
     sems = []
-    all_plot_diffs = []
+    all_diffs = []
+    for measure in measures:
+        results = power_analysis_rt_differences(
+            difference_df,
+            measure,
+            stats_file=stats_file
+        )
+        means.append(results['mean'])
+        sems.append(results['se'])
+        all_diffs.append(difference_df[measure].to_numpy())
 
-    for rt_col in rt_columns:
-        diffs, users = all_diffs[rt_col]
-        # Create DataFrame with user IDs and differences
-        user_df = pl.DataFrame({
-            'user_id': users,
-            'diff': diffs
-        })
-        # Compute mean per user
-        user_means = user_df.group_by('user_id').agg(
-            pl.col('diff').mean()
-        ).select('diff')
-
-        analyze_rt_differences(
-            user_means.to_numpy().flatten(), rt_col, stats_file=stats_file)
-
-        # Get array of user means
-        user_mean_diffs = user_means.to_numpy().flatten()
-        all_plot_diffs.append(user_mean_diffs)
-
-        # Compute grand mean and SE across users
-        means.append(np.mean(user_mean_diffs))
-        sems.append(np.std(user_mean_diffs) / np.sqrt(len(user_mean_diffs)))
     # Create/get axis
     if ax is None:
         fig, ax = plt.subplots(figsize=(5, 4))
     else:
         fig = ax.figure
-    
 
     # Create bar plot
-    x_pos = np.arange(len(rt_columns))
+    x_pos = np.arange(len(measures))
     bars = ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors)
 
     # Add individual points with jitter
-    for i, diffs in enumerate(all_plot_diffs):
+    for i, diffs in enumerate(all_diffs):
         x_jitter = np.random.normal(i, 0.1, size=len(diffs))
         ax.scatter(x_jitter, diffs, alpha=0.3, color='black', s=20)
 
@@ -850,7 +486,7 @@ def plot_rt_condition_differences(
 
     # Customize plot
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(xlabels or rt_columns, ha='center')
+    ax.set_xticklabels(xlabels or measures, ha='center')
     ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
     if title:
         ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
@@ -858,122 +494,255 @@ def plot_rt_condition_differences(
     ax.grid(True, linestyle='--', alpha=0.7)
 
     # Set y-axis limits based on all data points
-    all_data = np.concatenate(all_plot_diffs)
+    all_data = np.concatenate(all_diffs)
     y_min, y_max = np.percentile(all_data, [1, 99])
     y_range = y_max - y_min
     ax.set_ylim(y_min-0.1*y_range, y_max+0.1*y_range)
 
     return fig, ax
 
+def plot_success_rate_comparison(
+    df: DataFrame,
+    model_df: DataFrame,
+    ax=None,
+    title="Success Rate Comparison",
+    include_raw_data: bool = False,
+    figsize=(6, 3)
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Plot success rate comparison between human and model data.
+    
+    Args:
+        df (DataFrame): DataFrame containing human data
+        model_df (DataFrame): DataFrame containing model data
+        ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
+        title (str, optional): Plot title. Defaults to "Success Rate Comparison"
+        include_raw_data (bool, optional): Whether to include individual human data points. 
+            Defaults to False
+        figsize (tuple, optional): Figure size if creating new figure. Defaults to (6,3)
+            
+    Returns:
+        tuple: (fig, ax) containing the matplotlib figure and axes objects
+    """
+    # Calculate human statistics
+    human_successes = df.group_by('user_id').agg(
+        pl.col('success').mean()).select('success').to_numpy().flatten()
+    # Calculate mean and standard error across users
+    human_mean = np.mean(human_successes)
+    human_se = np.sqrt((human_mean * (1 - human_mean)) / len(human_successes))
+
+    # Calculate model statistics
+    model_stats = (
+        model_df.group_by('algo')
+        .agg(
+            mean=pl.col('success').mean() * 100,
+      se=(pl.col('success').mean() * (1 - pl.col('success').mean()) /
+          pl.col('success').count()).sqrt() * 100
+        )
+    )
+
+    # Create figure if needed
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    # Create plot
+    human_data = {
+        'means': 100*human_mean,
+        'se': 100*human_se,
+    }
+    if include_raw_data:
+        human_data['raw'] = human_successes
+
+    bar_plot_error(
+        human_data=human_data,
+        model_stats=model_stats,
+        ax=ax,
+        legend=True,
+    )
+
+    # Customize plot
+    ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+    ax.set_ylabel('Success Rate (%)', fontsize=DEFAULT_LABEL_SIZE)
+
+    return fig, ax
+
+def plot_path_reuse_comparison(
+    df: DataFrame,
+    model_df: DataFrame,
+    stats_file=None,
+    ax=None,
+    title="Path Reuse Comparison",
+    include_raw_data: bool = True,
+    figsize=(6, 3)
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Plot path reuse comparison between human and model data with statistical analysis.
+    
+    Args:
+        df (DataFrame): DataFrame containing human data
+        model_df (DataFrame): DataFrame containing model data
+        stats_file: Optional file handle for writing statistical analysis
+        ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
+        title (str, optional): Plot title. Defaults to "Path Reuse Comparison"
+        include_raw_data (bool, optional): Whether to include individual human data points.
+            Defaults to True
+        figsize (tuple, optional): Figure size if creating new figure. Defaults to (6,3)
+            
+    Returns:
+        tuple: (fig, ax) containing the matplotlib figure and axes objects
+    """
+
+    results = power_analysis_path_reuse(
+        df,
+        mu=0.5,
+        alpha=0.05,
+        plot=False,
+        stats_file=stats_file
+    )
+
+    # Calculate model statistics
+    model_stats = (
+        model_df.group_by('algo')
+        .agg(
+            mean=pl.col('reuse').mean() * 100,
+            se=(pl.col('reuse').mean() * (1 - pl.col('reuse').mean()) /
+                pl.col('reuse').count()).sqrt() * 100
+        )
+    )
+
+    # Create figure if needed
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    # Create plot
+    human_data = {
+        'means': 100 * results['mean'],
+        'se': 100 * results['se'],
+    }
+    if include_raw_data:
+        human_data['raw'] = 100 * results['reuse_rates']
+
+    bar_plot_error(
+        human_data=human_data,
+        model_stats=model_stats,
+        ax=ax,
+        legend=False,
+    )
+
+    # Customize plot
+    ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+    ax.set_ylabel('Path Reuse (%)', fontsize=DEFAULT_LABEL_SIZE)
+
+    return fig, ax
+
+def compute_condition_difference_df(df: pl.DataFrame, measures: List[str]) -> pl.DataFrame:
+    """Compute differences between conditions 1 and 2 for matched reversal conditions.
+
+    Args:
+        df: DataFrame containing columns [condition, reversal, setting, {measures}]
+        setting: Which setting to filter for ('short' or 'long')
+        measures: List of measure column names to compute differences for
+
+    Returns:
+        DataFrame with columns [user_id, reversal, diff_{measure1}, diff_{measure2}, ...]
+    """
+
+    # Get condition 1 and 2 data separately
+    cond1_df = df.filter(condition=1)
+    cond2_df = df.filter(condition=2)
+
+    # Join the dataframes on user_id and reversal to match pairs
+    diff_df = (cond1_df
+              .join(
+                  cond2_df,
+                  on=['user_id', 'reversal'],
+                  suffix='_cond2'
+              ))
+
+    # Compute differences for each measure
+    diff_exprs = [
+        (pl.col(f'{measure}_cond2') - pl.col(measure)).alias(measure)
+        for measure in measures
+    ]
+
+    # Select user_id, reversal and all difference columns
+    diff_df = diff_df.select(['user_id', 'reversal'] + diff_exprs)
+
+    return diff_df
 ######################################
 # Power Analysis function
 ######################################
 
-def analyze_proportion_test(data, mu=0.5, alpha=0.05, plot=False, stats_file=None):
-    """Analyze proportion data with appropriate statistical tests and effect size.
+def power_analysis_path_reuse(df: pl.DataFrame, mu: float = 0.5, alpha: float = 0.05, plot: bool = False, stats_file=None):
+    """Analyze binary proportion data using appropriate statistical test based on normality.
     
     Args:
-        data: numpy array of proportions (0-100 scale)
-        mu: null hypothesis value (default: 0.5 * 100 = 50)
+        df: DataFrame containing reuse column (binary 0/1) and user_id
+        mu: null hypothesis value (default: 0.5)
         alpha: significance level for tests (default: 0.05)
         plot: whether to show diagnostic plots (default: False)
         stats_file: optional file handle to write stats output
-        
-    Returns:
-        dict containing test results and effect size
     """
-    # Convert to 0-1 scale for analysis
-    n = len(data)
-
+    # First aggregate by user to get their mean reuse rate
+    user_means = df.group_by('user_id').agg(
+        reuse_rate=pl.col('reuse').mean(),
+        n_trials=pl.col('reuse').count()
+    )
+    reuse_rates = user_means['reuse_rate'].to_numpy()
+    n_users = len(reuse_rates)
+    n_trials = user_means['n_trials'].to_numpy()
+    
     # Test normality using Shapiro-Wilk test
-    _, normality_p = stats.shapiro(data)
+    _, normality_p = stats.shapiro(reuse_rates)
     is_normal = normality_p > alpha
-
+    
     # Calculate mean and standard error
-    mean = np.mean(data)
-    se = np.std(data, ddof=1) / np.sqrt(n)
-
-    # Perform appropriate statistical test
+    p_obs = np.mean(reuse_rates)
+    se = np.std(reuse_rates, ddof=1) / np.sqrt(n_users)
+    
     if is_normal:
         # One-sided t-test
-        t_stat, p_value = stats.ttest_1samp(data, mu)
+        t_stat, p_value = stats.ttest_1samp(reuse_rates, mu)
         # Convert to one-sided p-value if t-statistic is in predicted direction
         p_value = p_value / 2 if t_stat > 0 else 1 - p_value / 2
-
+        
         # Calculate Cohen's d effect size
-        d = (mean - mu) / np.std(data, ddof=1)
+        d = (p_obs - mu) / np.std(reuse_rates, ddof=1)
         effect_size = {'name': "Cohen's d", 'value': d}
-
+        
         test_name = "One-sample t-test"
         test_stat = t_stat
-
+        
     else:
         # One-sided Wilcoxon signed-rank test
-        w_stat, p_value = stats.wilcoxon(data - mu,
-                                         alternative='greater')
-
+        w_stat, p_value = stats.wilcoxon(reuse_rates - mu, alternative='greater')
+        
         # Calculate r effect size (correlation coefficient) for Wilcoxon test
-        # r = Z / sqrt(N) where Z is the standardized test statistic
-        # Convert p-value to Z score using inverse normal CDF
-        z = stats.norm.ppf(1 - p_value)  # One-sided p-value
-        r = z / np.sqrt(n)  # Standardize by sample size
+        z = stats.norm.ppf(1 - p_value)  # Convert p-value to Z score
+        r = z / np.sqrt(n_users)  # Standardize by sample size
         effect_size = {'name': 'r', 'value': r}
-
+        
         test_name = "Wilcoxon signed-rank test"
         test_stat = w_stat
 
-    if plot:
-        # Create diagnostic plots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-
-        # Histogram with density plot
-        sns.histplot(data, kde=True, ax=ax1)
-        ax1.axvline(mu, color='r', linestyle='--',
-                    label=f'Null (μ={mu})')
-        ax1.set_title('Distribution of Proportions')
-        ax1.set_xlabel('Proportion')
-        ax1.legend()
-
-        # Q-Q plot
-        stats.probplot(data, dist="norm", plot=ax2)
-        ax2.set_title('Q-Q Plot')
-
-        plt.tight_layout()
-        plt.show()
-
-    # Prepare results
-    results = {
-        'n': n,
-        'mean': mean,
-        'se': se,
-        'normality': {
-            'is_normal': is_normal,
-            'p_value': normality_p
-        },
-        'test': {
-            'name': test_name,
-            'statistic': test_stat,
-            'p_value': p_value
-        },
-        'effect_size': effect_size
-    }
-
     # Print summary
-    summary = f"\nAnalysis Results (N={n}):\n"
-    summary += f"Mean: {results['mean']:.2f}% (SE: {results['se']:.2f}%)\n"
-    summary += f"\nNormality Test (Shapiro-Wilk):\n"
-    summary += f"p = {normality_p:.3f} ({'Normal' if is_normal else 'Non-normal'} distribution)\n"
-    summary += f"\n{test_name}:\n"
+    summary = f"\nAnalysis Results:\n"
+    summary += f"N = {n_users} participants (mean {np.mean(n_trials):.1f} trials per participant)\n"
+    summary += f"Mean reuse rate: {p_obs:.3f} (SE: {se:.3f})\n\n"
+    summary += f"Normality Test (Shapiro-Wilk):\n"
+    summary += f"p = {normality_p:.3f} ({'Normal' if is_normal else 'Non-normal'} distribution)\n\n"
+    summary += f"{test_name}:\n"
     summary += f"statistic = {test_stat:.3f}\n"
-    summary += f"p = {p_value:.3f}\n"
-    summary += f"\nEffect Size ({effect_size['name']}):\n"
+    summary += f"p = {p_value:.3f}\n\n"
+    summary += f"Effect Size ({effect_size['name']}):\n"
     summary += f"{effect_size['value']:.3f}\n"
-    
 
-    # Calculate required sample size for different power levels
+    # Calculate required sample sizes for different power levels
     power_levels = [0.8, 0.9, 0.95]
     summary += "\nRequired Sample Sizes:\n"
-
+    
     if is_normal:
         # For t-test
         effect = effect_size['value']  # Cohen's d
@@ -981,9 +750,9 @@ def analyze_proportion_test(data, mu=0.5, alpha=0.05, plot=False, stats_file=Non
             analysis = TTestPower()
             n_required = analysis.solve_power(
                 effect_size=effect,
-                alpha=0.05,
+                alpha=alpha,
                 power=power,
-                alternative='larger'  # one-sided test
+                alternative='larger'
             )
             summary += f"Power {power*100:g}%: N ≥ {ceil(n_required)} participants\n"
     else:
@@ -996,9 +765,9 @@ def analyze_proportion_test(data, mu=0.5, alpha=0.05, plot=False, stats_file=Non
             analysis = TTestPower()
             n_required = analysis.solve_power(
                 effect_size=d,
-                alpha=0.05,
+                alpha=alpha,
                 power=power,
-                alternative='larger'  # one-sided test
+                alternative='larger'
             )
             # Adjust for Wilcoxon efficiency
             n_required = ceil(n_required / 0.95)
@@ -1007,106 +776,127 @@ def analyze_proportion_test(data, mu=0.5, alpha=0.05, plot=False, stats_file=Non
     if stats_file:
         stats_file.write(summary)
 
-    return results
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Histogram with density plot
+        sns.histplot(data=user_means, x='reuse_rate', kde=True, ax=ax1)
+        ax1.axvline(mu, color='r', linestyle='--', label=f'Null (μ={mu})')
+        ax1.set_title('Distribution of User Reuse Rates')
+        ax1.set_xlabel('Reuse Rate')
+        ax1.legend()
+        
+        # Q-Q plot
+        stats.probplot(reuse_rates, dist="norm", plot=ax2)
+        ax2.set_title('Q-Q Plot')
+        
+        plt.tight_layout()
+        plt.show()
 
-def power_analysis_between_groups(data1, data2, alpha=0.05, power=0.8, stats_file=None):
-    """Perform power analysis for between-groups comparison and calculate required sample size.
+    return {
+        'n_users': n_users,
+        'mean_trials': np.mean(n_trials),
+        'reuse_rates': reuse_rates,
+        'mean': p_obs,
+        'se': se,
+        'normality': {'is_normal': is_normal, 'p_value': normality_p},
+        'test': {'name': test_name, 'statistic': test_stat, 'p_value': p_value},
+        'effect_size': effect_size
+    }
+
+def power_analysis_rt_across_groups(df: pl.DataFrame, measure: str, alpha=0.05, power=0.8, stats_file=None):
+    """Perform power analysis for between-groups comparison with repeated measures.
     
     Args:
-        data1: Array of measurements from group 1
-        data2: Array of measurements from group 2
+        df: DataFrame with columns [user_id, reuse, rt] where:
+            - user_id: identifier for each participant
+            - reuse: boolean indicating condition
+            - rt: reaction time measurement (in log seconds)
         alpha: Significance level (default: 0.05)
         power: Desired statistical power (default: 0.8)
         stats_file: Optional file handle to write stats output
     
     Returns:
-        dict containing:
-            - normality: Results of normality tests
-            - effect_size: Effect size (Cohen's d or r)
-            - n_required: Required sample size per group
-            - actual_power: Actual power achieved with current sample size
-            - test_results: Results of statistical test on current data
+        dict containing analysis results
     """
-    # Test for normality in both groups
-    _, p1 = stats.shapiro(data1)
-    _, p2 = stats.shapiro(data2)
+    # First get user-level statistics
+    user_stats = (df.group_by(['user_id', 'reuse'])
+                   .agg(
+                       mean_val=pl.col(measure).mean(),
+                       n_trials=pl.col(measure).count()
+                   ))
+
+    # Get trial counts per condition
+    trial_counts = (df.group_by('reuse')
+                    .agg(n_trials=pl.col(measure).count())).to_numpy()
+
+    # Calculate means for each user-condition
+    reuse_means = user_stats.filter(reuse=True)['mean_val'].to_numpy()
+    no_reuse_means = user_stats.filter(reuse=False)['mean_val'].to_numpy()
+
+    # Test for normality using user means
+    _, p1 = stats.shapiro(no_reuse_means)
+    _, p2 = stats.shapiro(reuse_means)
     is_normal = (p1 > alpha) and (p2 > alpha)
 
-    n1, n2 = len(data1), len(data2)
-    mean1, mean2 = np.mean(data1), np.mean(data2)
-
+    # Get basic stats
+    n1, n2 = len(no_reuse_means), len(reuse_means)
+    mean1, mean2 = np.mean(no_reuse_means), np.mean(reuse_means)
+    
     if is_normal:
         # Use t-test and Cohen's d for normal data
-        var1, var2 = np.var(data1, ddof=1), np.var(data2, ddof=1)
-
+        var1, var2 = np.var(no_reuse_means, ddof=1), np.var(reuse_means, ddof=1)
+        
         # Pooled standard deviation
-        pooled_sd = np.sqrt(
-            ((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
-
-        # Cohen's d
+        pooled_sd = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
+        
+        # Cohen's d using pooled SD
         d = (mean1 - mean2) / pooled_sd
         effect_size = {'name': "Cohen's d", 'value': d}
-
-        # Perform power analysis
-        analysis = TTestIndPower()
-
-        # Calculate required sample size
-        n_required = analysis.solve_power(
-            effect_size=abs(d),
-            alpha=alpha,
-            power=power,
-            ratio=1.0,
-            alternative='larger'
-        )
-
-        # Calculate actual power with current sample size
-        actual_power = analysis.power(
-            effect_size=abs(d),
-            nobs1=min(n1, n2),  # Changed from nobs to nobs1
-            alpha=alpha,
-            ratio=1.0,
-            alternative='larger'
-        ) * 0.95  # Adjust for efficiency
-
+        
         # Perform t-test
-        t_stat, p_value = stats.ttest_ind(data1, data2, alternative='greater')
+        t_stat, p_value = stats.ttest_ind(no_reuse_means, reuse_means, alternative='greater')
         test_name = "Independent t-test"
         test_stat = t_stat
-
+        
     else:
-        # Use Mann-Whitney U test and r effect size for non-normal data
-        u_stat, p_value = stats.mannwhitneyu(
-            data1, data2, alternative='greater')
+        # Use Mann-Whitney U test for non-normal data
+        u_stat, p_value = stats.mannwhitneyu(no_reuse_means, reuse_means, alternative='greater')
         test_name = "Mann-Whitney U test"
         test_stat = u_stat
-
-        # Calculate r effect size for Mann-Whitney U test
-        # r = Z / sqrt(N)
-        z = stats.norm.ppf(1 - p_value)  # Convert p-value to Z score
+        
+        # Calculate r effect size
+        z = stats.norm.ppf(1 - p_value)
         r = z / np.sqrt(n1 + n2)
         effect_size = {'name': 'r', 'value': r}
-
-        # For non-normal data, convert r to approximate d for power analysis
-        # d = 2r/sqrt(1-r^2)
+        
+        # Convert r to d for power analysis
         d = 2 * r / np.sqrt(1 - r**2) if abs(r) < 1 else float('inf')
 
-        # Use t-test power analysis as approximation
-        analysis = TTestIndPower()
-        n_required = ceil(analysis.solve_power(
-            effect_size=abs(d),
-            alpha=alpha,
-            power=power,
-            ratio=1.0,
-            alternative='larger'
-        ) / 0.95)  # Adjust for ~95% efficiency of Mann-Whitney vs t-test
-
-        actual_power = analysis.power(
-            effect_size=abs(d),
-            nobs1=min(n1, n2),  # Changed from nobs to nobs1
-            alpha=alpha,
-            ratio=1.0,
-            alternative='larger'
-        ) * 0.95  # Adjust for efficiency
+    # Power analysis
+    analysis = TTestIndPower()
+    
+    # Calculate required sample size
+    n_required = analysis.solve_power(
+        effect_size=abs(d),
+        alpha=alpha,
+        power=power,
+        ratio=1.0,
+        alternative='larger'
+    )
+    if not is_normal:
+        n_required = ceil(n_required / 0.95)  # Adjust for non-parametric test
+    
+    # Calculate actual power
+    actual_power = analysis.power(
+        effect_size=abs(d),
+        nobs1=min(n1, n2),
+        alpha=alpha,
+        ratio=1.0,
+        alternative='larger'
+    )
+    if not is_normal:
+        actual_power *= 0.95  # Adjust for non-parametric test
 
     results = {
         'normality': {
@@ -1122,36 +912,70 @@ def power_analysis_between_groups(data1, data2, alpha=0.05, power=0.8, stats_fil
             'p_value': p_value,
             'n1': n1,
             'n2': n2
+        },
+        'descriptive': {
+            'means': {'no_reuse': mean1, 'reuse': mean2},
+            'sds': {'no_reuse': np.sqrt(var1), 'reuse': np.sqrt(var2)} if is_normal else None,
+            'ses': {'no_reuse': np.sqrt(var1/n1), 'reuse': np.sqrt(var2/n2)} if is_normal else None
         }
     }
+    
+    # Include raw means for further analysis
+    results['raw_means'] = {
+        'no_reuse': no_reuse_means,
+        'reuse': reuse_means
+    }
 
-    # Write results to stats file if provided
+    n_no_reuse = trial_counts[0, 1]
+    n_reuse = trial_counts[1, 1]
     if stats_file:
         stats_file.write("\nPower Analysis Results:\n")
+        stats_file.write("Sample Sizes:\n")
+        stats_file.write(f"\tNo Reuse: {n1} users ({n_no_reuse} trials)\n")
+        stats_file.write(f"\tReuse: {n2} users ({n_reuse} trials)\n\n")
+        
+        stats_file.write("Means:\n")
+        stats_file.write(f"\tNo Reuse: {mean1:.3f}\n")
+        stats_file.write(f"\tReuse: {mean2:.3f}\n")
+        stats_file.write(f"\tDifference: {mean2 - mean1:.3f}\n\n")
+
         stats_file.write(f"Normality test p-values: {results['normality']['p_values']}\n")
-        stats_file.write(f"Using {results['test_results']['name']} ({'normal' if results['normality']['is_normal'] else 'non-normal'} distribution)\n")
-        stats_file.write(f"\nEffect size ({results['effect_size']['name']}): {results['effect_size']['value']:.3f}\n")
-        stats_file.write(f"Current sample sizes: n1={results['test_results']['n1']}, n2={results['test_results']['n2']}\n")
+        stats_file.write(f"Using {results['test_results']['name']} ({'normal' if is_normal else 'non-normal'} distribution)\n\n")
+        
+        stats_file.write(f"Effect size ({results['effect_size']['name']}): {results['effect_size']['value']:.3f}\n")
         stats_file.write(f"Required sample size per group (80% power): {results['n_required']}\n")
-        stats_file.write(f"Actual power with current sample size: {results['actual_power']:.3f}\n")
-        stats_file.write("\nCurrent Data Analysis:\n")
+        stats_file.write(f"Actual power with current sample size: {results['actual_power']:.3f}\n\n")
+        
+        stats_file.write("Statistical Test Results:\n")
         stats_file.write(f"Test statistic: {results['test_results']['statistic']:.3f}\n")
         stats_file.write(f"p-value: {results['test_results']['p_value']:.3f}\n")
 
     return results
 
-def analyze_rt_differences(differences, rt_col, alpha=0.05, stats_file=None):
+def power_analysis_rt_differences(
+    difference_df: pl.DataFrame,
+    measure: str,
+    alpha: float = 0.05,
+    stats_file = None
+) -> dict:
     """Analyze RT differences between conditions with appropriate statistical tests.
     
     Args:
-        differences: numpy array of RT differences (cond2 - cond1)
-        rt_col: Name of RT column being analyzed
+        difference_df: DataFrame containing RT differences and user/reversal info
+        measure: Name of RT measure column being analyzed
         alpha: significance level for tests (default: 0.05)
         stats_file: optional file handle to write stats output
         
     Returns:
         dict containing test results and effect size
     """
+    # Get mean difference per user (averaging across reversals)
+    user_means = (difference_df
+                 .group_by('user_id')
+                 .agg(pl.col(measure).mean())
+                 .select(measure))
+    differences = user_means.to_numpy().flatten()
+    
     n = len(differences)
 
     # Test normality using Shapiro-Wilk test
@@ -1163,8 +987,8 @@ def analyze_rt_differences(differences, rt_col, alpha=0.05, stats_file=None):
     se = np.std(differences, ddof=1) / np.sqrt(n)
 
     if stats_file:
-        stats_file.write(f"\nRT Analysis for {rt_col}:\n")
-        stats_file.write("-" * (len(rt_col) + 15) + "\n")
+        stats_file.write(f"\n{measure}:\n")
+        stats_file.write("=" * (len(measure)+10) + "\n")
         stats_file.write(f"N = {n} participants\n")
         stats_file.write(f"Mean difference = {mean:.3f} (SE: {se:.3f})\n\n")
         stats_file.write("Normality Test (Shapiro-Wilk):\n")
@@ -1257,7 +1081,7 @@ def analyze_rt_differences(differences, rt_col, alpha=0.05, stats_file=None):
         stats_file.write("Required sample sizes:\n")
         for power, n_req in required_n.items():
             stats_file.write(f"  {power*100:g}% power: N ≥ {n_req}\n")
-        stats_file.write("\n" + "="*50 + "\n")
+
 
     return {
         'n': n,
@@ -1390,13 +1214,14 @@ def plot_sf_values(e, idxs=None, line_mask=None, line_names=None, figsize=None, 
 
     return fig, axs
 
-################################################################################
-# Exp 1
-################################################################################
+############################################################################
+# Experiment results
+############################################################################
 def experiment_1_results(
       user_df: DataFrame,
       model_df: DataFrame,
       save_dir: str,
+      filter_columns: List[str] = [],
       display_figs: bool = False,
       save_figs: bool = True,
       ):
@@ -1430,18 +1255,6 @@ def experiment_1_results(
       group_key='user_id',
   ).filter(eval=True)
 
-  ##################
-  # filter outliers based on episode path length and max reaction time
-  ##################
-  # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-  # Check if reuse column is string type
-  exp1_eval_df = filter_outliers(
-      exp1_eval_df,
-      filter_columns=['path_length', 'avg_rt'],
-  )
-  ##################
-  # Create example paths
-  ##################
   # Convert reuse column from string to boolean
   if exp1_eval_df.schema['reuse'] == pl.String:
       exp1_eval_df = exp1_eval_df.with_columns(
@@ -1451,21 +1264,34 @@ def experiment_1_results(
       pass
   else:
       raise ValueError("Reuse column is type: ", exp1_eval_df.schema['reuse'])
-  
-  old_path_cond = exp1_eval_df.filter(maze='big_m3_maze1_(F,F)', reuse=True)
-  new_path_cond = exp1_eval_df.filter(maze='big_m3_maze1_(F,F)', reuse=False)
 
-  fig, ax = plt.subplots(figsize=(6, 6))
-  render_paths(
-      episode_list=[old_path_cond.episodes[0], new_path_cond.episodes[0]],
-      colors=[model_colors['dynaq_shared'], model_colors['dfs']],
-      ax=ax)
-  if save_figs:
-      fig.savefig(
-         os.path.join(save_dir, 'exp1_1_example_paths.pdf'),
-                  bbox_inches='tight')
-  if display_figs:
-    plt.show()
+  ##################
+  # filter outliers based on episode path length and max reaction time
+  ##################
+  # Check if reuse column is string type
+  if filter_columns:
+    exp1_eval_df = filter_outliers(
+        exp1_eval_df,
+        filter_columns=filter_columns,
+  )
+  ###################
+  ## Create example paths
+  ###################
+
+  #old_path_cond = exp1_eval_df.filter(maze='big_m3_maze1_(F,F)', reuse=True)
+  #new_path_cond = exp1_eval_df.filter(maze='big_m3_maze1_(F,F)', reuse=False)
+
+  #fig, ax = plt.subplots(figsize=(6, 6))
+  #render_paths(
+  #    episode_list=[old_path_cond.episodes[0], new_path_cond.episodes[0]],
+  #    colors=[model_colors['dynaq_shared'], model_colors['dfs']],
+  #    ax=ax)
+  #if save_figs:
+  #    fig.savefig(
+  #       os.path.join(save_dir, 'exp1_1_example_paths.pdf'),
+  #                bbox_inches='tight')
+  #if display_figs:
+  #  plt.show()
 
 
   ##################
@@ -1473,37 +1299,13 @@ def experiment_1_results(
   ##################
   # compute the mean by user
   # Get mean success rate per user
-  human_successes = exp1_eval_df.group_by('user_id').agg(
-      pl.col('success').mean()).select('success').to_numpy().flatten()
-  
-  # put in (0, 100) range
-  human_successes = 100*human_successes
-  
-
-  # Calculate mean and standard error across users
-  human_mean = np.mean(human_successes)
-  human_se = np.std(human_successes) / np.sqrt(len(human_successes))
-
-  model_stats = (
-     mdf.group_by('algo')
-                 .agg(
-      mean=pl.col('success').mean() * 100,
-      se=(pl.col('success').std() /
-          pl.col('success').count().sqrt()) * 100
-  ))
-
   fig, ax = plt.subplots(figsize=(6, 3))
-  bar_plot_error(
-      human_data=dict(
-          #raw=human_successes,
-          means=human_mean,
-          se=human_se),
-      model_stats=model_stats,
+  plot_success_rate_comparison(
+      df=exp1_eval_df,
+      model_df=mdf,
       ax=ax,
-      legend=False,
-  )
-  ax.set_title('Exp 1 Generalization Success Rate', fontsize=DEFAULT_TITLE_SIZE)
-  ax.set_ylabel('Success Rate (%)', fontsize=DEFAULT_LABEL_SIZE)
+      title="Exp 1 Generalization Success Rate")
+
   if save_figs:
       fig.savefig(
           os.path.join(save_dir, 'exp1_2_success_rate.pdf'),
@@ -1515,38 +1317,17 @@ def experiment_1_results(
   ##################
   # Create path re-use analysis plots
   ##################
-  human_reuse = exp1_eval_df.group_by('user_id').agg(
-      pl.col('reuse').mean()).select('reuse').to_numpy().flatten()
-  stats_file.write("Path Reuse Analysis\n")
-  stats_file.write("--------------------\n")
-  reuse_results = analyze_proportion_test(human_reuse, mu=0.5, alpha=0.05,
-                          plot=False, stats_file=stats_file)
-  # put in (0, 100) range
-  human_reuse = 100*human_reuse
-
-  # Calculate mean and standard error across users
-  human_mean = np.mean(human_reuse)
-  human_se = np.std(human_reuse) / np.sqrt(len(human_reuse))
-
-  model_stats = (
-      mdf.group_by('algo')
-      .agg(
-          mean=pl.col('reuse').mean() * 100,
-          se=(pl.col('reuse').std() /
-              pl.col('reuse').count().sqrt()) * 100
-  ))
+  stats_file.write("\nPath Reuse Analysis\n")
+  stats_file.write("======================================\n")
 
   fig, ax = plt.subplots(figsize=(6, 3))
-  bar_plot_error(
-      human_data=dict(
-          raw=human_reuse,
-          means=human_mean,
-          se=human_se),
-      model_stats=model_stats,
+  plot_path_reuse_comparison(
+      stats_file=stats_file,
+      df=exp1_eval_df,
+      model_df=mdf,
       ax=ax,
-  )
-  ax.set_title('Exp 1 Path Reuse', fontsize=DEFAULT_TITLE_SIZE)
-  ax.set_ylabel('Path Reuse (%)', fontsize=DEFAULT_LABEL_SIZE)
+      title="Exp 1 Path Reuse")
+
   if save_figs:
       fig.savefig(
           os.path.join(save_dir, 'exp1_3_path_reuse.pdf'),
@@ -1558,122 +1339,51 @@ def experiment_1_results(
   ######################
   # Plot reaction times when using new path vs. partial reuse
   ######################
-  # two plots, one for first RT and one for avg RT
-  # 1. first compute log RT values
-  # 2. then get the average per user
-  # 3. then for each value, plot the mean and standard error across users
-  # 4. finally, add the per-use mean values
-  reuse_episodes = exp1_eval_df.filter(reuse=True)
-  no_reuse_episodes = exp1_eval_df.filter(reuse=False)
+  stats_file.write("\nReaction Time Analysis\n")
+  stats_file.write("======================================\n")
 
-  stats_file.write("\n\nReaction Time Analysis\n")
-  stats_file.write("--------------------\n")
-  # First RT bar comparison
-  fig, ax = plt.subplots(figsize=(3, 3))
-  plot_bar_rt_comparison(
-      [no_reuse_episodes, reuse_episodes],
-      'first_rt',
-      title='First Reaction Time',
-      ylabel='log milliseconds',
-      xlabels=['New Path', 'Partial Reuse'],
-      colors=[default_colors['nice purple'], default_colors['bluish green']],
-      stats_file=stats_file,
-      ax=ax)
-  if save_figs:
-    fig.savefig(
-        os.path.join(save_dir, 'exp1_4_bar_first_rt.pdf'),
-        bbox_inches='tight')
-  if display_figs:
-    plt.show()
+  for idx, measure in enumerate(['log_first_rt', 'log_avg_rt', 'log_max_rt']):
+    stats_file.write(f"\n{idx}. {measure}\n")
+    stats_file.write("--------------------\n")
 
-  # Max RT bar comparison
-  fig, ax = plt.subplots(figsize=(3, 3))
-  plot_bar_rt_comparison(
-      [no_reuse_episodes, reuse_episodes],
-      'max_rt',
-      title='Max Reaction Time',
-      ylabel='log milliseconds',
-      xlabels=['New Path', 'Partial Reuse'],
-      colors=[default_colors['nice purple'], default_colors['bluish green']],
-      stats_file=stats_file,
-      ax=ax)
-  if save_figs:
-    fig.savefig(
-        os.path.join(save_dir, 'exp1_4_bar_first_rt.pdf'),
-        bbox_inches='tight')
-  if display_figs:
-    plt.show()
+    fig, ax = plt.subplots(figsize=(3, 3))
+    plot_bar_rt_comparison(
+        exp1_eval_df,
+        measure,
+        title=dict(log_first_rt='First Reaction Time',
+                   log_avg_rt='Average Reaction Time',
+                   log_max_rt='Max Reaction Time')[measure],
+        ylabel='log seconds',
+        xlabels=['New Path', 'Partial Reuse'],
+        colors=[default_colors['nice purple'], default_colors['bluish green']],
+        stats_file=stats_file,
+        ax=ax)
+    if save_figs:
+      fig.savefig(
+          os.path.join(save_dir, f'exp1_3_bar_{measure}.pdf'),
+          bbox_inches='tight')
+    if display_figs:
+      plt.show()
 
-  # Average RT bar comparison  
-  fig, ax = plt.subplots(figsize=(3, 3))
-  plot_bar_rt_comparison(
-      [no_reuse_episodes, reuse_episodes],
-      'avg_rt',
-      title='Average Reaction Time',
-      ylabel='log avg(milliseconds/step)',
-      xlabels=['New Path', 'Partial Reuse'],
-      colors=[default_colors['nice purple'], default_colors['bluish green']],
-      ax=ax)
-  if save_figs:
-    fig.savefig(
-        os.path.join(save_dir, 'exp1_4_bar_avg_rt.pdf'),
-        bbox_inches='tight')
-  if display_figs:
-    plt.show()
-
-  # First RT mean comparison
-  fig, ax = plt.subplots(figsize=(3, 3))
-  plot_mean_rt_comparison(
-      [no_reuse_episodes, reuse_episodes],
-      'first_rt',
-      title='First Reaction Time',
-      ylabel='log milliseconds',
-      xlabels=['New Path', 'Partial Reuse'],
-      colors=[default_colors['nice purple'], default_colors['bluish green']],
-      ax=ax)
-  if save_figs:
-    fig.savefig(
-        os.path.join(save_dir, 'exp1_4_mean_first_rt.pdf'),
-        bbox_inches='tight')
-  if display_figs:
-    plt.show()
-
-  # Average RT mean comparison
-  fig, ax = plt.subplots(figsize=(3, 3))
-  plot_mean_rt_comparison(
-      [no_reuse_episodes, reuse_episodes],
-      'avg_rt',
-      title='Average Reaction Time',
-      ylabel='log avg(milliseconds/step)',
-      xlabels=['New Path', 'Partial Reuse'],
-      colors=[default_colors['nice purple'], default_colors['bluish green']],
-      ax=ax)
-  if save_figs:
-    fig.savefig(
-        os.path.join(save_dir, 'exp1_4_mean_avg_rt.pdf'),
-        bbox_inches='tight')
-  if display_figs:
-    plt.show()
-
-  ######################
-  # When do partial reuse, plot first, max post, avg post
-  ######################
-  fig, ax = plt.subplots(1, 1, figsize=(6, 3))
-  colors = ["bluish green", "reddish purple", "yellow", "orange"]
-  plot_bar_rt_comparison_columns(
-      reuse_episodes,
-      ['first_rt', 'max_init_post_rt', 'max_final_rt', 'avg_post_rt'],
-      title='Reaction time measurements over episode',
-      ylabel='log milliseconds',
-      xlabels=['First', 'Max 1st ½', 'Max 2nd ½', 'Avg Post'],
-      colors=[default_colors[c] for c in colors],
-      ax=ax)
-  if save_figs:
-    fig.savefig(
-        os.path.join(save_dir, 'exp1_5_bar_reuse_rt_comparison.pdf'),
-        bbox_inches='tight')
-  if display_figs:
-    plt.show()
+  #######################
+  ## When do partial reuse, plot first, max post, avg post
+  #######################
+  #fig, ax = plt.subplots(1, 1, figsize=(6, 3))
+  #colors = ["bluish green", "reddish purple", "yellow", "orange"]
+  #plot_bar_rt_comparison_columns(
+  #    reuse_episodes,
+  #    ['first_rt', 'max_init_post_rt', 'max_final_rt', 'avg_post_rt'],
+  #    title='Reaction time measurements over episode',
+  #    ylabel='log seconds',
+  #    xlabels=['First', 'Max 1st ½', 'Max 2nd ½', 'Avg Post'],
+  #    colors=[default_colors[c] for c in colors],
+  #    ax=ax)
+  #if save_figs:
+  #  fig.savefig(
+  #      os.path.join(save_dir, 'exp1_5_bar_reuse_rt_comparison.pdf'),
+  #      bbox_inches='tight')
+  #if display_figs:
+  #  plt.show()
   
 
   ######################
@@ -1701,6 +1411,7 @@ def experiment_2_results(
     user_df: DataFrame,
     model_df: DataFrame,
     save_dir: str,
+    filter_columns: List[str] = None,
     display_figs: bool = False,
     save_figs: bool = True,
 ):
@@ -1718,7 +1429,6 @@ def experiment_2_results(
   # Open stats file
   stats_file = open(os.path.join(save_dir, 'stats.txt'), 'w')
   stats_file.write("Experiment 2 Statistical Analysis\n")
-  stats_file.write("===============================\n\n")
 
   ##################
   # Get relevant simulations
@@ -1735,18 +1445,6 @@ def experiment_2_results(
       group_key='user_id',
   ).filter(eval=True)
 
-  ##################
-  # filter outliers based on episode path length and max reaction time
-  ##################
-  # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-  # Check if reuse column is string type
-  exp2_eval_df = filter_outliers(
-      exp2_eval_df,
-      filter_columns=['path_length', 'avg_rt'],
-  )
-  ##################
-  # Create example paths
-  ##################
   # Convert reuse column from string to boolean
   if exp2_eval_df.schema['reuse'] == pl.String:
       exp2_eval_df = exp2_eval_df.with_columns(
@@ -1757,56 +1455,55 @@ def experiment_2_results(
   else:
       raise ValueError("Reuse column is type: ", exp2_eval_df.schema['reuse'])
 
-  old_path_cond = user_df.filter(maze='big_m1_maze3_(F,F)', room=0).sort('path_length', descending=True)
-  new_path_cond = exp2_eval_df.filter(maze='big_m1_maze3_shortcut_(F,F)', reuse=False)
+  ##################
+  # filter outliers based on episode path length and max reaction time
+  ##################
+  # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
+  # Check if reuse column is string type
+  if filter_columns:
+    exp2_eval_df = filter_outliers(
+        exp2_eval_df,
+        filter_columns=filter_columns,
+    )
+  ###################
+  ## Create example paths
+  ###################
+  ## Convert reuse column from string to boolean
+  #if exp2_eval_df.schema['reuse'] == pl.String:
+  #    exp2_eval_df = exp2_eval_df.with_columns(
+  #        pl.col('reuse') == 'true'
+  #    )
+  #elif exp2_eval_df.schema['reuse'] == pl.Boolean:
+  #    pass
+  #else:
+  #    raise ValueError("Reuse column is type: ", exp2_eval_df.schema['reuse'])
 
-  fig, ax = plt.subplots(figsize=(6, 6))
-  render_paths(
-      episode_list=[new_path_cond.episodes[0], old_path_cond.episodes[0]],
-      colors=[model_colors['dfs'], model_colors['dynaq_shared']],
-      ax=ax)
-  if save_figs:
-      fig.savefig(
-          os.path.join(save_dir, 'exp2_1_example_paths.pdf'),
-          bbox_inches='tight')
-  if display_figs:
-    plt.show()
+  #old_path_cond = user_df.filter(maze='big_m1_maze3_(F,F)', room=0).sort('path_length', descending=True)
+  #new_path_cond = exp2_eval_df.filter(maze='big_m1_maze3_shortcut_(F,F)', reuse=False)
+
+  #fig, ax = plt.subplots(figsize=(6, 6))
+  #render_paths(
+  #    episode_list=[new_path_cond.episodes[0], old_path_cond.episodes[0]],
+  #    colors=[model_colors['dfs'], model_colors['dynaq_shared']],
+  #    ax=ax)
+  #if save_figs:
+  #    fig.savefig(
+  #        os.path.join(save_dir, 'exp2_1_example_paths.pdf'),
+  #        bbox_inches='tight')
+  #if display_figs:
+  #  plt.show()
 
   ##################
   # Create success rate and path reuse plots
   ##################
-  # compute the mean by user
-  # Get mean success rate per user
-  human_successes = exp2_eval_df.group_by('user_id').agg(
-      pl.col('success').mean()).select('success').to_numpy().flatten()
-  # put in (0, 100) range
-  human_successes = 100*human_successes
-
-  # Calculate mean and standard error across users
-  human_mean = np.mean(human_successes)
-  human_se = np.std(human_successes) / np.sqrt(len(human_successes))
-
-  model_stats = (
-      mdf.group_by('algo')
-      .agg(
-          mean=pl.col('success').mean() * 100,
-          se=(pl.col('success').std() /
-              pl.col('success').count().sqrt()) * 100
-      )
-  )
 
   fig, ax = plt.subplots(figsize=(6, 3))
-  bar_plot_error(
-      human_data=dict(
-          # raw=human_successes,
-          means=human_mean,
-          se=human_se),
-      model_stats=model_stats,
+  plot_success_rate_comparison(
+      df=exp2_eval_df,
+      model_df=mdf,
       ax=ax,
-      legend=False,
-  )
-  ax.set_title('Exp 2 Generalization Success Rate', fontsize=DEFAULT_TITLE_SIZE)
-  ax.set_ylabel('Success Rate (%)', fontsize=DEFAULT_LABEL_SIZE)
+      title="Exp 2 Generalization Success Rate")
+
   if save_figs:
       fig.savefig(
           os.path.join(save_dir, 'exp2_2_success_rate.pdf'),
@@ -1818,38 +1515,17 @@ def experiment_2_results(
   ##################
   # Create path re-use analysis plots
   ##################
-  human_reuse = exp2_eval_df.group_by('user_id').agg(
-      pl.col('reuse').mean()).select('reuse').to_numpy().flatten()
-  # put in (0, 100) range
-  human_reuse = 100*human_reuse
-
   stats_file.write("\nPath Reuse Analysis\n")
-  stats_file.write("------------------\n")
-  analyze_proportion_test(human_reuse, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file)
-
-  # Calculate mean and standard error across users
-  human_mean = np.mean(human_reuse)
-  human_se = np.std(human_reuse) / np.sqrt(len(human_reuse))
-
-  model_stats = (
-      mdf.group_by('algo')
-      .agg(
-          mean=pl.col('reuse').mean() * 100,
-          se=(pl.col('reuse').std() /
-              pl.col('reuse').count().sqrt()) * 100
-  ))
+  stats_file.write("======================================\n")
 
   fig, ax = plt.subplots(figsize=(6, 3))
-  bar_plot_error(
-      human_data=dict(
-          raw=human_reuse,
-          means=human_mean,
-          se=human_se),
-      model_stats=model_stats,
+  plot_path_reuse_comparison(
+      df=exp2_eval_df,
+      model_df=mdf,
       ax=ax,
-  )
-  ax.set_title('Exp 2 Partial Path Reuse', fontsize=DEFAULT_TITLE_SIZE)
-  ax.set_ylabel('Path Reuse (%)', fontsize=DEFAULT_LABEL_SIZE)
+      stats_file=stats_file,
+      title="Exp 2 Path Reuse")
+
   if save_figs:
       fig.savefig(
           os.path.join(save_dir, 'exp2_3_path_reuse.pdf'),
@@ -1887,7 +1563,6 @@ def experiment_3_results(
   save_dir = os.path.join(save_dir, 'exp3')
   os.makedirs(save_dir, exist_ok=True)
   # Default to ['avg_rt'] if no filter columns specified
-  filter_columns = filter_columns or ['avg_rt']
 
   stats_file = open(os.path.join(save_dir, 'stats.txt'), 'w')
   stats_file.write("Experiment 3 Statistical Analysis\n")
@@ -1903,41 +1578,42 @@ def experiment_3_results(
       group_key='user_id',
   ).filter(eval=True)
 
-  ##################
-  # Create example paths
-  ##################
-  # Convert reuse column from string to boolean
-  if exp3_eval_df.schema['reuse'] == pl.String:
-      exp3_eval_df = exp3_eval_df.with_columns(
-          pl.col('reuse') == 'true'
-      )
-  elif exp3_eval_df.schema['reuse'] == pl.Boolean:
-      pass
-  else:
-      raise ValueError("Reuse column is type: ", exp3_eval_df.schema['reuse'])
+  ###################
+  ## Create example paths
+  ###################
+  ## Convert reuse column from string to boolean
+  #if exp3_eval_df.schema['reuse'] == pl.String:
+  #    exp3_eval_df = exp3_eval_df.with_columns(
+  #        pl.col('reuse') == 'true'
+  #    )
+  #elif exp3_eval_df.schema['reuse'] == pl.Boolean:
+  #    pass
+  #else:
+  #    raise ValueError("Reuse column is type: ", exp3_eval_df.schema['reuse'])
 
-  old_path_cond = exp3_eval_df.filter(
-      maze='big_m2_maze2_onpath_(F,F)')
-  new_path_cond = exp3_eval_df.filter(
-      maze='big_m2_maze2_offpath_(F,F)')
+  #old_path_cond = exp3_eval_df.filter(
+  #    maze='big_m2_maze2_onpath_(F,F)')
+  #new_path_cond = exp3_eval_df.filter(
+  #    maze='big_m2_maze2_offpath_(F,F)')
 
-  fig, ax = plt.subplots(figsize=(6, 6))
-  render_paths(
-      episode_list=[old_path_cond.episodes[0], new_path_cond.episodes[0]],
-      render_both=True,
-      colors=[model_colors['dynaq_shared'], model_colors['dfs']],
-      ax=ax)
-  if save_figs:
-      fig.savefig(
-          os.path.join(save_dir, 'exp3_1_example_paths.pdf'),
-          bbox_inches='tight')
-  if display_figs:
-    plt.show()
+  #fig, ax = plt.subplots(figsize=(6, 6))
+  #render_paths(
+  #    episode_list=[old_path_cond.episodes[0], new_path_cond.episodes[0]],
+  #    render_both=True,
+  #    colors=[model_colors['dynaq_shared'], model_colors['dfs']],
+  #    ax=ax)
+  #if save_figs:
+  #    fig.savefig(
+  #        os.path.join(save_dir, 'exp3_1_example_paths.pdf'),
+  #        bbox_inches='tight')
+  #if display_figs:
+  #  plt.show()
 
   ##################
   # Create reaction time difference plot
   ##################
   # Create filter string for filename
+  filter_columns = filter_columns or []
   filter_str = ','.join(filter_columns)
 
   cond1_df = exp3_eval_df.filter(manipulation=2, eval=True, condition=1)
@@ -1945,11 +1621,11 @@ def experiment_3_results(
   fig, ax = plot_rt_condition_differences(
       cond1_df=cond1_df,
       cond2_df=cond2_df,
-      rt_columns=['first_rt', 'max_rt', 'avg_rt'],
+      rt_columns=['log_first_rt', 'log_max_rt', 'log_avg_rt'],
       filter_columns=filter_columns,
       colors=[default_colors['google blue'], default_colors['sky blue'], default_colors["google orange"]],
       title="Exp 3 Reaction Time Difference",
-      ylabel="log milliseconds",
+      ylabel="log seconds",
       xlabels=['First', 'Max', 'Average'],
       stats_file=stats_file,
       remove_outliers=True if filter_columns else False,
@@ -1985,161 +1661,68 @@ def experiment_4_results(
       display_figs (bool, optional): Whether to display figures. Defaults to False.
       save_figs (bool, optional): Whether to save figures. Defaults to True.
   """
+
   save_dir = os.path.join(save_dir, 'exp4')
   os.makedirs(save_dir, exist_ok=True)
   # Default to ['avg_rt'] if no filter columns specified
   filter_columns = filter_columns or []
 
-  def get_eval_df(setting: str, version: str):
-    if version == 'regular':
-        same_cond = dict(
-            name=f'big_m4_maze_{setting}')
-    elif version == 'blind':
-        same_cond = dict(
-            name=f'big_m4_maze_{setting}_blind')
+  # Open stats file
+  stats_filename = os.path.join(save_dir, 'stats.txt')
+  stats_file = open(stats_filename, 'w')
+  stats_file.write("Experiment 4 Statistical Analysis\n\n")
 
-    ##################
-    # get all episodes for users who achieved at least 16 successes during training
-    ##################
-    exp4_eval_df = user_df.filter_by_group(
-        input_episode_filter=partial(filter_train_by_min_success, min_successes=8),
-        input_settings=dict(eval=False, **same_cond),
-        output_settings=dict(manipulation=4),
-        group_key='user_id',
-    )
-
-    ##################
-    # filter outliers based on episode path length and max reaction time
-    ##################
-    ## TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-    ## Check if reuse column is string type
-    #exp4_eval_df = filter_outliers(
-    #    exp4_eval_df,
-    #    filter_columns=['path_length'],
-    #)
-    return exp4_eval_df
   ##################
-  # Create example paths
+  # Add setting column based on maze name
   ##################
-  def plot_example(setting: str='short', version: str = 'regular'):
-    assert setting in ['short', 'long']
-    assert version in ['blind', 'regular']
-    exp4_eval_df = get_eval_df(setting, version)
-    if version == 'regular':
-        cond0 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_(F,F)').sort('path_length', descending=True)
-        user = cond0['user_id'].unique()[0]
-        cond1 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_eval_same_(F,F)', user_id=user)
-        cond2 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_eval_diff_(F,F)', user_id=user)
-    elif version == 'blind':
-        cond0 = exp4_eval_df.filter(maze=f'big_m4_maze_{setting}_blind_(F,F)').sort('path_length', descending=True)
-        user = cond0['user_id'].unique()[0]
-        cond1 = exp4_eval_df.filter(
-            maze=f'big_m4_maze_{setting}_eval_same_blind_(F,F)', user_id=user)
-        cond2 = exp4_eval_df.filter(
-            maze=f'big_m4_maze_{setting}_eval_diff_(F,F)', user_id=user)
+  user_df = user_df._df  # fancy merging will use regular df
+  user_df = user_df.filter(manipulation=4)
 
-    fig, ax = plt.subplots(figsize=(6, 6))
-    render_paths(
-        episode_list=[cond0.episodes[0], cond1.episodes[0], cond2.episodes[0]],
-        #render_both=True,
-        colors=[default_colors['white'], model_colors['dynaq_shared'], model_colors['dfs']],
-        ax=ax)
-    if save_figs:
-        fig.savefig(
-            os.path.join(save_dir, f'exp4_1_example_paths_{setting}_{version}.pdf'),
-            bbox_inches='tight')
-    if display_figs:
-      plt.show()
+  def get_maze_setting(maze_str: str) -> str:
+    if 'short' in maze_str.lower():
+        return 'short'
+    elif 'long' in maze_str.lower():
+        return 'long'
+    raise ValueError(
+        f"Could not determine setting from maze string: {maze_str}")
 
-  #plot_example(setting='short', version='regular')
-  #plot_example(setting='short', version='blind')
-  #plot_example(setting='long', version='regular')
-  #plot_example(setting='long', version='blind')
+  # Add setting column based on maze name
+  user_df = user_df.with_columns(
+      setting=pl.col('maze').map_elements(
+         get_maze_setting,
+         return_dtype=pl.String)
+  )
 
-  def plot_rt_diff(setting: str = 'short', version: str = 'regular', ax=None):
-    assert setting in ['short', 'long']
-    assert version in ['blind', 'regular']
-    exp4_eval_df = get_eval_df(setting, version)
-    if version == 'regular':
-        tell_reuse: int = 1
-        same_cond = dict(name=f'big_m4_maze_{setting}_eval_same', tell_reuse=tell_reuse)
-    elif version == 'blind':
-        tell_reuse: int = 0
-        same_cond = dict(
-            name=f'big_m4_maze_{setting}_eval_same_blind', tell_reuse=tell_reuse)
+# Create combined figure
+  fig, axs = plt.subplots(1, 4, figsize=(20, 4), sharey=True)
 
-    # LARGER
-    diff_cond = dict(name=f'big_m4_maze_{setting}_eval_diff', tell_reuse=tell_reuse)
-    label = dict(
-       short='Near',
-       long='Far'
-    )[setting]
-    v = dict(
-       regular='Known',
-       blind='Unknown'
-    )[version]
 
-    # Create filter string for filename
-    filter_str = ','.join(filter_columns) if filter_columns else ''
+  idx = 0
+  for setting in ['short', 'long']:
+    stats_file.write(f"\n\n=================={setting}===================\n")
+    for tell_reuse in [1, 0]:
+      difference_df = compute_condition_difference_df(
+          user_df.filter(setting=setting, tell_reuse=tell_reuse),
+          measures=['log_first_rt', 'log_max_rt', 'log_avg_rt']
+      )
+      stats_file.write(f"\n\nRT Analysis for tell_reuse={tell_reuse}\n")
+      stats_file.write(f"-----------------------------------------\n")
 
-    fig = None
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(5, 4))
+      label = dict(short='Near', long='Far')[setting]
+      v = {0: 'Unknown', 1: 'Known'}[tell_reuse]
 
-    cond1_df = exp4_eval_df.filter(**same_cond)
-    cond2_df = exp4_eval_df.filter(**diff_cond)
-
-    remove_outliers = True if filter_columns else False
-    if filter_individual and filter_columns:
-      cond1_df = filter_outliers(
-         cond1_df,
-         filter_columns=list(set(filter_columns)))
-      cond2_df = filter_outliers(cond2_df,
-         filter_columns=list(set(filter_columns)))
-      remove_outliers = False
-
-    plot_rt_condition_differences(
-        cond1_df=cond1_df,
-        cond2_df=cond2_df,
-        rt_columns=['first_rt', 'max_rt', 'avg_rt'],
-        filter_columns=filter_columns,
-        colors=[default_colors['google blue'], default_colors['sky blue'], default_colors["google orange"]],
+      plot_rt_differences(
+        difference_df,
+        ax=axs[idx],
+        measures=['log_first_rt', 'log_max_rt', 'log_avg_rt'],
         title=f"Exp 4 RT Diff ({label} x {v})",
-        ylabel="log milliseconds",
+        colors=[default_colors['google blue'],
+                default_colors['sky blue'], default_colors["google orange"]],
+        ylabel="log seconds",
         xlabels=['First', 'Max', 'Average'],
-        ax=ax,
-        remove_outliers=remove_outliers,
-        verbosity=verbosity,
-    )
-    
-    # Save individual figure if one was created
-    if fig is not None and save_figs:
-        fig.savefig(
-            os.path.join(save_dir, f'exp4_2_rt_diff_{setting}_{version}_filter_{filter_str}.pdf'),
-            bbox_inches='tight')
-        plt.close(fig)
-        #if display_figs:
-        #    plt.show()
-
-    return ax
-
-  ## Create individual plots
-  #plot_rt_diff(setting='short', version='regular')
-  #plot_rt_diff(setting='short', version='blind')
-  #plot_rt_diff(setting='long', version='regular')
-  #plot_rt_diff(setting='long', version='blind')
-
-  # Create combined figure
-  fig, axs = plt.subplots(1, 4, figsize=(20, 10), sharey=True)
-  #fig.suptitle('Experiment 4: Reaction Time Differences', fontsize=DEFAULT_TITLE_SIZE)
-  
-  # Plot all conditions in the combined figure
-  plot_rt_diff(setting='short', version='regular', ax=axs[0])
-  plot_rt_diff(setting='short', version='blind', ax=axs[1]) 
-  plot_rt_diff(setting='long', version='regular', ax=axs[2])
-  plot_rt_diff(setting='long', version='blind', ax=axs[3])
-  
-  #axs[0].set_ylim(y_min-0.1*y_range, y_max+0.1*y_range)
+        stats_file=stats_file,
+      )
+      idx += 1
 
   # Adjust layout
   plt.tight_layout()
@@ -2152,6 +1735,11 @@ def experiment_4_results(
           bbox_inches='tight')
   if display_figs:
       plt.show()
+
+  # Close stats file at the end
+  stats_file.close()
+  with open(stats_filename, 'r') as f:
+    print(f.read())
 
 
 if __name__ == "__main__":

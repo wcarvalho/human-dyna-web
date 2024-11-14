@@ -13,6 +13,7 @@ import polars as pl
 import pickle
 import os
 from flax import serialization
+from flax.core import FrozenDict
 
 from jaxneurorl.agents import value_based_basics as vbb
 from housemaze.human_dyna import utils
@@ -134,6 +135,64 @@ def total_reward(e: EpisodeData):
 # Deep RL models
 ###################
 
+
+def execute_trajectory(
+    runner_state: vbb.RunnerState,
+    num_steps: int,
+    actor_step_fn: vbb.ActorStepFn,
+    actions: jax.Array,
+    env_step_fn: vbb.EnvStepFn,
+    env_params: environment.EnvParams,
+):
+
+    def _env_step(state: vbb.RunnerState, action):
+        """_summary_
+        
+        Buffer is updated with:
+        - input agent state: s_{t-1}
+        - agent obs input: x_t
+        - agent prediction outputs: p_t
+        - agent's action: a_t
+
+        Args:
+            rs (RunnerState): _description_
+            unused (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        # things that will be used/changed
+        rng = state.rng
+        prior_timestep = state.timestep
+        prior_agent_state = state.agent_state
+
+        # prepare rngs for actions and step
+        rng, rng_a, rng_s = jax.random.split(rng, 3)
+
+        preds, ingored_action, agent_state = actor_step_fn(
+            state.train_state,
+            prior_agent_state,
+            prior_timestep,
+            rng_a)
+
+        transition = vbb.Transition(
+            prior_timestep,
+            action=action,
+            extras=FrozenDict(preds=preds, agent_state=prior_agent_state))
+
+        # take step in env
+        timestep = env_step_fn(rng_s, prior_timestep, action, env_params)
+
+        state = state._replace(
+            timestep=timestep,
+            agent_state=agent_state,
+            rng=rng,
+        )
+
+        return state, transition
+
+    return jax.lax.scan(f=_env_step, init=runner_state, xs=actions, length=num_steps)
+
 @struct.dataclass
 class Algorithm:
 
@@ -143,6 +202,7 @@ class Algorithm:
   network: Callable = None
   reset_fn: Callable = None
   eval_fn: Callable = None
+  execute_fn: Callable = None
   path: str = None
   name: str = None
 
@@ -255,6 +315,30 @@ def load_algorithm(
           reaction_times=None,
       )
 
+  @jax.jit
+  def execute_fn(init_timestep, env_params, actions):
+      agent_state = reset_fn(train_state.params, init_timestep, rng_)
+
+      # Create runner state and collect trajectory
+      runner_state = vbb.RunnerState(
+          train_state=train_state,
+          timestep=init_timestep,
+          agent_state=agent_state,
+          rng=rng)
+
+      _, transitions = execute_trajectory(
+          runner_state=runner_state,
+          num_steps=max_steps,
+          actor_step_fn=actor.eval_step,
+          actions=actions,
+          env_step_fn=vmap_step,
+          env_params=env_params)
+
+      # [T, N, ....] --> # [N, T, ....]
+      transitions = jax.tree.map(
+          lambda x: jnp.swapaxes(x, 1, 0), transitions)
+      return transitions
+
   return Algorithm(
       config=config,
       network=agent,
@@ -262,6 +346,7 @@ def load_algorithm(
       actor=actor,
       train_state=train_state,
       eval_fn=jax.jit(eval_episode),
+      execute_fn=jax.jit(execute_fn),
       path=path,
       name=name,
   )
