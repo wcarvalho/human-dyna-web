@@ -844,7 +844,7 @@ if __name__ == "__main__":
   searches = {
       'Paths': f'{data_dir}/user_data/*exps*/*v1*paths*.json',
       'Path-notell': f'{data_dir}/user_data/*exps*/*v2*r0*paths*.json',
-      'Start': f'{data_dir}/user_data/*exps*/*v1*start*.json',
+      'Start': f'{data_dir}/user_data/*exps*/*v3*start*.json',
       #'Start-notell': f'{data_dir}/user_data/*exps*/*v2*r0*start*.json',
       'Plan (Tell)': f'{data_dir}/user_data/*exps*/*v2*r1-t0-plan*.json',
       "Plan (Don't Tell)": f'{data_dir}/user_data/*exps*/*v2*r0-t0-plan*.json',

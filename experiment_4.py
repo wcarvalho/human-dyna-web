@@ -41,6 +41,7 @@ DATA_DIR = os.environ.get('DATA_DIR', 'data')
 #EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
 FEEDBACK = int(os.environ.get('FEEDBACK', 1))
 SAY_REUSE = int(os.environ.get('SAY_REUSE', 1))
+COND2_TRAIN = int(os.environ.get('COND2_TRAIN', 1sl))
 TIMER = int(os.environ.get('TIMER', 30))
 VERBOSITY = int(os.environ.get('VERBOSITY', 0))
 NTRAIN = int(os.environ.get('NTRAIN', 8))
@@ -746,6 +747,12 @@ def create_start_manipulation_block(
   reversal: Tuple[bool, bool] = [False, False]):
     str_transform = partial(mazes.reverse, horizontal=reversal[0], vertical=reversal[1])
     block_groups, block_char2idx = permute_groups(groups)
+
+    kwargs = dict()
+    if COND2_TRAIN:
+        kwargs['phase2_cond2_env_kwargs'] = dict(
+            # force to focus on train object from "1st room"
+            force_room=True, default_room=0, training=True)
     return make_block(
         phase_1_text=make_phase_1_text(),
         phase_1_maze_name='big_m2_maze2',
@@ -763,7 +770,8 @@ def create_start_manipulation_block(
             short=f'start_{reversal_label(reversal)}'
         ),
         str_transform=str_transform,
-        appendix=f"_({reversal_label(reversal)})"
+        appendix=f"_({reversal_label(reversal)})",
+        **kwargs,
     )
 
 
@@ -837,6 +845,7 @@ elif MAN == 'paths':  # paths manipulation (3)
       feedback_block.append(
           Block(
               stages=[FeedbackStage(
+                  user_save_file_fn=get_user_save_file_fn,
                   name='paths_manipulation_feedback',
                   display_fn=display_fn)],
               metadata=dict(desc="paths_manipulation_feedback")
@@ -866,6 +875,7 @@ elif MAN == 'shortcut':  # shortcut manipulation (1)
       feedback_block.append(
           Block(
               stages=[FeedbackStage(
+                  user_save_file_fn=get_user_save_file_fn,
                   name='shortcut_manipulation_feedback',
                   display_fn=display_fn)],
               metadata=dict(desc="shortcut_manipulation_feedback")

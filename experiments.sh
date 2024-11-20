@@ -10,9 +10,9 @@ flyctl logs --config configs/human-dyna-exp8-v1-r1-t0-plan.toml
 
 
 #2. start: no timer, tell
-python launch.py exp5-v2-r1-t0-start --env EXP=4 --env MAN="start" --env SAY_REUSE=1 --env TIMER=0
-#https://human-dyna-exp5-v2-r1-t0-start.fly.dev
-flyctl deploy --config configs/human-dyna-exp5-v2-r1-t0-start.toml
+python launch.py exp5-v3-r1-t0-start --env EXP=4 --env MAN="start" --env SAY_REUSE=1 --env TIMER=0 --env COND2_TRAIN=1
+#https://human-dyna-exp5-v3-r1-t0-start.fly.dev
+flyctl deploy --config configs/human-dyna-exp5-v3-r1-t0-start.toml
 
 #3. plan: no timer, tell
 python launch.py exp5-v2-r1-t0-plan --env EXP=4 --env MAN="plan" --env SAY_REUSE=1 --env TIMER=0
@@ -30,9 +30,9 @@ python launch.py exp5-v2-r0-t0-paths --env EXP=4 --env MAN="paths" --env SAY_REU
 flyctl deploy --config configs/human-dyna-exp5-v2-r0-t0-paths.toml
 
 #5. shortcut: no timer tell
-python launch.py exp5-v2-r0-t0-shortcut --env EXP=4 --env MAN="shortcut" --env SAY_REUSE=0 --env TIMER=0
-#https://human-dyna-exp5-v2-r0-t0-shortcut.fly.dev
-flyctl deploy --config configs/human-dyna-exp5-v1-r0-t0-shortcut.toml
+python launch.py exp5-v3-r1-t0-shortcut --env EXP=4 --env MAN="shortcut" --env SAY_REUSE=1 --env TIMER=0
+#https://human-dyna-exp5-v3-r1-t0-shortcut.fly.dev
+flyctl deploy --config configs/human-dyna-exp5-v3-r1-t0-shortcut.toml
 
 
 ########################################################

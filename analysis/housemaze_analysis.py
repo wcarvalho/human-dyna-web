@@ -14,7 +14,11 @@ import seaborn as sns
 #from analysis.housemaze_analysis_garbarge import plot_rt_condition_differences
 from housemaze.human_dyna import utils
 from math import sqrt, ceil
-from statsmodels.stats.power import TTestPower, TTestIndPower
+from statsmodels.stats.power import TTestPower
+import pandas as pd
+import numpy as np
+import statsmodels.formula.api as smf
+from multiprocessing import Pool
 
 from analysis.housemaze_model_data import get_model_data
 from analysis.housemaze_user_data import get_human_data
@@ -94,6 +98,19 @@ maze_name = {
     'big_m4_maze_short_eval_diff': "Plan Manipulation (short): New location",
 }
 
+# for tqdm both in notebook and terminal
+try:
+    from IPython import get_ipython
+    if 'IPKernelApp' in get_ipython().config:
+        from tqdm.notebook import tqdm
+        try:
+            import ipywidgets
+        except:
+            pass
+    else:
+        from tqdm import tqdm
+except (ImportError, AttributeError):
+    from tqdm import tqdm
 
 class EpisodeData(NamedTuple):
     actions: jax.Array
@@ -310,6 +327,7 @@ def plot_bar_rt_comparison(
       colors=None,
       stats_file=None,
       percentile_ylim: bool = True,
+      n_simulations: int = 500,
       ):
     """Plot comparison of reaction times between multiple conditions.
     
@@ -328,7 +346,7 @@ def plot_bar_rt_comparison(
     """
     
     power_results = power_analysis_rt_across_groups(
-        df, measure=rt_column, stats_file=stats_file)
+        df, measure=rt_column, stats_file=stats_file, n_simulations=n_simulations)
     means = (
         power_results['descriptive']['means']['no_reuse'],
         power_results['descriptive']['means']['reuse']
@@ -439,9 +457,9 @@ def plot_bar_rt_comparison_columns(
 
 def plot_rt_differences(
     difference_df: pl.DataFrame,
-    ax: plt.Axes,
     measures: List[str],
     title: str,
+    ax: plt.Axes = None,
     colors=None,
     ylabel="Log RT Difference (Cond2 - Cond1)",
     stats_file=None,
@@ -478,7 +496,7 @@ def plot_rt_differences(
 
     # Add individual points with jitter
     for i, diffs in enumerate(all_diffs):
-        x_jitter = np.random.normal(i, 0.1, size=len(diffs))
+        x_jitter = np.random.normal(i, 0.125, size=len(diffs))
         ax.scatter(x_jitter, diffs, alpha=0.3, color='black', s=20)
 
     # Add zero line
@@ -671,6 +689,96 @@ def compute_condition_difference_df(df: pl.DataFrame, measures: List[str]) -> pl
     diff_df = diff_df.select(['user_id', 'reversal'] + diff_exprs)
 
     return diff_df
+
+# define functions to run power analysis for linear mixed effects model (LME)
+
+def simulate_mixed_effects_trial(args):
+    """Simulate a single mixed effects trial and test for significance.
+    
+    Args:
+        args: Tuple containing:
+            - num_subjects: Number of subjects in simulation
+            - trials_per_subject: Number of trials per subject
+            - B0: Intercept coefficient
+            - B1: Slope coefficient 
+            - random_effect_var: Variance of random effects
+            - residual_var: Variance of residuals
+            - alpha: Significance level for test
+        
+    Returns:
+        bool: True if result is significant at alpha level
+    """
+    # Unpack arguments
+    num_subjects, trials_per_subject, B0, B1, random_effect_var, residual_var, alpha = args
+    
+    # Generate data
+    user_ids = np.repeat(range(num_subjects), trials_per_subject)
+    reuse = np.random.choice([0, 1], num_subjects * trials_per_subject)
+    random_intercepts = np.random.normal(0, np.sqrt(random_effect_var), num_subjects)
+    random_intercepts = np.repeat(random_intercepts, trials_per_subject)
+    residuals = np.random.normal(0, np.sqrt(residual_var), num_subjects * trials_per_subject)
+
+    # Generate response variable
+    RT = B0 + B1 * reuse + random_intercepts + residuals
+    
+    # Create and test model
+    data = pd.DataFrame({'RT': RT, 'reuse': reuse, 'user_id': user_ids})
+    model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
+    result = model.fit(reml=True)
+
+    return result.pvalues['reuse'] < alpha
+
+def mixed_effects_compute_power(
+    num_subjects: int,
+    trials_per_subject: int,
+    B0: float,
+    B1: float,
+    random_effect_var: float,
+    residual_var: float,
+    n_simulations: int = 500,
+    alpha: float = 0.05,
+    parallel: bool = False,
+    n_jobs: int = -1,
+) -> float:
+    """Compute power for mixed effects model using parallel or sequential processing.
+    
+    Args:
+        num_subjects: Number of subjects in each simulation
+        trials_per_subject: Number of trials per subject
+        B0: Intercept coefficient
+        B1: Slope coefficient
+        random_effect_var: Variance of random effects
+        residual_var: Variance of residuals
+        n_simulations: Number of simulations to run (default: 500)
+        alpha: Significance level (default: 0.05)
+        parallel: Whether to use parallel processing (default: True)
+        n_jobs: Number of processes to use if parallel (-1 for all cores, default: -1)
+        **kwargs: Additional arguments to pass to simulate_mixed_effects_trial
+    
+    Returns:
+        float: Computed power (proportion of significant results)
+    """
+    # Prepare simulation parameters
+    sim_args = [(num_subjects, trials_per_subject, B0, B1,
+                 random_effect_var, residual_var, alpha)] * n_simulations
+
+    if parallel:
+        # Use all available cores if n_jobs is -1
+        n_jobs = None if n_jobs == -1 else n_jobs
+
+        # Run simulations in parallel
+        with Pool(processes=n_jobs) as pool:
+            results = list(tqdm(
+                pool.imap(simulate_mixed_effects_trial, sim_args),
+                total=n_simulations,
+                desc="Simulating data"
+            ))
+    else:
+        # Run simulations sequentially
+        results = [simulate_mixed_effects_trial(args) for args in tqdm(sim_args, desc="Simulating data")]
+
+    return sum(results) / n_simulations
+
 ######################################
 # Power Analysis function
 ######################################
@@ -804,8 +912,8 @@ def power_analysis_path_reuse(df: pl.DataFrame, mu: float = 0.5, alpha: float = 
         'effect_size': effect_size
     }
 
-def power_analysis_rt_across_groups(df: pl.DataFrame, measure: str, alpha=0.05, power=0.8, stats_file=None):
-    """Perform power analysis for between-groups comparison with repeated measures.
+def power_analysis_rt_across_groups(df: pl.DataFrame, measure: str, alpha=0.05, stats_file=None, n_simulations=500):
+    """Perform power analysis for between-groups comparison using linear mixed effects model.
     
     Args:
         df: DataFrame with columns [user_id, reuse, rt] where:
@@ -813,142 +921,118 @@ def power_analysis_rt_across_groups(df: pl.DataFrame, measure: str, alpha=0.05, 
             - reuse: boolean indicating condition
             - rt: reaction time measurement (in log seconds)
         alpha: Significance level (default: 0.05)
-        power: Desired statistical power (default: 0.8)
         stats_file: Optional file handle to write stats output
     
     Returns:
         dict containing analysis results
     """
-    # First get user-level statistics
+    # Convert to pandas for statsmodels compatibility
+    data = df._df.select(['user_id', 'reuse', measure]).to_pandas()
+    data.columns = ['user_id', 'reuse', 'RT']
+
+    # Fit linear mixed effects model
+    model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
+    result = model.fit(reml=True)
+
+    # Calculate descriptive statistics by group
     user_stats = (df.group_by(['user_id', 'reuse'])
-                   .agg(
-                       mean_val=pl.col(measure).mean(),
-                       n_trials=pl.col(measure).count()
-                   ))
-
-    # Get trial counts per condition
-    trial_counts = (df.group_by('reuse')
-                    .agg(n_trials=pl.col(measure).count())).to_numpy()
-
-    # Calculate means for each user-condition
-    reuse_means = user_stats.filter(reuse=True)['mean_val'].to_numpy()
-    no_reuse_means = user_stats.filter(reuse=False)['mean_val'].to_numpy()
-
-    # Test for normality using user means
-    _, p1 = stats.shapiro(no_reuse_means)
-    _, p2 = stats.shapiro(reuse_means)
-    is_normal = (p1 > alpha) and (p2 > alpha)
-
-    # Get basic stats
+                   .agg(mean_val=pl.col(measure).mean()))
+    
+    reuse_means = user_stats.filter(pl.col('reuse')==True)['mean_val'].to_numpy()
+    no_reuse_means = user_stats.filter(pl.col('reuse')==False)['mean_val'].to_numpy()
+    
     n1, n2 = len(no_reuse_means), len(reuse_means)
     mean1, mean2 = np.mean(no_reuse_means), np.mean(reuse_means)
-    
-    if is_normal:
-        # Use t-test and Cohen's d for normal data
-        var1, var2 = np.var(no_reuse_means, ddof=1), np.var(reuse_means, ddof=1)
-        
-        # Pooled standard deviation
-        pooled_sd = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
-        
-        # Cohen's d using pooled SD
-        d = (mean1 - mean2) / pooled_sd
-        effect_size = {'name': "Cohen's d", 'value': d}
-        
-        # Perform t-test
-        t_stat, p_value = stats.ttest_ind(no_reuse_means, reuse_means, alternative='greater')
-        test_name = "Independent t-test"
-        test_stat = t_stat
-        
-    else:
-        # Use Mann-Whitney U test for non-normal data
-        u_stat, p_value = stats.mannwhitneyu(no_reuse_means, reuse_means, alternative='greater')
-        test_name = "Mann-Whitney U test"
-        test_stat = u_stat
-        
-        # Calculate r effect size
-        z = stats.norm.ppf(1 - p_value)
-        r = z / np.sqrt(n1 + n2)
-        effect_size = {'name': 'r', 'value': r}
-        
-        # Convert r to d for power analysis
-        d = 2 * r / np.sqrt(1 - r**2) if abs(r) < 1 else float('inf')
+    var1, var2 = np.var(no_reuse_means, ddof=1), np.var(reuse_means, ddof=1)
 
-    # Power analysis
-    analysis = TTestIndPower()
+    # Get effect size (standardized coefficient)
+    param_name = 'reuse[T.True]' if 'reuse[T.True]' in result.params else 'reuse'
+    effect_size = result.params[param_name] / np.std(data['RT'])
     
-    # Calculate required sample size
-    n_required = analysis.solve_power(
-        effect_size=abs(d),
-        alpha=alpha,
-        power=power,
-        ratio=1.0,
-        alternative='larger'
-    )
-    if not is_normal:
-        n_required = ceil(n_required / 0.95)  # Adjust for non-parametric test
+    # Calculate required sample sizes for different power levels
+    power_levels = [0.8, 0.9, 0.95]
+    n_required = {}
     
-    # Calculate actual power
-    actual_power = analysis.power(
-        effect_size=abs(d),
-        nobs1=min(n1, n2),
-        alpha=alpha,
-        ratio=1.0,
-        alternative='larger'
+    # Binary search for each power level
+    for target_power in tqdm(power_levels, desc="Power levels"):
+        left = 10  # minimum sample size
+        right = 200  # maximum sample size to try
+        
+        while left < right:
+            n = (left + right) // 2
+            power = mixed_effects_compute_power(
+                num_subjects=n,
+                trials_per_subject=len(data) // len(data['user_id'].unique()),
+                B0=result.params['Intercept'],
+                B1=result.params[param_name],
+                random_effect_var=result.cov_re.iloc[0, 0],
+                residual_var=result.scale,
+                n_simulations=n_simulations,
+            )
+            
+            if abs(power - target_power) < 0.01:  # within 1% of target
+                break
+            elif power < target_power:
+                left = n + 1
+            else:
+                right = n - 1
+                
+        n_required[target_power] = n
+
+    # Calculate actual power with current sample size
+    current_power = mixed_effects_compute_power(
+        num_subjects=len(data['user_id'].unique()),
+        trials_per_subject=len(data) // len(data['user_id'].unique()),
+        B0=result.params['Intercept'],
+        B1=result.params[param_name],
+        random_effect_var=result.cov_re.iloc[0, 0],
+        residual_var=result.scale,
+        n_simulations=n_simulations
     )
-    if not is_normal:
-        actual_power *= 0.95  # Adjust for non-parametric test
 
     results = {
-        'normality': {
-            'is_normal': is_normal,
-            'p_values': (p1, p2)
-        },
-        'effect_size': effect_size,
-        'n_required': ceil(n_required),
-        'actual_power': actual_power,
+        'effect_size': {'name': "Standardized coefficient", 'value': effect_size},
+        'n_required': n_required,
+        'current_power': current_power,
         'test_results': {
-            'name': test_name,
-            'statistic': test_stat,
-            'p_value': p_value,
+            'name': "Linear mixed effects model",
+            'statistic': result.tvalues[param_name],
+            'p_value': result.pvalues[param_name],
             'n1': n1,
             'n2': n2
         },
         'descriptive': {
             'means': {'no_reuse': mean1, 'reuse': mean2},
-            'sds': {'no_reuse': np.sqrt(var1), 'reuse': np.sqrt(var2)} if is_normal else None,
-            'ses': {'no_reuse': np.sqrt(var1/n1), 'reuse': np.sqrt(var2/n2)} if is_normal else None
+            'sds': {'no_reuse': np.sqrt(var1), 'reuse': np.sqrt(var2)},
+            'ses': {'no_reuse': np.sqrt(var1/n1), 'reuse': np.sqrt(var2/n2)}
+        },
+        'raw_means': {
+            'no_reuse': no_reuse_means,
+            'reuse': reuse_means
         }
     }
-    
-    # Include raw means for further analysis
-    results['raw_means'] = {
-        'no_reuse': no_reuse_means,
-        'reuse': reuse_means
-    }
 
-    n_no_reuse = trial_counts[0, 1]
-    n_reuse = trial_counts[1, 1]
     if stats_file:
-        stats_file.write("\nPower Analysis Results:\n")
+        stats_file.write("\nLinear Mixed Effects Model Results:\n")
+        stats_file.write("================================\n")
+        stats_file.write(str(result.summary()) + "\n\n")
+        
         stats_file.write("Sample Sizes:\n")
-        stats_file.write(f"\tNo Reuse: {n1} users ({n_no_reuse} trials)\n")
-        stats_file.write(f"\tReuse: {n2} users ({n_reuse} trials)\n\n")
+        stats_file.write(f"\tNo Reuse: {n1} users\n")
+        stats_file.write(f"\tReuse: {n2} users\n")
+        stats_file.write(f"\tTrials per user: {len(data) // len(data['user_id'].unique())}\n\n")
         
         stats_file.write("Means:\n")
         stats_file.write(f"\tNo Reuse: {mean1:.3f}\n")
         stats_file.write(f"\tReuse: {mean2:.3f}\n")
         stats_file.write(f"\tDifference: {mean2 - mean1:.3f}\n\n")
-
-        stats_file.write(f"Normality test p-values: {results['normality']['p_values']}\n")
-        stats_file.write(f"Using {results['test_results']['name']} ({'normal' if is_normal else 'non-normal'} distribution)\n\n")
         
-        stats_file.write(f"Effect size ({results['effect_size']['name']}): {results['effect_size']['value']:.3f}\n")
-        stats_file.write(f"Required sample size per group (80% power): {results['n_required']}\n")
-        stats_file.write(f"Actual power with current sample size: {results['actual_power']:.3f}\n\n")
+        stats_file.write(f"Effect size: {effect_size:.3f}\n\n")
         
-        stats_file.write("Statistical Test Results:\n")
-        stats_file.write(f"Test statistic: {results['test_results']['statistic']:.3f}\n")
-        stats_file.write(f"p-value: {results['test_results']['p_value']:.3f}\n")
+        stats_file.write("Power Analysis:\n")
+        stats_file.write(f"Current power: {current_power:.3f}\n")
+        for power, n in n_required.items():
+            stats_file.write(f"Required sample size for {power*100}% power: {n}\n")
 
     return results
 
@@ -1118,7 +1202,7 @@ def episode_sf_value(e, idx=None):
         sf_values = sf_values[:, idx]
     return sf_values
 
-def plot_sf_values(e, idxs=None, line_mask=None, line_names=None, figsize=None, colors=None, styles=None, plot_q_values=True):
+def plot_sf_values(e, idxs=None, line_mask=None, line_names=None, figsize=None, colors=None, styles=None, task_w=None, plot_q_values=True):
     """Plot successor feature values as lines in multiple panels.
     
     Args:
@@ -1164,9 +1248,10 @@ def plot_sf_values(e, idxs=None, line_mask=None, line_names=None, figsize=None, 
     colors = colors or ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
     styles = styles or ['-', '--']
 
-    task_w = e.timesteps.observation.task_w
     in_episode = get_in_episode(e.timesteps)
-    task_w = task_w[in_episode]
+    if task_w is None:
+      task_w = e.timesteps.observation.task_w
+      task_w = task_w[in_episode]
     max_value = -1000
     for panel_idx, idx in enumerate(idxs):
         sf_values = all_sf_values[:, idx]
@@ -1222,8 +1307,11 @@ def experiment_1_results(
       model_df: DataFrame,
       save_dir: str,
       filter_columns: List[str] = [],
+      tell_reuse: int = 1,
       display_figs: bool = False,
       save_figs: bool = True,
+      verbosity: int = 0,
+      n_simulations: int = 500,
       ):
   """_summary_
 
@@ -1233,7 +1321,7 @@ def experiment_1_results(
       user_df (DataFrame): _description_
       model_df (DataFrame): _description_
   """
-  save_dir = os.path.join(save_dir, 'exp1')
+  save_dir = os.path.join(save_dir, f'exp1_tell_reuse={tell_reuse}')
   os.makedirs(save_dir, exist_ok=True)
   
   # Open stats file
@@ -1251,7 +1339,7 @@ def experiment_1_results(
   exp1_eval_df = user_df.filter_by_group(
       input_episode_filter=filter_train_by_min_success,
       input_settings=dict(eval=False),
-      output_settings=dict(manipulation=3),
+      output_settings=dict(manipulation=3, tell_reuse=tell_reuse),
       group_key='user_id',
   ).filter(eval=True)
 
@@ -1274,25 +1362,6 @@ def experiment_1_results(
         exp1_eval_df,
         filter_columns=filter_columns,
   )
-  ###################
-  ## Create example paths
-  ###################
-
-  #old_path_cond = exp1_eval_df.filter(maze='big_m3_maze1_(F,F)', reuse=True)
-  #new_path_cond = exp1_eval_df.filter(maze='big_m3_maze1_(F,F)', reuse=False)
-
-  #fig, ax = plt.subplots(figsize=(6, 6))
-  #render_paths(
-  #    episode_list=[old_path_cond.episodes[0], new_path_cond.episodes[0]],
-  #    colors=[model_colors['dynaq_shared'], model_colors['dfs']],
-  #    ax=ax)
-  #if save_figs:
-  #    fig.savefig(
-  #       os.path.join(save_dir, 'exp1_1_example_paths.pdf'),
-  #                bbox_inches='tight')
-  #if display_figs:
-  #  plt.show()
-
 
   ##################
   # Create success rate and path reuse plots
@@ -1342,7 +1411,7 @@ def experiment_1_results(
   stats_file.write("\nReaction Time Analysis\n")
   stats_file.write("======================================\n")
 
-  for idx, measure in enumerate(['log_first_rt', 'log_avg_rt', 'log_max_rt']):
+  for idx, measure in enumerate(['log_first_rt']):
     stats_file.write(f"\n{idx}. {measure}\n")
     stats_file.write("--------------------\n")
 
@@ -1357,6 +1426,7 @@ def experiment_1_results(
         xlabels=['New Path', 'Partial Reuse'],
         colors=[default_colors['nice purple'], default_colors['bluish green']],
         stats_file=stats_file,
+        n_simulations=n_simulations,
         ax=ax)
     if save_figs:
       fig.savefig(
@@ -1364,27 +1434,6 @@ def experiment_1_results(
           bbox_inches='tight')
     if display_figs:
       plt.show()
-
-  #######################
-  ## When do partial reuse, plot first, max post, avg post
-  #######################
-  #fig, ax = plt.subplots(1, 1, figsize=(6, 3))
-  #colors = ["bluish green", "reddish purple", "yellow", "orange"]
-  #plot_bar_rt_comparison_columns(
-  #    reuse_episodes,
-  #    ['first_rt', 'max_init_post_rt', 'max_final_rt', 'avg_post_rt'],
-  #    title='Reaction time measurements over episode',
-  #    ylabel='log seconds',
-  #    xlabels=['First', 'Max 1st ½', 'Max 2nd ½', 'Avg Post'],
-  #    colors=[default_colors[c] for c in colors],
-  #    ax=ax)
-  #if save_figs:
-  #  fig.savefig(
-  #      os.path.join(save_dir, 'exp1_5_bar_reuse_rt_comparison.pdf'),
-  #      bbox_inches='tight')
-  #if display_figs:
-  #  plt.show()
-  
 
   ######################
   # SF Model
@@ -1404,8 +1453,9 @@ def experiment_1_results(
 
   # Close stats file at the end
   stats_file.close()
-  with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
-    print(f.read())
+  if verbosity > 0:
+    with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
+      print(f.read())
 
 def experiment_2_results(
     user_df: DataFrame,
@@ -1413,7 +1463,9 @@ def experiment_2_results(
     save_dir: str,
     filter_columns: List[str] = None,
     display_figs: bool = False,
+    tell_reuse: int = 1,
     save_figs: bool = True,
+    verbosity: int = 0,
 ):
   """_summary_
 
@@ -1423,7 +1475,7 @@ def experiment_2_results(
       user_df (DataFrame): _description_
       model_df (DataFrame): _description_
   """
-  save_dir = os.path.join(save_dir, 'exp2')
+  save_dir = os.path.join(save_dir, f'exp2_tell_reuse={tell_reuse}')
   os.makedirs(save_dir, exist_ok=True)
 
   # Open stats file
@@ -1441,7 +1493,7 @@ def experiment_2_results(
   exp2_eval_df = user_df.filter_by_group(
       input_episode_filter=filter_train_by_min_success,
       input_settings=dict(eval=False),
-      output_settings=dict(manipulation=1),
+      output_settings=dict(manipulation=1, tell_reuse=tell_reuse),
       group_key='user_id',
   ).filter(eval=True)
 
@@ -1465,33 +1517,6 @@ def experiment_2_results(
         exp2_eval_df,
         filter_columns=filter_columns,
     )
-  ###################
-  ## Create example paths
-  ###################
-  ## Convert reuse column from string to boolean
-  #if exp2_eval_df.schema['reuse'] == pl.String:
-  #    exp2_eval_df = exp2_eval_df.with_columns(
-  #        pl.col('reuse') == 'true'
-  #    )
-  #elif exp2_eval_df.schema['reuse'] == pl.Boolean:
-  #    pass
-  #else:
-  #    raise ValueError("Reuse column is type: ", exp2_eval_df.schema['reuse'])
-
-  #old_path_cond = user_df.filter(maze='big_m1_maze3_(F,F)', room=0).sort('path_length', descending=True)
-  #new_path_cond = exp2_eval_df.filter(maze='big_m1_maze3_shortcut_(F,F)', reuse=False)
-
-  #fig, ax = plt.subplots(figsize=(6, 6))
-  #render_paths(
-  #    episode_list=[new_path_cond.episodes[0], old_path_cond.episodes[0]],
-  #    colors=[model_colors['dfs'], model_colors['dynaq_shared']],
-  #    ax=ax)
-  #if save_figs:
-  #    fig.savefig(
-  #        os.path.join(save_dir, 'exp2_1_example_paths.pdf'),
-  #        bbox_inches='tight')
-  #if display_figs:
-  #  plt.show()
 
   ##################
   # Create success rate and path reuse plots
@@ -1536,8 +1561,9 @@ def experiment_2_results(
 
   # Close stats file at the end
   stats_file.close()
-  with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
-    print(f.read())
+  if verbosity > 0:
+    with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
+      print(f.read())
 
 def experiment_3_results(
     user_df: DataFrame,
@@ -1545,7 +1571,9 @@ def experiment_3_results(
     save_dir: str,
     filter_columns: List[str] = None,
     display_figs: bool = False,
+    tell_reuse: int = 1,
     save_figs: bool = True,
+    verbosity: int = 0,
 ):
   """_summary_
 
@@ -1560,7 +1588,7 @@ def experiment_3_results(
       display_figs (bool, optional): Whether to display figures. Defaults to False.
       save_figs (bool, optional): Whether to save figures. Defaults to True.
   """
-  save_dir = os.path.join(save_dir, 'exp3')
+  save_dir = os.path.join(save_dir, f'exp3_tell_reuse={tell_reuse}')
   os.makedirs(save_dir, exist_ok=True)
   # Default to ['avg_rt'] if no filter columns specified
 
@@ -1578,58 +1606,27 @@ def experiment_3_results(
       group_key='user_id',
   ).filter(eval=True)
 
-  ###################
-  ## Create example paths
-  ###################
-  ## Convert reuse column from string to boolean
-  #if exp3_eval_df.schema['reuse'] == pl.String:
-  #    exp3_eval_df = exp3_eval_df.with_columns(
-  #        pl.col('reuse') == 'true'
-  #    )
-  #elif exp3_eval_df.schema['reuse'] == pl.Boolean:
-  #    pass
-  #else:
-  #    raise ValueError("Reuse column is type: ", exp3_eval_df.schema['reuse'])
-
-  #old_path_cond = exp3_eval_df.filter(
-  #    maze='big_m2_maze2_onpath_(F,F)')
-  #new_path_cond = exp3_eval_df.filter(
-  #    maze='big_m2_maze2_offpath_(F,F)')
-
-  #fig, ax = plt.subplots(figsize=(6, 6))
-  #render_paths(
-  #    episode_list=[old_path_cond.episodes[0], new_path_cond.episodes[0]],
-  #    render_both=True,
-  #    colors=[model_colors['dynaq_shared'], model_colors['dfs']],
-  #    ax=ax)
-  #if save_figs:
-  #    fig.savefig(
-  #        os.path.join(save_dir, 'exp3_1_example_paths.pdf'),
-  #        bbox_inches='tight')
-  #if display_figs:
-  #  plt.show()
-
   ##################
   # Create reaction time difference plot
   ##################
   # Create filter string for filename
   filter_columns = filter_columns or []
   filter_str = ','.join(filter_columns)
-
-  cond1_df = exp3_eval_df.filter(manipulation=2, eval=True, condition=1)
-  cond2_df = exp3_eval_df.filter(manipulation=2, eval=True, condition=2)
-  fig, ax = plot_rt_condition_differences(
-      cond1_df=cond1_df,
-      cond2_df=cond2_df,
-      rt_columns=['log_first_rt', 'log_max_rt', 'log_avg_rt'],
-      filter_columns=filter_columns,
-      colors=[default_colors['google blue'], default_colors['sky blue'], default_colors["google orange"]],
-      title="Exp 3 Reaction Time Difference",
-      ylabel="log seconds",
-      xlabels=['First', 'Max', 'Average'],
-      stats_file=stats_file,
-      remove_outliers=True if filter_columns else False,
+  difference_df = compute_condition_difference_df(
+      exp3_eval_df._df.filter(tell_reuse=tell_reuse),
+      measures=['log_first_rt', 'log_max_rt', 'log_avg_rt']
   )
+  fig, ax = plot_rt_differences(
+        difference_df,
+        measures=['log_first_rt', 'log_max_rt', 'log_avg_rt'],
+        title=f"Exp 3 RT Diff",
+        colors=[default_colors['google blue'],
+                default_colors['sky blue'], default_colors["google orange"]],
+        ylabel="log seconds",
+        xlabels=['First', 'Max', 'Average'],
+        stats_file=stats_file,
+      )
+
   if save_figs:
       fig.savefig(
           os.path.join(save_dir, f'exp3_2_rt_diff_filter_{filter_str}.pdf'),
@@ -1637,8 +1634,9 @@ def experiment_3_results(
   if display_figs:
     plt.show()
   stats_file.close()
-  with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
-    print(f.read())
+  if verbosity > 0:
+    with open(os.path.join(save_dir, 'stats.txt'), 'r') as f:
+      print(f.read())
 
 def experiment_4_results(
     user_df: DataFrame,
@@ -1647,8 +1645,7 @@ def experiment_4_results(
     filter_columns: List[str] = None,
     display_figs: bool = False,
     save_figs: bool = True,
-    filter_individual: bool = False,
-    verbosity: int = 1,
+    verbosity: int = 0,
 ):
   """Analyze results from experiment 4.
 
@@ -1738,9 +1735,9 @@ def experiment_4_results(
 
   # Close stats file at the end
   stats_file.close()
-  with open(stats_filename, 'r') as f:
-    print(f.read())
-
+  if verbosity > 0:
+    with open(stats_filename, 'r') as f:
+      print(f.read())
 
 if __name__ == "__main__":
   data_dir = '/Users/wilka/git/research/results/human_dyna/'
@@ -1784,11 +1781,19 @@ if __name__ == "__main__":
   experiment_1_results(
     user_df,
     model_df,
-    save_dir=save_dir,
-    save_figs=True)
+    save_dir=save_dir)
 
   experiment_2_results(
       user_df,
       model_df,
-      save_dir=save_dir,
-      save_figs=True)
+      save_dir=save_dir)
+  
+  experiment_3_results(
+      user_df,
+      model_df,
+      save_dir=save_dir)
+
+  experiment_4_results(
+      user_df,
+      model_df,
+      save_dir=save_dir)
