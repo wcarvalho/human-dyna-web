@@ -10,3 +10,6 @@
 [submodule "libraries/jaxneurorl"]
 	path = libraries/jaxneurorl
 	url = https://github.com/wcarvalho/jaxneurorl
+[submodule "simulations"]
+	path = simulations
+	url = https://github.com/wcarvalho/preplay-AI.git
