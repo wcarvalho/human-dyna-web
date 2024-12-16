@@ -18,7 +18,7 @@ git submodule add https://github.com/wcarvalho/nicewebrl libraries/nicewebrl
 ```
 mamba create -n preplay python=3.10 pip wheel -y
 mamba activate preplay
-pip install -e libraries/housemaze -e libraries/nicewebrl -e libraries/jaxneurorl -r requirements.txt --config-settings editable_mode=strict
+pip install -e libraries/housemaze -e libraries/nicewebrl -e libraries/jaxneurorl -r requirements.txt
 pip install -U jupyterlab matplotlib
 
 # setting up mamba activation

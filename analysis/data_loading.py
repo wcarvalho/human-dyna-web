@@ -656,7 +656,7 @@ def compute_experiment_lengths(files, plot: bool = False, condition_name: str = 
             start_time = datetime.strptime(
                 data[0]['data']['image_seen_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
             
-            if 'noticed_difference' in data[-2]['data'].keys():
+            if 'noticed' in next(iter(data[-2]['data'].keys())):
                 end_time = datetime.strptime(
                     data[-3]['data']['action_taken_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
             else:

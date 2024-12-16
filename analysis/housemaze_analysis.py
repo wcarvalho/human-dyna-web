@@ -249,7 +249,7 @@ def filter_outliers(
   return filtered_df
 
 
-def bar_plot_error(human_data, model_stats, ax=None, ylim=None, legend=True, xlabels=False):
+def bar_plot_error(human_data, model_stats=None, ax=None, ylim=None, legend=True, xlabels=False):
     """Plot bar chart comparing human and model performance with error bars.
     
     Args:
@@ -269,13 +269,14 @@ def bar_plot_error(human_data, model_stats, ax=None, ylim=None, legend=True, xla
     }
     # Add model data
     yerr = [human_data['se']]  # Start with human SE
-    algos = model_stats['algo'].unique().to_list()
-    for algo in model_order:
-        if not algo in algos:
-           continue
-        row = model_stats.filter(algo=algo)
-        all_data[algo] = row['mean'].to_numpy()[0]
-        yerr.append(row['se'].to_numpy()[0])
+    if model_stats is not None:
+      algos = model_stats['algo'].unique().to_list()
+      for algo in model_order:
+          if not algo in algos:
+            continue
+          row = model_stats.filter(algo=algo)
+          all_data[algo] = row['mean'].to_numpy()[0]
+          yerr.append(row['se'].to_numpy()[0])
 
     # Plot bars
     x_pos = np.arange(len(all_data))
@@ -590,7 +591,9 @@ def plot_path_reuse_comparison(
     model_df: DataFrame,
     stats_file=None,
     ax=None,
+    measure: str = 'reuse',
     title="Path Reuse Comparison",
+    ylabel="Path Reuse (%)",
     include_raw_data: bool = True,
     figsize=(6, 3)
 ) -> Tuple[plt.Figure, plt.Axes]:
@@ -622,9 +625,9 @@ def plot_path_reuse_comparison(
     model_stats = (
         model_df.group_by('algo')
         .agg(
-            mean=pl.col('reuse').mean() * 100,
-            se=(pl.col('reuse').mean() * (1 - pl.col('reuse').mean()) /
-                pl.col('reuse').count()).sqrt() * 100
+            mean=pl.col(measure).mean() * 100,
+            se=(pl.col(measure).mean() * (1 - pl.col(measure).mean()) /
+                pl.col(measure).count()).sqrt() * 100
         )
     )
 
@@ -651,7 +654,7 @@ def plot_path_reuse_comparison(
 
     # Customize plot
     ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
-    ax.set_ylabel('Path Reuse (%)', fontsize=DEFAULT_LABEL_SIZE)
+    ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
 
     return fig, ax
 
@@ -783,7 +786,7 @@ def mixed_effects_compute_power(
 # Power Analysis function
 ######################################
 
-def power_analysis_path_reuse(df: pl.DataFrame, mu: float = 0.5, alpha: float = 0.05, plot: bool = False, stats_file=None):
+def power_analysis_path_reuse(df: pl.DataFrame, measure: str = 'reuse', mu: float = 0.5, alpha: float = 0.05, plot: bool = False, stats_file=None):
     """Analyze binary proportion data using appropriate statistical test based on normality.
     
     Args:
@@ -795,8 +798,8 @@ def power_analysis_path_reuse(df: pl.DataFrame, mu: float = 0.5, alpha: float = 
     """
     # First aggregate by user to get their mean reuse rate
     user_means = df.group_by('user_id').agg(
-        reuse_rate=pl.col('reuse').mean(),
-        n_trials=pl.col('reuse').count()
+        reuse_rate=pl.col(measure).mean(),
+        n_trials=pl.col(measure).count()
     )
     reuse_rates = user_means['reuse_rate'].to_numpy()
     n_users = len(reuse_rates)
@@ -1604,8 +1607,7 @@ def experiment_3_results(
       input_settings=dict(eval=False),
       output_settings=dict(manipulation=2),
       group_key='user_id',
-  ).filter(eval=True)
-
+  )
   ##################
   # Create reaction time difference plot
   ##################

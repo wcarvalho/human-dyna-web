@@ -848,8 +848,8 @@ if __name__ == "__main__":
       #'Start-notell': f'{data_dir}/user_data/*exps*/*v2*r0*start*.json',
       'Plan (Tell)': f'{data_dir}/user_data/*exps*/*v2*r1-t0-plan*.json',
       "Plan (Don't Tell)": f'{data_dir}/user_data/*exps*/*v2*r0-t0-plan*.json',
-      'Shortcut': f'{data_dir}/user_data/*exps*/*v1*shortcut*.json',
-      'Shortcut-notell': f'{data_dir}/user_data/*exps*/*v2*r0*shortcut*.json',
+      'Shortcut': f'{data_dir}/user_data/*exps*/*v3*shortcut*.json',
+      #'Shortcut-notell': f'{data_dir}/user_data/*exps*/*v2*r0*shortcut*.json',
   }
 
   valid_files = get_valid_files(searches, verbose=True, plot=False)
