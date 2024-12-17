@@ -3,6 +3,7 @@ import inspect
 import collections
 import asyncio
 import aiofiles
+import msgpack
 import subprocess
 
 from dotenv import load_dotenv
@@ -20,7 +21,7 @@ from datetime import datetime, timedelta
 
 
 from gcs import save_data_to_gcs
-from gcs import save_file_to_gcs
+from gcs import save_to_gcs_with_retries
 import nicewebrl
 import nicewebrl.nicejax
 import nicewebrl.stages
@@ -69,7 +70,6 @@ def blob_user_filename():
     return f'user={seed}_worker={worker}_name={NAME}_debug={DEBUG}'
   else:
     return f'user={seed}_name={NAME}_debug={DEBUG}'
-
 
 setup_logging(DATA_DIR,
               log_filename_fn=log_filename_fn,
@@ -261,52 +261,22 @@ async def save_data(final_save=True, feedback=None, **kwargs):
           user_storage=user_storage,
           **kwargs,
       )
-      async with aiofiles.open(user_data_file, 'a') as f:
-          await f.write(json.dumps(last_line) + '\n')
+      async with aiofiles.open(user_data_file, 'ab') as f:  # Changed to binary mode
+          # Use msgpack to serialize the data
+          packed_data = msgpack.packb(last_line)
+          await f.write(packed_data)
+          await f.write(b'\n')  # Add newline in binary mode
 
     if not DEBUG:
-        if final_save:
-            max_retries = 5
-            retry_delay = 5  # seconds
-            for attempt in range(max_retries):
-                try:
-                    # ----------
-                    # upload user data
-                    # ----------
-                    saved = await save_file_to_gcs(
-                        local_filename=user_data_file,
-                        blob_filename=f'data/{blob_user_filename()}.json')
-                    if not saved:
-                      continue
-                    # ----------
-                    # upload user logs
-                    # ----------
-                    await save_file_to_gcs(
-                        local_filename=log_filename_fn(
-                            DATA_DIR, app.storage.user.get('user_id')),
-                        blob_filename=f'logs/{blob_user_filename()}.log')
-                    logger.info(
-                        f"Successfully saved data to GCS on attempt {attempt + 1}")
-                    break
-                except (TransportError, gcs_exceptions.GoogleCloudError) as e:
-                    if attempt < max_retries - 1:
-                        logger.info(
-                            f"Error saving to GCS: {e}. Retrying in {retry_delay} seconds...")
-                        await asyncio.sleep(retry_delay)
-                    else:
-                        logger.info(
-                            f"Failed to save to GCS after {max_retries} attempts: {e}")
-        else:
-            # Non-final save, just attempt once
-            try:
-                saved = await save_file_to_gcs(
-                    local_filename=user_data_file,
-                    blob_filename=f'data/{blob_user_filename()}.json')
-            except Exception as e:
-                logger.info(f"Error saving to GCS (non-final save): {e}")
-
-    #if final_save:
-    #  await StageStateModel.filter(session_id=app.storage.browser['id']).delete()
+        files_to_save = [
+            (user_data_file, f'data/{blob_user_filename()}.json'),
+            (log_filename_fn(DATA_DIR, app.storage.user.get('user_id')),
+             f'logs/{blob_user_filename()}.log')
+        ]
+        await save_to_gcs_with_retries(
+            files_to_save,
+            max_retries=5 if final_save else 1,
+        )
 
 async def check_if_over(*args, episode_limit=60, ** kwargs):
    minutes_passed = nicewebrl.get_user_session_minutes()

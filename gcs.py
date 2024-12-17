@@ -1,16 +1,17 @@
-from google.auth.exceptions import TransportError
-from google.cloud import storage
-import os
-import json
+import asyncio
 
 from dotenv import load_dotenv
-
+from google.auth.exceptions import TransportError
+from google.cloud import storage
 from google.cloud.exceptions import exceptions as gcs_exceptions
+
+import json
+import os
+
 from nicewebrl.logging import get_logger
 
-
-logger = get_logger(__name__)
 load_dotenv()
+logger = get_logger(__name__)
 
 
 def initialize_storage_client():
@@ -38,18 +39,6 @@ def download_files(bucket, destination_folder):
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         blob.download_to_filename(file_path)
         print(f"Downloaded {blob.name} to {file_path}")
-
-def main():
-    bucket = initialize_storage_client()
-
-    ## List files in the bucket
-    list_files(bucket)
-
-    # Download files from the bucket
-    #download_files(bucket, 'google_cloud_data')
-
-if __name__ == "__main__":
-    main()
 
 
 async def save_data_to_gcs(data, blob_filename):
@@ -82,3 +71,53 @@ async def save_file_to_gcs(local_filename, blob_filename):
         logger.info("Skipping GCS upload")
 
     return False  # Failed to save
+
+
+async def save_to_gcs_with_retries(files_to_save, max_retries=5, retry_delay=5):
+    """Save multiple files to Google Cloud Storage with retry logic.
+
+    Args:
+        files_to_save: List of tuples (local_filename, blob_filename)
+        max_retries: Number of retry attempts
+        retry_delay: Seconds to wait between retries
+
+    Returns:
+        bool: True if all files were saved successfully, False otherwise
+    """
+    for attempt in range(max_retries):
+        try:
+            # Try to save all files
+            for local_file, blob_file in files_to_save:
+                saved = await save_file_to_gcs(
+                    local_filename=local_file,
+                    blob_filename=blob_file)
+                if not saved:
+                    raise Exception(f"Failed to save {local_file}")
+
+            logger.info(
+                f"Successfully saved data to GCS on attempt {attempt + 1}")
+            return True
+
+        except (TransportError, gcs_exceptions.GoogleCloudError, Exception) as e:
+            if attempt < max_retries - 1:
+                logger.info(
+                    f"Error saving to GCS: {e}. Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.info(
+                    f"Failed to save to GCS after {max_retries} attempts: {e}")
+                return False
+
+
+def main():
+    bucket = initialize_storage_client()
+
+    # List files in the bucket
+    list_files(bucket)
+
+    # Download files from the bucket
+    # download_files(bucket, 'google_cloud_data')
+
+
+if __name__ == "__main__":
+    main()

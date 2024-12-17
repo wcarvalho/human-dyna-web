@@ -1,5 +1,15 @@
-# delete local data (useful for testing)
-rm -r data .nicegui;
+########################################################
+# Experiment 9 - CRAFTAX
+##########################################
+
+rm -r craftax_data .nicegui; DEBUG=1 \
+  JAX_COMPILATION_CACHE_DIR="/tmp/craftax_jax_cache" \
+  DATA_DIR='craftax_data' \
+  NAME='craftax_exp' \
+  SEED=1 \
+  WORLD_SEED=1 \
+  python craftax_webapp.py
+
 ########################################################
 # Experiment 8 - adding rest and randomizing
 ##########################################

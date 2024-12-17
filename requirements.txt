@@ -7,3 +7,4 @@ safetensors
 ipywidgets
 aiofiles
 statsmodels==0.14.0
+craftax

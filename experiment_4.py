@@ -84,6 +84,7 @@ def reversal_label(reversal):
 
 def get_user_save_file_fn():
     return f'{DATA_DIR}/user={app.storage.user.get("seed")}_name={NAME}_debug={DEBUG}.json'
+
 ##############################################
 # Creating environment stuff
 ##############################################
