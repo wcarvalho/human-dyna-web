@@ -76,26 +76,8 @@ setup_logging(DATA_DIR,
               nicegui_storage_user_key='user_id')
 logger = get_logger('main')
 
-if EXPERIMENT == 0:
-  # import experiment_test as experiment
-  # APP_TITLE = 'Human Dyna Test'
-  pass
-elif EXPERIMENT == 1:
-  # import experiment_1 as experiment
-  # APP_TITLE = 'Human Dyna 1'
-  pass
-elif EXPERIMENT == 2:
-  # import experiment_2 as experiment
-  # APP_TITLE = 'Dyna 2'
-  pass
-elif EXPERIMENT == 3:
-  import experiment_3 as experiment
-  APP_TITLE = 'Dyna 3'
-elif EXPERIMENT == 4:
-  import experiment_4 as experiment
-  APP_TITLE = 'Dyna 4'
-else:
-   raise NotImplementedError
+import jaxmaze_experiment as experiment
+APP_TITLE = 'Dyna 4'
 all_stages = experiment.all_stages
 
 DATABASE_FILE = f'{DATABASE_FILE}_name={NAME}_debug={DEBUG}'

@@ -146,7 +146,7 @@ async def init_db() -> None:
         db_url=f'sqlite://{DATA_DIR}/{DATABASE_FILE}',
         # this will look in models.py,
         # models.py uses defaults from nicewebrl
-        modules={'models': ['models']})
+        modules={'models': ['nicewebrl.stages']})
     await Tortoise.generate_schemas()
 
 
@@ -500,7 +500,7 @@ def footer(footer_container):
 
 ui.run(
     storage_secret='private key to secure the browser session cookie',
-     reload='FLY_ALLOC_ID' not in os.environ,
-    #reload=False,
+    #reload='FLY_ALLOC_ID' not in os.environ,
+    reload=False,
     title='Crafter Web App',
 )
