@@ -27,38 +27,42 @@ image_dict = utils.load_image_dict()
 
 num_groups = 2
 char2idx, groups, task_objects = mazes.get_group_set(num_groups)
-idx2key = {idx: image_dict['keys'][idx] for char, idx in char2idx.items()}
+idx2key = {idx: image_dict["keys"][idx] for char, idx in char2idx.items()}
 task_runner = multitask_env.TaskRunner(task_objects=task_objects)
 
 
 class EpisodeData(NamedTuple):
-    actions: jax.Array
-    timesteps: multitask_env.TimeStep
-    positions: jax.Array = None
-    reaction_times: jax.Array = None
-    transitions: struct.PyTreeNode = None
+  actions: jax.Array
+  timesteps: multitask_env.TimeStep
+  positions: jax.Array = None
+  reaction_times: jax.Array = None
+  transitions: struct.PyTreeNode = None
 
 
 def is_in_notebook():
-    try:
-        from IPython import get_ipython
-        if 'IPKernelApp' in get_ipython().config:
-            return True
-        else:
-            return False
-    except ImportError:
-        return False
-    except AttributeError:
-        return False
+  try:
+    from IPython import get_ipython
+
+    if "IPKernelApp" in get_ipython().config:
+      return True
+    else:
+      return False
+  except ImportError:
+    return False
+  except AttributeError:
+    return False
+
 
 if is_in_notebook():
-    from tqdm.notebook import tqdm
-    try:
-        import ipywidgets
-    except:
-        pass
+  from tqdm.notebook import tqdm
+
+  try:
+    import ipywidgets
+  except:
+    pass
 else:
-    from tqdm import tqdm
+  from tqdm import tqdm
+
 
 ############
 # trained model
@@ -66,26 +70,27 @@ else:
 def get_params(maze_str: str = None):
   maze_str = maze_str or mazes.maze0
   return mazes.get_maze_reset_params(
-      groups=groups,
-      char2key=char2idx,
-      maze_str=maze_str,
-      randomize_agent=False,
-      make_env_params=True,
-)
+    groups=groups,
+    char2key=char2idx,
+    maze_str=maze_str,
+    randomize_agent=False,
+    make_env_params=True,
+  )
+
 
 def get_algorithm_data(
-        algorithm: data_loading.Algorithm,
-        exp: str,
-        overwrite: bool = False,
-        extra_info = None,
-        data_task_runner = None,
-        path: str = None,
-      ):
+  algorithm: data_loading.Algorithm,
+  exp: str,
+  overwrite: bool = False,
+  extra_info=None,
+  data_task_runner=None,
+  path: str = None,
+):
   extra_info = extra_info or {}
   data_task_runner = data_task_runner or task_runner
   exp_fn = getattr(housemaze_experiments, exp, None)
   _, _, _, label2name = exp_fn(algorithm.config, analysis_eval=True)
-  
+
   base_path = path or f"{algorithm.path}/analysis/"
   os.makedirs(base_path, exist_ok=True)
   timesteps_filename = f"{base_path}/{algorithm.name}_timesteps.pickle"
@@ -93,9 +98,11 @@ def get_algorithm_data(
   ##############################
   # if already exists, return
   ##############################
-  if (os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite):
+  if (
+    os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite
+  ):
     df = pl.read_csv(df_filename)
-    with open(timesteps_filename, 'rb') as f:
+    with open(timesteps_filename, "rb") as f:
       all_episodes = pickle.load(f)
 
     return df, all_episodes
@@ -112,62 +119,71 @@ def get_algorithm_data(
   all_info = []
   all_episodes = []
   for maze_name in label2name.values():
-      env_params = get_params(getattr(mazes, maze_name))
-      for task in tasks:
-          task_vector = data_task_runner.task_vector(task)
-          episodes = algorithm.eval_fn(rng, env_params, task_vector)
-          info = dict(
-              eval=bool(task in test_tasks),
-              algo=algorithm.name,
-              exp=exp,
-              room=0,
-              task=task,
-              maze_name=maze_name,
-              **extra_info,
-          )
+    env_params = get_params(getattr(mazes, maze_name))
+    for task in tasks:
+      task_vector = data_task_runner.task_vector(task)
+      episodes = algorithm.eval_fn(rng, env_params, task_vector)
+      info = dict(
+        eval=bool(task in test_tasks),
+        algo=algorithm.name,
+        exp=exp,
+        room=0,
+        task=task,
+        maze_name=maze_name,
+        **extra_info,
+      )
 
-          all_info.append(info)
-          all_episodes.append(episodes)
+      all_info.append(info)
+      all_episodes.append(episodes)
   df = pl.DataFrame(all_info)
   df.write_csv(df_filename)
 
-  with open(timesteps_filename, 'wb') as f:
+  with open(timesteps_filename, "wb") as f:
     pickle.dump(all_episodes, f)
-  
+
   return df, all_episodes
+
 
 ###################
 # Search
 ###################
 
+
 def concat_pytrees(tree1, tree2, **kwargs):
-    return jax.tree_map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
-def add_time(v): return jax.tree_map(lambda x: x[None], v)
+  return jax.tree_map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
+
+
+def add_time(v):
+  return jax.tree_map(lambda x: x[None], v)
+
+
 def concat_first_rest(first, rest):
-    # init: [...]
-    # rest: [T, ...]
-    # output: [T+1, ...]
-    return concat_pytrees(add_time(first), rest)
+  # init: [...]
+  # rest: [T, ...]
+  # output: [T+1, ...]
+  return concat_pytrees(add_time(first), rest)
+
 
 def actions_from_search(env_params, rng, task, algo, budget):
-    map_init = jax.tree_map(lambda x:x[0], env_params.reset_params.map_init)
-    grid = np.asarray(map_init.grid)
-    agent_pos = tuple(int(o) for o in map_init.agent_pos)
-    goal = np.array([task])
-    path, _ = algo(grid, agent_pos, goal, key=rng, budget=budget)
-    actions = utils.actions_from_path(path)
-    return actions
+  map_init = jax.tree_map(lambda x: x[0], env_params.reset_params.map_init)
+  grid = np.asarray(map_init.grid)
+  agent_pos = tuple(int(o) for o in map_init.agent_pos)
+  goal = np.array([task])
+  path, _ = algo(grid, agent_pos, goal, key=rng, budget=budget)
+  actions = utils.actions_from_path(path)
+  return actions
+
 
 def collect_search_episodes(
-  env, env_params, task, algorithm: str, budget=None,
-  n: int=100):
+  env, env_params, task, algorithm: str, budget=None, n: int = 100
+):
   budget = budget or 1e8
 
   def step_fn(carry, action):
-      rng, timestep = carry
-      rng, step_rng = jax.random.split(rng)
-      next_timestep = env.step(step_rng, timestep, action, env_params)
-      return (rng, next_timestep), next_timestep
+    rng, timestep = carry
+    rng, step_rng = jax.random.split(rng)
+    next_timestep = env.step(step_rng, timestep, action, env_params)
+    return (rng, next_timestep), next_timestep
 
   def collect_episode(task, actions, rng):
     timestep = env.reset(rng, env_params)
@@ -186,12 +202,10 @@ def collect_search_episodes(
 
   # First, get all actions
   for idx in range(n):
-      actions = actions_from_search(
-          env_params, rngs[idx], task,
-          algo=getattr(utils, algorithm),
-          budget=budget
-      )
-      all_actions.append(actions)
+    actions = actions_from_search(
+      env_params, rngs[idx], task, algo=getattr(utils, algorithm), budget=budget
+    )
+    all_actions.append(actions)
 
   # Find the maximum length among all action sequences
   max_length = max(len(actions) for actions in all_actions)
@@ -199,8 +213,8 @@ def collect_search_episodes(
   # Pad each action sequence to the maximum length
   padded_actions = []
   for actions in all_actions:
-      padding = [0] * (max_length - len(actions))
-      padded_actions.append(np.concatenate((actions, np.array(padding, dtype=np.int32))))
+    padding = [0] * (max_length - len(actions))
+    padded_actions.append(np.concatenate((actions, np.array(padding, dtype=np.int32))))
 
   # Convert to numpy array
   all_actions = np.array(padded_actions, dtype=np.int32)
@@ -208,28 +222,25 @@ def collect_search_episodes(
   # Now compute all episodes
   all_episodes = []
   for idx in range(n):
-      episode = collect_episode(task, all_actions[idx][:-1], rngs[idx])
-      all_episodes.append(episode)
+    episode = collect_episode(task, all_actions[idx][:-1], rngs[idx])
+    all_episodes.append(episode)
 
   # [N, T]
   all_actions = np.array(all_actions)
   all_episodes = jtu.tree_map(lambda *v: jnp.stack(v), *all_episodes)
 
-  return data_loading.EpisodeData(
-    timesteps=all_episodes,
-    actions=all_actions)
+  return data_loading.EpisodeData(timesteps=all_episodes, actions=all_actions)
 
 
 def get_search_data(
-        algorithm: str,
-        env,
-        exp: str,
-        base_path: str,
-        budget: int = None,
-        overwrite: bool = False,
-        searches: int=100,
-      ):
-
+  algorithm: str,
+  env,
+  exp: str,
+  base_path: str,
+  budget: int = None,
+  overwrite: bool = False,
+  searches: int = 100,
+):
   exp_fn = getattr(housemaze_experiments, exp, None)
   _, _, _, label2name = exp_fn({}, analysis_eval=True)
 
@@ -240,9 +251,11 @@ def get_search_data(
   ##############################
   # if already exists, return
   ##############################
-  if (os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite):
+  if (
+    os.path.exists(timesteps_filename) and os.path.exists(df_filename) and not overwrite
+  ):
     df = pl.read_csv(df_filename)
-    with open(timesteps_filename, 'rb') as f:
+    with open(timesteps_filename, "rb") as f:
       all_episodes = pickle.load(f)
 
     return df, all_episodes
@@ -258,42 +271,44 @@ def get_search_data(
   all_info = []
   all_episodes = []
   for maze_name in label2name.values():
-      env_params = get_params(getattr(mazes, maze_name))
-      for task in tasks:
-          episodes = collect_search_episodes(
-             env=env,
-             env_params=env_params,
-             task=task,
-             algorithm=algorithm,
-             budget=budget,
-             n=searches)
-          info = dict(
-              eval=bool(task in test_tasks),
-              algo=algorithm,
-              exp=exp,
-              room=0,
-              task=task,
-              budget=budget,
-              maze_name=maze_name,
-          )
-          #print("-"*50)
-          #print("Finished")
-          #print(info)
-          all_info.append(info)
-          all_episodes.append(episodes)
+    env_params = get_params(getattr(mazes, maze_name))
+    for task in tasks:
+      episodes = collect_search_episodes(
+        env=env,
+        env_params=env_params,
+        task=task,
+        algorithm=algorithm,
+        budget=budget,
+        n=searches,
+      )
+      info = dict(
+        eval=bool(task in test_tasks),
+        algo=algorithm,
+        exp=exp,
+        room=0,
+        task=task,
+        budget=budget,
+        maze_name=maze_name,
+      )
+      # print("-"*50)
+      # print("Finished")
+      # print(info)
+      all_info.append(info)
+      all_episodes.append(episodes)
 
   df = pl.DataFrame(all_info)
   df.write_csv(df_filename)
 
-  with open(timesteps_filename, 'wb') as f:
+  with open(timesteps_filename, "wb") as f:
     pickle.dump(all_episodes, f)
-  
+
   return df, all_episodes
 
 
 ###################
 # Visualizations
 ###################
+
 
 def get_in_episode(timestep):
   # get mask for within episode
@@ -303,247 +318,262 @@ def get_in_episode(timestep):
   in_episode = (term_cumsum + non_terminal) < 2
   return in_episode
 
+
 def housemaze_render_fn(state: multitask_env.EnvState):
-    return renderer.create_image_from_grid(
-        state.grid,
-        state.agent_pos,
-        state.agent_dir,
-        image_dict)
+  return renderer.create_image_from_grid(
+    state.grid, state.agent_pos, state.agent_dir, image_dict
+  )
+
 
 def render_path(episode_data, from_model=True, ax=None):
-    # get actions that are in episode
-    timesteps = episode_data.timesteps
-    actions = episode_data.actions
-    if from_model:
-      in_episode = get_in_episode(timesteps)
-      actions = actions[in_episode][:-1]
-      positions = jax.tree_map(lambda x: x[in_episode][:-1], timesteps.state.agent_pos)
-    else:
-       positions = timesteps.state.agent_pos[:-1]
-    # positions in episode
+  # get actions that are in episode
+  timesteps = episode_data.timesteps
+  actions = episode_data.actions
+  if from_model:
+    in_episode = get_in_episode(timesteps)
+    actions = actions[in_episode][:-1]
+    positions = jax.tree_map(lambda x: x[in_episode][:-1], timesteps.state.agent_pos)
+  else:
+    positions = timesteps.state.agent_pos[:-1]
+  # positions in episode
 
-    state_0 = jax.tree_map(lambda x: x[0], timesteps.state)
+  state_0 = jax.tree_map(lambda x: x[0], timesteps.state)
 
-    # doesn't matter
-    maze_height, maze_width, _ = timesteps.state.grid[0].shape
+  # doesn't matter
+  maze_height, maze_width, _ = timesteps.state.grid[0].shape
 
-    if ax is None:
-      fig, ax = plt.subplots(1, figsize=(5, 5))
-    img = housemaze_render_fn(state_0)
-    
-    renderer.place_arrows_on_image(img, positions, actions, maze_height, maze_width, arrow_scale=5, ax=ax)
+  if ax is None:
+    fig, ax = plt.subplots(1, figsize=(5, 5))
+  img = housemaze_render_fn(state_0)
+
+  renderer.place_arrows_on_image(
+    img, positions, actions, maze_height, maze_width, arrow_scale=5, ax=ax
+  )
 
 
 def create_reaction_times_video(images, reaction_times, output_file, fps=1):
-    # Ensure the directory exists
-    output_dir = os.path.dirname(output_file)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+  # Ensure the directory exists
+  output_dir = os.path.dirname(output_file)
+  if output_dir and not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
-    n = len(images)
-    width = 4
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(2*width, width))
+  n = len(images)
+  width = 4
+  fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(2 * width, width))
 
-    def update(frame):
-        # Clear previous content
-        ax1.clear()
-        ax2.clear()
+  def update(frame):
+    # Clear previous content
+    ax1.clear()
+    ax2.clear()
 
-        # Left plot: Image
-        if images.size > 0:
-            img = images[frame]
-            ax1.imshow(img, cmap='viridis')
-        else:
-            ax1.text(0.5, 0.5, "No image data", ha='center', va='center')
-        rt = reaction_times[frame]
-        ax1.set_title(
-            f"Step: {frame}, Reaction Time: {rt:.2f} s")
-        ax1.axis('off')
+    # Left plot: Image
+    if images.size > 0:
+      img = images[frame]
+      ax1.imshow(img, cmap="viridis")
+    else:
+      ax1.text(0.5, 0.5, "No image data", ha="center", va="center")
+    rt = reaction_times[frame]
+    ax1.set_title(f"Step: {frame}, Reaction Time: {rt:.2f} s")
+    ax1.axis("off")
 
-        # Right plot: Bar plot of reaction times
-        bars = ax2.bar(range(len(reaction_times)),
-                       reaction_times, color='lightblue')
-        bars[frame].set_color('red')  # Highlight current index
-        ax2.set_xlabel('Time Index')
-        ax2.set_title('Reaction Times')
-        ax2.set_ylim(0, max(reaction_times) * 1.1)
+    # Right plot: Bar plot of reaction times
+    bars = ax2.bar(range(len(reaction_times)), reaction_times, color="lightblue")
+    bars[frame].set_color("red")  # Highlight current index
+    ax2.set_xlabel("Time Index")
+    ax2.set_title("Reaction Times")
+    ax2.set_ylim(0, max(reaction_times) * 1.1)
 
-        return ax1, ax2
+    return ax1, ax2
 
-    # Create the animation
-    anim = FuncAnimation(fig, update, frames=n, interval=1000/fps, blit=False)
-    video = anim.to_html5_video()
-    return video
+  # Create the animation
+  anim = FuncAnimation(fig, update, frames=n, interval=1000 / fps, blit=False)
+  video = anim.to_html5_video()
+  return video
 
 
 def create_episode_reaction_times_video(
-      episode_data,
-      output_file='/tmp/housemaze_anlaysis/rt_video.mp4',
-      fps=1,
-      html: bool = True,
-      ):
+  episode_data,
+  output_file="/tmp/housemaze_anlaysis/rt_video.mp4",
+  fps=1,
+  html: bool = True,
+):
   images = jax.vmap(housemaze_render_fn)(episode_data.timesteps.state)
   reaction_times = episode_data.reaction_times
   video = create_reaction_times_video(images, reaction_times, output_file, fps)
   if html:
-     from IPython.display import HTML, display
-     return display(HTML(video))
+    from IPython.display import HTML, display
+
+    return display(HTML(video))
   return video
 
+
 def episode_sf_value(e, idx=None):
-    actions = e.actions
-    preds = e.transitions.extras['preds']
-    sf_values = preds.sf  # [T, N, A, W]
-    actions = e.actions  # [T]
+  actions = e.actions
+  preds = e.transitions.extras["preds"]
+  sf_values = preds.sf  # [T, N, A, W]
+  actions = e.actions  # [T]
 
-    sf_values = jnp.take_along_axis(
-        sf_values, actions[:, None, None, None], axis=-2)
+  sf_values = jnp.take_along_axis(sf_values, actions[:, None, None, None], axis=-2)
 
-    sf_values = jnp.squeeze(sf_values, axis=-2)  # [T, N, W]
+  sf_values = jnp.squeeze(sf_values, axis=-2)  # [T, N, W]
 
-    in_episode = get_in_episode(e.timesteps)
-    sf_values = sf_values[in_episode]
-    # [T', ... ]
-    if idx is not None:
-        sf_values = sf_values[:, idx]
-    return sf_values
+  in_episode = get_in_episode(e.timesteps)
+  sf_values = sf_values[in_episode]
+  # [T', ... ]
+  if idx is not None:
+    sf_values = sf_values[:, idx]
+  return sf_values
 
-def plot_sf_values(e, idx=None, line_mask=None, line_names=None, ax=None, colors=None, styles=None):
-    """Plot successor feature values as lines.
-    
-    Args:
-        e: Episode data
-        idx: Optional index for SF values
-        line_mask: Optional boolean mask of length N to filter which lines to plot
-        line_names: Optional list of names for each line
-        ax: Optional matplotlib axis to plot on
-        colors: Optional list of colors for each line pair
-        styles: Optional list of linestyles for first/second half
-    
-    Returns:
-        matplotlib axis object
-    """
-    sf_values = episode_sf_value(e, idx)
 
-    if ax is None:
-        _, ax = plt.subplots(figsize=(7, 5))
-    
-    # Default colors and styles if not provided
-    colors = colors or ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']  # Default matplotlib colors
-    styles = styles or ['-', '--']  # Solid for first half, dashed for second half
-    
-    time_steps = np.arange(sf_values.shape[0])
-    n_total = sf_values.shape[1]
-    n_half = n_total // 2
-    
-    for i in range(sf_values.shape[1]):
-        if line_mask is not None and not line_mask[i]:
-            continue
-            
-        # Determine color and style indices
-        color_idx = i % n_half  # Cycle through colors for each half
-        style_idx = i // n_half  # First half gets style[0], second half gets style[1]
-        
-        label = line_names[i] if line_names and i < len(line_names) else None
-        ax.plot(time_steps, sf_values[:, i], 
-                label=label,
-                color=colors[color_idx],
-                linestyle=styles[style_idx])
-    
-    if line_names is not None:
-        ax.legend()
-    
-    ax.set_title('Successor Feature Predictions')
-    ax.set_xlabel('Time Step')
-    ax.set_ylabel('SF Value')
-    ax.set_xlim(0, sf_values.shape[0] - 1)
-    
-    return ax
+def plot_sf_values(
+  e, idx=None, line_mask=None, line_names=None, ax=None, colors=None, styles=None
+):
+  """Plot successor feature values as lines.
+
+  Args:
+      e: Episode data
+      idx: Optional index for SF values
+      line_mask: Optional boolean mask of length N to filter which lines to plot
+      line_names: Optional list of names for each line
+      ax: Optional matplotlib axis to plot on
+      colors: Optional list of colors for each line pair
+      styles: Optional list of linestyles for first/second half
+
+  Returns:
+      matplotlib axis object
+  """
+  sf_values = episode_sf_value(e, idx)
+
+  if ax is None:
+    _, ax = plt.subplots(figsize=(7, 5))
+
+  # Default colors and styles if not provided
+  colors = colors or [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+  ]  # Default matplotlib colors
+  styles = styles or ["-", "--"]  # Solid for first half, dashed for second half
+
+  time_steps = np.arange(sf_values.shape[0])
+  n_total = sf_values.shape[1]
+  n_half = n_total // 2
+
+  for i in range(sf_values.shape[1]):
+    if line_mask is not None and not line_mask[i]:
+      continue
+
+    # Determine color and style indices
+    color_idx = i % n_half  # Cycle through colors for each half
+    style_idx = i // n_half  # First half gets style[0], second half gets style[1]
+
+    label = line_names[i] if line_names and i < len(line_names) else None
+    ax.plot(
+      time_steps,
+      sf_values[:, i],
+      label=label,
+      color=colors[color_idx],
+      linestyle=styles[style_idx],
+    )
+
+  if line_names is not None:
+    ax.legend()
+
+  ax.set_title("Successor Feature Predictions")
+  ax.set_xlabel("Time Step")
+  ax.set_ylabel("SF Value")
+  ax.set_xlim(0, sf_values.shape[0] - 1)
+
+  return ax
+
 
 def make_sf_video(
-      e,
-      idx=0,
-      output_file='/tmp/housemaze_analysis/sf_video.mp4',
-      fps=1,
-      html=True,
-      n=1e8,
-      line_mask=None,
-      line_names=None):
+  e,
+  idx=0,
+  output_file="/tmp/housemaze_analysis/sf_video.mp4",
+  fps=1,
+  html=True,
+  n=1e8,
+  line_mask=None,
+  line_names=None,
+):
+  in_episode = get_in_episode(e.timesteps)
+  states = e.timesteps.state
 
-    in_episode = get_in_episode(e.timesteps)
-    states = e.timesteps.state
+  states = jax.tree_map(lambda x: x[in_episode], states)  # [T', ... ]
+  images = jax.vmap(housemaze_render_fn)(states)
 
-    states = jax.tree_map(lambda x: x[in_episode], states)  # [T', ... ]
-    images = jax.vmap(housemaze_render_fn)(states)
+  # Ensure the directory exists
+  output_dir = os.path.dirname(output_file)
+  if output_dir and not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
-    # Ensure the directory exists
-    output_dir = os.path.dirname(output_file)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+  n = len(images)
+  width = 7
+  height = 5
+  fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(2 * width, height))
 
-    n = len(images)
-    width = 7
-    height = 5
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(2*width, height))
+  # Initialize the plots
+  im1 = ax1.imshow(images[0])
 
-    # Initialize the plots
-    im1 = ax1.imshow(images[0])
-    
-    # Plot SF values using the extracted function
-    plot_sf_values(e, line_mask=line_mask, line_names=line_names, ax=ax2)
-    red_bar = ax2.axvline(x=0, color='red', linewidth=2)
-    
-    ax1.set_title('Environment')
+  # Plot SF values using the extracted function
+  plot_sf_values(e, line_mask=line_mask, line_names=line_names, ax=ax2)
+  red_bar = ax2.axvline(x=0, color="red", linewidth=2)
 
-    def update(frame):
-        # Update left panel (environment image)
-        im1.set_array(images[frame])
-        ax1.set_title(f"Step: {frame}")
+  ax1.set_title("Environment")
 
-        # Update red bar position
-        red_bar.set_xdata(frame)
+  def update(frame):
+    # Update left panel (environment image)
+    im1.set_array(images[frame])
+    ax1.set_title(f"Step: {frame}")
 
-        return im1, red_bar
+    # Update red bar position
+    red_bar.set_xdata(frame)
 
-    # Create the animation
-    anim = FuncAnimation(fig, update, frames=n, interval=1000/fps, blit=False)
-    video = anim.to_html5_video()
-    
-    plt.close(fig)
+    return im1, red_bar
 
-    if html:
-        from IPython.display import HTML, display
-        return display(HTML(video))
-    return video
+  # Create the animation
+  anim = FuncAnimation(fig, update, frames=n, interval=1000 / fps, blit=False)
+  video = anim.to_html5_video()
+
+  plt.close(fig)
+
+  if html:
+    from IPython.display import HTML, display
+
+    return display(HTML(video))
+  return video
+
 
 ###################
 # Metrics
 ###################
 
 
-
 def get_human_data(user_df, user_data, fn, filter_fn=None, **kwargs):
-    eval_df = user_df.filter(**kwargs)
-    idxs = np.array(eval_df['index'])-1
-    array = []
-    for idx in idxs:
-        if filter_fn is not None:
-           if filter_fn(user_data[idx]): continue
-        val = fn(user_data[idx])
-        array.append(val)
+  eval_df = user_df.filter(**kwargs)
+  idxs = np.array(eval_df["index"]) - 1
+  array = []
+  for idx in idxs:
+    if filter_fn is not None:
+      if filter_fn(user_data[idx]):
+        continue
+    val = fn(user_data[idx])
+    array.append(val)
 
-    return array
+  return array
 
 
 def get_model_data(model_df, model_data, fn, **kwargs):
-    eval_df = model_df.filter(**kwargs)
-    idxs = np.array(eval_df['index'])-1
-    array = []
-    for idx in idxs:
-        val = jax.vmap(fn)(model_data[idx])
-        array.append(val)
+  eval_df = model_df.filter(**kwargs)
+  idxs = np.array(eval_df["index"]) - 1
+  array = []
+  for idx in idxs:
+    val = jax.vmap(fn)(model_data[idx])
+    array.append(val)
 
-    return np.array(array).mean(-1)
+  return np.array(array).mean(-1)
 
 
 ###################
@@ -551,212 +581,244 @@ def get_model_data(model_df, model_data, fn, **kwargs):
 ###################
 
 model_colors = {
-    'human_success': '#0072B2',
-    'human': '#009E73',
-    'human_terminate': '#D55E00',
-    'qlearning': '#CC79A7',
-    'dyna': '#F0E442',
-    'bfs': '#56B4E9',
-    'dfs': '#E69F00'
+  "human_success": "#0072B2",
+  "human": "#009E73",
+  "human_terminate": "#D55E00",
+  "qlearning": "#CC79A7",
+  "dyna": "#F0E442",
+  "bfs": "#56B4E9",
+  "dfs": "#E69F00",
 }
 
 model_names = {
-    'dyna': 'multi-task preplay',
-    'bfs': 'breadth-first search',
-    'dfs': 'depth-first search',
+  "dyna": "multi-task preplay",
+  "bfs": "breadth-first search",
+  "dfs": "depth-first search",
 }
 model_names = {
-    'qlearning': 'Q-learning',
-    'usfa': 'Successor features',
-    'dyna': 'Multitask preplay',
-    'bfs': 'Breadth-first search',
-    'dfs': 'Depth-first search',
+  "qlearning": "Q-learning",
+  "usfa": "Successor features",
+  "dyna": "Multitask preplay",
+  "bfs": "Breadth-first search",
+  "dfs": "Depth-first search",
 }
+
 
 def bar_plot_results(model_dict, figsize=(8, 4), error_bars=False, title="", ylabel=""):
-    # Set up the plot style
-    plt.figure(figsize=figsize)
-    sns.set_style("whitegrid")
+  # Set up the plot style
+  plt.figure(figsize=figsize)
+  sns.set_style("whitegrid")
 
-    # Prepare data for plotting
-    models = list(model_dict.keys())
-    values = [np.mean(arr) for arr in model_dict.values()]
-    errors = [np.std(arr)/np.sqrt(len(arr)) for arr in model_dict.values()] if error_bars else None
+  # Prepare data for plotting
+  models = list(model_dict.keys())
+  values = [np.mean(arr) for arr in model_dict.values()]
+  errors = (
+    [np.std(arr) / np.sqrt(len(arr)) for arr in model_dict.values()]
+    if error_bars
+    else None
+  )
 
-    # Create the bar plot with consistent colors
-    bars = plt.bar([model_names.get(model, model) for model in models], values, yerr=errors, capsize=5, color=[model_colors.get(model, '#333333') for model in models])
+  # Create the bar plot with consistent colors
+  bars = plt.bar(
+    [model_names.get(model, model) for model in models],
+    values,
+    yerr=errors,
+    capsize=5,
+    color=[model_colors.get(model, "#333333") for model in models],
+  )
 
-    # Customize the plot
-    plt.title(title, fontsize=16)
-    plt.xlabel("Data source", fontsize=12)
-    plt.ylabel(ylabel, fontsize=12)
-    plt.xticks(rotation=45, ha='right')
+  # Customize the plot
+  plt.title(title, fontsize=16)
+  plt.xlabel("Data source", fontsize=12)
+  plt.ylabel(ylabel, fontsize=12)
+  plt.xticks(rotation=45, ha="right")
 
-    # Add value labels on top of each bar
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                 f'{height:.2f}',
-                 ha='center', va='bottom')
+  # Add value labels on top of each bar
+  for bar in bars:
+    height = bar.get_height()
+    plt.text(
+      bar.get_x() + bar.get_width() / 2.0,
+      height,
+      f"{height:.2f}",
+      ha="center",
+      va="bottom",
+    )
 
-    # Adjust layout and display the plot
-    plt.tight_layout()
-    plt.show()
+  # Adjust layout and display the plot
+  plt.tight_layout()
+  plt.show()
 
 
 def success_termination_results(success_dict, termination_dict, title="", ylabel=""):
-    # Set up the plot style
-    plt.figure(figsize=(12, 6))
-    sns.set_style("whitegrid")
+  # Set up the plot style
+  plt.figure(figsize=(12, 6))
+  sns.set_style("whitegrid")
 
-    # Prepare data for plotting
-    models = list(success_dict.keys())
-    success_values = [np.mean(arr) for arr in success_dict.values()]
-    success_errors = [np.std(arr)/np.sqrt(len(arr))
-                      for arr in success_dict.values()]
-    termination_values = [np.mean(arr) for arr in termination_dict.values()]
-    termination_errors = [np.std(arr)/np.sqrt(len(arr))
-                          for arr in termination_dict.values()]
+  # Prepare data for plotting
+  models = list(success_dict.keys())
+  success_values = [np.mean(arr) for arr in success_dict.values()]
+  success_errors = [np.std(arr) / np.sqrt(len(arr)) for arr in success_dict.values()]
+  termination_values = [np.mean(arr) for arr in termination_dict.values()]
+  termination_errors = [
+    np.std(arr) / np.sqrt(len(arr)) for arr in termination_dict.values()
+  ]
 
-    # Set up bar positions
-    x = np.arange(len(models))
-    width = 0.35
+  # Set up bar positions
+  x = np.arange(len(models))
+  width = 0.35
 
-    # Create the bar plot with consistent colors
-    fig, ax = plt.subplots(figsize=(12, 6))
-    success_bars = ax.bar(x - width/2, success_values, width, yerr=success_errors, capsize=5,
-                          color=[model_colors.get(model, '#333333')
-                                 for model in models],
-                          label='Success Rate', hatch='//')
-    termination_bars = ax.bar(x + width/2, termination_values, width, yerr=termination_errors, capsize=5,
-                              color=[model_colors.get(model, '#333333')
-                                     for model in models],
-                              label='Termination Rate', alpha=0.7)
+  # Create the bar plot with consistent colors
+  fig, ax = plt.subplots(figsize=(12, 6))
+  success_bars = ax.bar(
+    x - width / 2,
+    success_values,
+    width,
+    yerr=success_errors,
+    capsize=5,
+    color=[model_colors.get(model, "#333333") for model in models],
+    label="Success Rate",
+    hatch="//",
+  )
+  termination_bars = ax.bar(
+    x + width / 2,
+    termination_values,
+    width,
+    yerr=termination_errors,
+    capsize=5,
+    color=[model_colors.get(model, "#333333") for model in models],
+    label="Termination Rate",
+    alpha=0.7,
+  )
 
-    # Customize the plot
-    ax.set_title(title, fontsize=16)
-    ax.set_xlabel("Data source", fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=45, ha='right')
+  # Customize the plot
+  ax.set_title(title, fontsize=16)
+  ax.set_xlabel("Data source", fontsize=12)
+  ax.set_ylabel(ylabel, fontsize=12)
+  ax.set_xticks(x)
+  ax.set_xticklabels(models, rotation=45, ha="right")
 
-    # Add legend
-    ax.legend()
+  # Add legend
+  ax.legend()
 
-    # Add value labels on top of each bar
-    def autolabel(rects):
-        for rect in rects:
-            height = rect.get_height()
-            ax.text(rect.get_x() + rect.get_width()/2., height,
-                    f'{height:.2f}',
-                    ha='center', va='bottom')
+  # Add value labels on top of each bar
+  def autolabel(rects):
+    for rect in rects:
+      height = rect.get_height()
+      ax.text(
+        rect.get_x() + rect.get_width() / 2.0,
+        height,
+        f"{height:.2f}",
+        ha="center",
+        va="bottom",
+      )
 
-    autolabel(success_bars)
-    autolabel(termination_bars)
+  autolabel(success_bars)
+  autolabel(termination_bars)
 
-    # Adjust layout and display the plot
-    fig.tight_layout()
-    plt.show()
+  # Adjust layout and display the plot
+  fig.tight_layout()
+  plt.show()
 
 
-def plot_reaction_times(group1, group2, label1='group1', label2='group2'):
+def plot_reaction_times(group1, group2, label1="group1", label2="group2"):
+  def rt_fn2(e):
+    rts = e.reaction_times[:-1]
+    return rts.mean()
 
-    def rt_fn2(e):
-        rts = e.reaction_times[:-1]
-        return rts.mean()
+  def rt_fn3(e):
+    rts = e.reaction_times[:-1]
+    return rts[0]
 
-    def rt_fn3(e):
-        rts = e.reaction_times[:-1]
-        return rts[0]
+  rt_types = ["avg", "first"]
+  rt_functions = [rt_fn2, rt_fn3]
 
-    rt_types = ['avg', 'first']
-    rt_functions = [rt_fn2, rt_fn3]
+  fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+  fig.suptitle("Episode Reaction Time Comparison", fontsize=16)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    fig.suptitle("Episode Reaction Time Comparison", fontsize=16)
+  for ax, rt_fn, rt_type in zip(axes, rt_functions, rt_types):
+    s_rts = np.array([rt_fn(e) for e in group1])
+    f_rts = np.array([rt_fn(e) for e in group2])
 
-    for ax, rt_fn, rt_type in zip(axes, rt_functions, rt_types):
-        s_rts = np.array([rt_fn(e) for e in group1])
-        f_rts = np.array([rt_fn(e) for e in group2])
+    # Combine data and create labels
+    data = np.concatenate([f_rts, s_rts])
+    labels = np.array([label2] * len(f_rts) + [label1] * len(s_rts))
 
-        # Combine data and create labels
-        data = np.concatenate([f_rts, s_rts])
-        labels = np.array([label2] * len(f_rts) + [label1] * len(s_rts))
+    # Create box plot with individual points
+    sns.boxplot(x=labels, y=data, ax=ax, width=0.5, palette=["red", "green"])
+    sns.stripplot(x=labels, y=data, ax=ax, color="black", alpha=0.5, jitter=True)
 
-        # Create box plot with individual points
-        sns.boxplot(x=labels, y=data, ax=ax, width=0.5,
-                    palette=['red', 'green'])
-        sns.stripplot(x=labels, y=data, ax=ax,
-                      color='black', alpha=0.5, jitter=True)
+    ax.set_ylabel("Reaction Time")
+    ax.set_title(f"RT Type: {rt_type}")
 
-        ax.set_ylabel('Reaction Time')
-        ax.set_title(f"RT Type: {rt_type}")
-
-    plt.tight_layout()
-    plt.show()
+  plt.tight_layout()
+  plt.show()
 
 
 def success(e: EpisodeData):
-    rewards = e.timesteps.reward
-    # return rewards
-    assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
-    success = rewards > .5
-    return success.any().astype(np.float32)
+  rewards = e.timesteps.reward
+  # return rewards
+  assert rewards.ndim == 1, "this is only defined over vector, e.g. 1 episode"
+  success = rewards > 0.5
+  return success.any().astype(np.float32)
 
 
 def features_achieved(e):
-    features = e.timesteps.state.task_state.features
-    achieved = features.sum(-1) > 0
-    return achieved.any().astype(np.float32)
+  features = e.timesteps.state.task_state.features
+  achieved = features.sum(-1) > 0
+  return achieved.any().astype(np.float32)
 
 
 def terminated(e):
-    return features_achieved(e)
+  return features_achieved(e)
 
 
 def success_or_not_terminate(e: EpisodeData):
-    terminated = features_achieved(e)
-    succeeded = success(e) > 0
-    keep = not terminated or succeeded
-    return keep
+  terminated = features_achieved(e)
+  succeeded = success(e) > 0
+  keep = not terminated or succeeded
+  return keep
 
 
 def went_to_junction(episode_data, junction=(0, 11)):
-    # positions = episode_data.positions
-    # if positions is None:
-    positions = episode_data.timesteps.state.agent_pos
-    match = jnp.array(junction) == positions
-    match = (match).sum(-1) == 2  # both x and y matches
-    return match.any().astype(jnp.float32)  # if any matched
+  # positions = episode_data.positions
+  # if positions is None:
+  positions = episode_data.timesteps.state.agent_pos
+  match = jnp.array(junction) == positions
+  match = (match).sum(-1) == 2  # both x and y matches
+  return match.any().astype(jnp.float32)  # if any matched
 
 
 def create_maps(episode_data_list: List[EpisodeData]):
-    maps = []
-    for episode_data in episode_data_list:
-        timesteps = episode_data.timesteps
+  maps = []
+  for episode_data in episode_data_list:
+    timesteps = episode_data.timesteps
 
-        # [T, H, W, 1]
-        # Assuming grid is 3D with time as first dimension
-        grid_shape = timesteps.state.grid.shape
+    # [T, H, W, 1]
+    # Assuming grid is 3D with time as first dimension
+    grid_shape = timesteps.state.grid.shape
 
-        # skip the time dimension and final channel dimension
-        grid = jnp.zeros(grid_shape[1:-1], dtype=jnp.int32)
+    # skip the time dimension and final channel dimension
+    grid = jnp.zeros(grid_shape[1:-1], dtype=jnp.int32)
 
-        # go through each position and set the corresponding index to 1
-        for pos in episode_data.positions:
-            grid = grid.at[pos[0], pos[1]].set(1)
-        maps.append(grid)
-    return np.array(maps)
+    # go through each position and set the corresponding index to 1
+    for pos in episode_data.positions:
+      grid = grid.at[pos[0], pos[1]].set(1)
+    maps.append(grid)
+  return np.array(maps)
 
 
 def overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
-    """map1: HxW, map2: HxW"""
-    """Calculate the overlap between two maps."""
-    nonzero_indices = np.argwhere(map1 > 0)
-    values_map1 = (map1[nonzero_indices[:, 0], nonzero_indices[:, 1]] > 0).astype(np.float32)
-    values_map2 = (map2[nonzero_indices[:, 0], nonzero_indices[:, 1]] > 0).astype(np.float32)
+  """map1: HxW, map2: HxW"""
+  """Calculate the overlap between two maps."""
+  nonzero_indices = np.argwhere(map1 > 0)
+  values_map1 = (map1[nonzero_indices[:, 0], nonzero_indices[:, 1]] > 0).astype(
+    np.float32
+  )
+  values_map2 = (map2[nonzero_indices[:, 0], nonzero_indices[:, 1]] > 0).astype(
+    np.float32
+  )
 
-    overlap = ((values_map1 + values_map2) > 1)[:final_t]
-    if final_t is not None:
-        overlap = overlap[-final_t:]
-    return overlap
+  overlap = ((values_map1 + values_map2) > 1)[:final_t]
+  if final_t is not None:
+    overlap = overlap[-final_t:]
+  return overlap

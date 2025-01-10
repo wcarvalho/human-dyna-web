@@ -31,52 +31,58 @@ from nicewebrl.dataframe import DataFrame
 
 
 class EpisodeData(NamedTuple):
-    actions: jax.Array
-    timesteps: multitask_env.TimeStep
-    positions: jax.Array = None
-    reaction_times: jax.Array = None
-    transitions: struct.PyTreeNode = None
+  actions: jax.Array
+  timesteps: multitask_env.TimeStep
+  positions: jax.Array = None
+  reaction_times: jax.Array = None
+  transitions: struct.PyTreeNode = None
+
 
 def is_in_notebook():
-    try:
-        from IPython import get_ipython
-        if 'IPKernelApp' in get_ipython().config:
-            return True
-        else:
-            return False
-    except ImportError:
-        return False
-    except AttributeError:
-        return False
+  try:
+    from IPython import get_ipython
+
+    if "IPKernelApp" in get_ipython().config:
+      return True
+    else:
+      return False
+  except ImportError:
+    return False
+  except AttributeError:
+    return False
+
 
 if is_in_notebook():
-    from tqdm.notebook import tqdm
-    try:
-        import ipywidgets
-    except:
-        pass
+  from tqdm.notebook import tqdm
+
+  try:
+    import ipywidgets
+  except:
+    pass
 else:
-    from tqdm import tqdm
+  from tqdm import tqdm
+
 
 def reversal_label(reversal):
-    if reversal == [False, False]:
-        return 'F,F'
-    elif reversal == [True, False]:
-        return 'T,F'
-    elif reversal == [False, True]:
-        return 'F,T'
-    elif reversal == [True, True]:
-        return 'T,T'
-    else:
-        raise ValueError(f"reversal: {reversal}")
+  if reversal == [False, False]:
+    return "F,F"
+  elif reversal == [True, False]:
+    return "T,F"
+  elif reversal == [False, True]:
+    return "F,T"
+  elif reversal == [True, True]:
+    return "T,T"
+  else:
+    raise ValueError(f"reversal: {reversal}")
+
 
 ############
 # deep learning models
 ############
 
+
 @struct.dataclass
 class Algorithm:
-
   config: dict
   train_state: Callable
   actor: Callable
@@ -87,54 +93,57 @@ class Algorithm:
   name: str
 
   def seed(self):
-     return self.path.split('/')[-1]
+    return self.path.split("/")[-1]
 
 
 def load_params_config(path: str, file: str, config: bool = True):
-    filename = f'{path}/{file}.safetensors'
-    flattened_dict = load_file(filename)
-    params = unflatten_dict(flattened_dict, sep=',')
+  filename = f"{path}/{file}.safetensors"
+  flattened_dict = load_file(filename)
+  params = unflatten_dict(flattened_dict, sep=",")
 
-    if config:
-        with open(f'{path}/{file}.config', 'rb') as f:
-            config = pickle.load(f)
-    return params, config
+  if config:
+    with open(f"{path}/{file}.config", "rb") as f:
+      config = pickle.load(f)
+  return params, config
+
 
 def swap_task(x: multitask_env.TimeStep, w: jax.Array):
-    new_state = x.state.replace(
-        step_num=jnp.zeros_like(x.state.step_num),
-        task_w=w,
-    )
+  new_state = x.state.replace(
+    step_num=jnp.zeros_like(x.state.step_num),
+    task_w=w,
+  )
 
-    return x.replace(
-        state=new_state,
-    )
+  return x.replace(
+    state=new_state,
+  )
+
 
 def load_algorithm(
-      path,
-      name,
-      example_env_params,
-      env,
-      make_fns,
-      nenvs: int=25,
-      config: dict = None,
-      ):
+  path,
+  name,
+  example_env_params,
+  env,
+  make_fns,
+  nenvs: int = 25,
+  config: dict = None,
+):
   agent_params, loaded_config = load_params_config(path, name)
   if config is not None:
-      config = {**loaded_config, **config}
+    config = {**loaded_config, **config}
   else:
-      config = loaded_config
+    config = loaded_config
 
-  config['NUM_ENVS'] = nenvs
+  config["NUM_ENVS"] = nenvs
 
   def vmap_reset(rng, env_params):
     return jax.vmap(env.reset, in_axes=(0, None))(
-        jax.random.split(rng, config["NUM_ENVS"]), env_params)
+      jax.random.split(rng, config["NUM_ENVS"]), env_params
+    )
 
   def vmap_step(rng, env_state, action, env_params):
-      return jax.vmap(
-          env.step, in_axes=(0, 0, 0, None))(
-          jax.random.split(rng, config["NUM_ENVS"]), env_state, action, env_params)
+    return jax.vmap(env.step, in_axes=(0, 0, 0, None))(
+      jax.random.split(rng, config["NUM_ENVS"]), env_state, action, env_params
+    )
 
   rng = jax.random.PRNGKey(config["SEED"])
   rng, rng_ = jax.random.split(rng)
@@ -143,589 +152,630 @@ def load_algorithm(
   fns = make_fns(config=config)
 
   network, _, reset_fn = fns.make_agent(
-      config=config,
-      env=env,
-      env_params=example_env_params,
-      example_timestep=example_timestep,
-      rng=rng_)
+    config=config,
+    env=env,
+    env_params=example_env_params,
+    example_timestep=example_timestep,
+    rng=rng_,
+  )
 
-  actor = fns.make_actor(
-              config=config,
-              agent=network,
-              rng=rng_)
+  actor = fns.make_actor(config=config, agent=network, rng=rng_)
 
   train_state = vbb.CustomTrainState.create(
-              apply_fn=network.apply,
-              params=agent_params,
-              target_network_params=agent_params,
-              tx=fns.make_optimizer(config),  # unnecessary
-          )
+    apply_fn=network.apply,
+    params=agent_params,
+    target_network_params=agent_params,
+    tx=fns.make_optimizer(config),  # unnecessary
+  )
 
   def collect_trajectory(
-      init_timestep,
-      task_w,
-      rng,
-      max_steps: int = 200,
-      ):
+    init_timestep,
+    task_w,
+    rng,
+    max_steps: int = 200,
+  ):
+    rng, rng_ = jax.random.split(rng)
+
+    timestep = jax.vmap(swap_task, (0, None))(init_timestep, task_w)
+    agent_state = reset_fn(train_state.params, timestep, rng_)
+
+    runner_state = vbb.RunnerState(
+      train_state=train_state, timestep=timestep, agent_state=agent_state, rng=rng
+    )
+
+    _, transitions = vbb.collect_trajectory(
+      runner_state=runner_state,
+      num_steps=max_steps,
+      actor_step_fn=actor.eval_step,
+      env_step_fn=vmap_step,
+      env_params=example_env_params,
+    )
+
+    return EpisodeData(
+      timesteps=transitions.timestep,
+      actions=transitions.action,
+      transitions=transitions,
+      positions=transitions.timestep.state.agent_pos,
+      reaction_times=None,
+    )
+
+  def collect_trajectories(rng, env_params, task, n=1):
+    def scan_body(rng, _):
       rng, rng_ = jax.random.split(rng)
+      init_timestep = vmap_reset(rng=rng_, env_params=env_params)
+      rng, rng_ = jax.random.split(rng)
+      new_trajs = collect_trajectory(init_timestep, task, rng_)
+      return rng, new_trajs
 
-      timestep = jax.vmap(swap_task, (0, None))(init_timestep, task_w)
-      agent_state = reset_fn(train_state.params, timestep, rng_)
+    # [n, num_timesteps, num_traj, data]
+    rng, all_trajs = jax.lax.scan(scan_body, rng, None, length=n)
 
-      runner_state = vbb.RunnerState(
-          train_state=train_state,
-          timestep=timestep,
-          agent_state=agent_state,
-          rng=rng)
-
-      _, transitions = vbb.collect_trajectory(
-                  runner_state=runner_state,
-                  num_steps=max_steps,
-                  actor_step_fn=actor.eval_step,
-                  env_step_fn=vmap_step,
-                  env_params=example_env_params)
-
-      return EpisodeData(
-          timesteps=transitions.timestep,
-          actions=transitions.action,
-          transitions=transitions,
-          positions=transitions.timestep.state.agent_pos,
-          reaction_times=None,
-          )
-
-  def collect_trajectories(
-        rng,
-        env_params,
-        task,
-        n=1):
-
-      def scan_body(rng, _):
-          rng, rng_ = jax.random.split(rng)
-          init_timestep = vmap_reset(rng=rng_, env_params=env_params)
-          rng, rng_ = jax.random.split(rng)
-          new_trajs = collect_trajectory(init_timestep, task, rng_)
-          return rng, new_trajs
-
-      # [n, num_timesteps, num_traj, data]
-      rng, all_trajs = jax.lax.scan(scan_body, rng, None, length=n)
-      def fix_shape(x):
-        # [n, num_traj, num_timesteps, data]
-        x = jnp.swapaxes(x, 1, 2)
-
-        # [n*num_traj, num_timesteps, data]
-        x = x.reshape(-1, *x.shape[2:])
-        return x
+    def fix_shape(x):
+      # [n, num_traj, num_timesteps, data]
+      x = jnp.swapaxes(x, 1, 2)
 
       # [n*num_traj, num_timesteps, data]
-      all_trajs = jax.tree_map(fix_shape, all_trajs)
-      return all_trajs
+      x = x.reshape(-1, *x.shape[2:])
+      return x
+
+    # [n*num_traj, num_timesteps, data]
+    all_trajs = jax.tree_map(fix_shape, all_trajs)
+    return all_trajs
 
   return Algorithm(
-      config=config,
-      network=network,
-      reset_fn=reset_fn,
-      actor=actor,
-      train_state=train_state,
-      eval_fn=jax.jit(collect_trajectories),
-      path=path,
-      name=name,
+    config=config,
+    network=network,
+    reset_fn=reset_fn,
+    actor=actor,
+    train_state=train_state,
+    eval_fn=jax.jit(collect_trajectories),
+    path=path,
+    name=name,
   )
+
 
 ############
 # Human data
 ############
 image_data = utils.load_image_dict()
-image_keys = image_data['keys']
+image_keys = image_data["keys"]
 
 groups = [
-    # room 1
-    [image_keys.index('orange'), image_keys.index('potato')],
-    # room 2
-    [image_keys.index('knife'), image_keys.index('spoon')],
-    # room 3
-    [image_keys.index('tomato'), image_keys.index('lettuce')],
+  # room 1
+  [image_keys.index("orange"), image_keys.index("potato")],
+  # room 2
+  [image_keys.index("knife"), image_keys.index("spoon")],
+  # room 3
+  [image_keys.index("tomato"), image_keys.index("lettuce")],
 ]
 groups = np.array(groups, dtype=np.int32)
 task_objects = groups.reshape(-1)
 
+
 def get_timestep(datum, example_timestep):
-    timestep = nicejax.deserialize_bytes(
-        cls=multitask_env.TimeStep, encoded_data=datum['data']['timestep'])
+  timestep = nicejax.deserialize_bytes(
+    cls=multitask_env.TimeStep, encoded_data=datum["data"]["timestep"]
+  )
 
-    # `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
-    timestep = nicejax.match_types(
-        example=example_timestep, data=timestep)
+  # `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
+  timestep = nicejax.match_types(example=example_timestep, data=timestep)
 
-    return timestep
+  return timestep
+
 
 def time_diff(t1, t2) -> float:
-    # Convert string timestamps to datetime objects
-    t1 = datetime.strptime(t1, '%Y-%m-%dT%H:%M:%S.%fZ')
-    t2 = datetime.strptime(t2, '%Y-%m-%dT%H:%M:%S.%fZ')
+  # Convert string timestamps to datetime objects
+  t1 = datetime.strptime(t1, "%Y-%m-%dT%H:%M:%S.%fZ")
+  t2 = datetime.strptime(t2, "%Y-%m-%dT%H:%M:%S.%fZ")
 
-    # Calculate the time difference
-    time_difference = t2 - t1
+  # Calculate the time difference
+  time_difference = t2 - t1
 
-    # Convert the time difference to milliseconds
-    return time_difference.total_seconds()
+  # Convert the time difference to milliseconds
+  return time_difference.total_seconds()
+
 
 def compute_reaction_time(datum) -> float:
-    # Calculate the time difference
-    return time_diff(datum['data']['image_seen_time'], datum['data']['action_taken_time'])
+  # Calculate the time difference
+  return time_diff(datum["data"]["image_seen_time"], datum["data"]["action_taken_time"])
+
 
 def get_task_object(timesteps: multitask_env.TimeStep):
-    return timesteps.state.task_object[0]
+  return timesteps.state.task_object[0]
+
 
 def get_task_room(timesteps: multitask_env.TimeStep, task_groups=None):
-    task_object = get_task_object(timesteps)
-    task_groups = task_groups or groups
-    # Find the room (row) that contains the task object
-    task_room = next((i for i, row in enumerate(task_groups) if task_object in row), None)
-    return task_room
+  task_object = get_task_object(timesteps)
+  task_groups = task_groups or groups
+  # Find the room (row) that contains the task object
+  task_room = next((i for i, row in enumerate(task_groups) if task_object in row), None)
+  return task_room
+
 
 def dict_to_string(data):
-    # Convert each key-value pair to "key=value" format
-    pairs = [f"{key}={value}" for key, value in data.items()]
+  # Convert each key-value pair to "key=value" format
+  pairs = [f"{key}={value}" for key, value in data.items()]
 
-    # Join all pairs with ", " separator
-    return ", ".join(pairs)
+  # Join all pairs with ", " separator
+  return ", ".join(pairs)
+
 
 def get_block_stage_description(datum):
-    ####################
-    # block information
-    ####################
-    block_metadata = datum['metadata']['block_metadata']
-    # e.g. manipulation = 4
-    block_manipulation = block_metadata.get('manipulation', -1)
-    # e.g. desc = 'off-task object regular'
-    block_desc = block_metadata.get('desc', 'unknown')
+  ####################
+  # block information
+  ####################
+  block_metadata = datum["metadata"]["block_metadata"]
+  # e.g. manipulation = 4
+  block_manipulation = block_metadata.get("manipulation", -1)
+  # e.g. desc = 'off-task object regular'
+  block_desc = block_metadata.get("desc", "unknown")
 
-    ####################
-    # stage information
-    ####################
-    reversal = datum['metadata']['block_metadata'].get('reversal', [False, False])
-    return dict(
-        maze=datum['metadata'].get('maze'),
-        condition=datum['metadata'].get('condition', 0),
-        name=datum['name'],
-        block=block_desc,
-        manipulation=block_manipulation,
-        episode_idx=datum['metadata']['nepisodes'],
-        eval=datum['metadata']['eval'],
-        reversal=reversal_label(reversal),
-    )
+  ####################
+  # stage information
+  ####################
+  reversal = datum["metadata"]["block_metadata"].get("reversal", [False, False])
+  return dict(
+    maze=datum["metadata"].get("maze"),
+    condition=datum["metadata"].get("condition", 0),
+    name=datum["name"],
+    block=block_desc,
+    manipulation=block_manipulation,
+    episode_idx=datum["metadata"]["nepisodes"],
+    eval=datum["metadata"]["eval"],
+    reversal=reversal_label(reversal),
+  )
+
 
 def separate_data_by_block_stage(data: List[dict]):
-    """This function will group episodes by the values from get_block_stage_description
+  """This function will group episodes by the values from get_block_stage_description
 
-    The input i
-    So for example, each episode with {'stage': "'not obvious' shortcut",
-     'block': 'shortcut',
-     'manipulation': 1,
-     'episode_idx': 1,
-     'eval': True}
-     with go into its own list.
-    """
-    grouped_data = defaultdict(list)
-    episode_idx = -1
-    keys = set()
-    infos = dict()
-    # first group all of the data based on which (stage, block) its in
-    for datum in data:
-        info = get_block_stage_description(datum)
-        key = dict_to_string(info)
-        if not key in keys:
-            episode_idx += 1
-            keys.add(key)
-        info['user_episode_idx'] = episode_idx
-        
-        updated_key = dict_to_string(info)
-        grouped_data[updated_key].append(datum)
-        infos[updated_key] = info
-    return grouped_data, infos
+  The input i
+  So for example, each episode with {'stage': "'not obvious' shortcut",
+   'block': 'shortcut',
+   'manipulation': 1,
+   'episode_idx': 1,
+   'eval': True}
+   with go into its own list.
+  """
+  grouped_data = defaultdict(list)
+  episode_idx = -1
+  keys = set()
+  infos = dict()
+  # first group all of the data based on which (stage, block) its in
+  for datum in data:
+    info = get_block_stage_description(datum)
+    key = dict_to_string(info)
+    if not key in keys:
+      episode_idx += 1
+      keys.add(key)
+    info["user_episode_idx"] = episode_idx
+
+    updated_key = dict_to_string(info)
+    grouped_data[updated_key].append(datum)
+    infos[updated_key] = info
+  return grouped_data, infos
+
 
 def make_row(
-        datum: dict,
-        timesteps: multitask_env.TimeStep,
-        file: str,
-        episode_info: Optional[dict]):
-    """THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
+  datum: dict,
+  timesteps: multitask_env.TimeStep,
+  file: str,
+  episode_info: Optional[dict],
+):
+  """THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
 
-    Args:
-        datum (dict): _description_
-        timesteps (multitask_env.TimeStep): _description_
-        file (str): _description_
+  Args:
+      datum (dict): _description_
+      timesteps (multitask_env.TimeStep): _description_
+      file (str): _description_
 
-    Returns:
-        _type_: _description_
-    """
-    groups = datum['metadata']['block_metadata'].get('groups')
-    row = dict(
-        maze=datum['metadata'].get('maze'),
-        condition=datum['metadata'].get('condition', 0),
-        name=datum['name'],
-        block=datum['metadata']['block_metadata']['desc'],
-        manipulation=datum['metadata']['block_metadata'].get('manipulation', None),
-        global_episode_idx=episode_info['user_episode_idx'], 
-        episode_idx=datum['metadata']['nepisodes'],
-        eval=datum['metadata']['eval'],
-        task=int(get_task_object(timesteps)),
-        room=int(get_task_room(timesteps, task_groups=groups)),
-    )
-    row.update(datum['user_data'])
+  Returns:
+      _type_: _description_
+  """
+  groups = datum["metadata"]["block_metadata"].get("groups")
+  row = dict(
+    maze=datum["metadata"].get("maze"),
+    condition=datum["metadata"].get("condition", 0),
+    name=datum["name"],
+    block=datum["metadata"]["block_metadata"]["desc"],
+    manipulation=datum["metadata"]["block_metadata"].get("manipulation", None),
+    global_episode_idx=episode_info["user_episode_idx"],
+    episode_idx=datum["metadata"]["nepisodes"],
+    eval=datum["metadata"]["eval"],
+    task=int(get_task_object(timesteps)),
+    room=int(get_task_room(timesteps, task_groups=groups)),
+  )
+  row.update(datum["user_data"])
 
-    ##########
-    # get experiment name from file
-    ##########
-    # '/path/data_user=3712207029_name=exp3-v2-r1-t30_exp=3_debug=0.json'
-    # e.g. ['data', 'user=3712207029', 'name=exp3-v2-r1-t30', 'exp=3', 'debug=0.json']
-    pieces = os.path.splitext(os.path.basename(file))[0].split("_")
-    pieces = [p.split("=") for p in pieces if "=" in p]
-    new_vals = {p[0]: p[1] for p in pieces}
-    # Rename 'name' key to 'exp_name' if it exists
-    if 'name' in new_vals:
-        new_vals['exp_name'] = new_vals.pop('name')
-    row.update(new_vals)
+  ##########
+  # get experiment name from file
+  ##########
+  # '/path/data_user=3712207029_name=exp3-v2-r1-t30_exp=3_debug=0.json'
+  # e.g. ['data', 'user=3712207029', 'name=exp3-v2-r1-t30', 'exp=3', 'debug=0.json']
+  pieces = os.path.splitext(os.path.basename(file))[0].split("_")
+  pieces = [p.split("=") for p in pieces if "=" in p]
+  new_vals = {p[0]: p[1] for p in pieces}
+  # Rename 'name' key to 'exp_name' if it exists
+  if "name" in new_vals:
+    new_vals["exp_name"] = new_vals.pop("name")
+  row.update(new_vals)
 
-    name = new_vals.get('exp_name')
-    if name is not None:
-        # example 'exp4-v1-r1-t0-plan'
-        # split on '-' and take the first element
-        # if v--> version
-        # if r--> tell_reuse
-        # if t--> timer
-        # if there's a word at the end, it's the manipulation
-        # create a dictionary according to this legend
-        legend = dict(v='version', r='tell_reuse', t='timer')
-        name_info = dict()
-        for k, v in legend.items():
-            if k in name:
-                name_info[v] = name.split(k)[1].split('-')[0]
-        row.update(name_info)
-    # Convert all numeric strings to integers
-    for key, value in row.items():
-        if isinstance(value, str) and value.isdigit():
-            row[key] = int(value)
-    reversal = datum['metadata']['block_metadata'].get('reversal', [False, False])
-    row['reversal'] = reversal_label(reversal)
+  name = new_vals.get("exp_name")
+  if name is not None:
+    # example 'exp4-v1-r1-t0-plan'
+    # split on '-' and take the first element
+    # if v--> version
+    # if r--> tell_reuse
+    # if t--> timer
+    # if there's a word at the end, it's the manipulation
+    # create a dictionary according to this legend
+    legend = dict(v="version", r="tell_reuse", t="timer")
+    name_info = dict()
+    for k, v in legend.items():
+      if k in name:
+        name_info[v] = name.split(k)[1].split("-")[0]
+    row.update(name_info)
+  # Convert all numeric strings to integers
+  for key, value in row.items():
+    if isinstance(value, str) and value.isdigit():
+      row[key] = int(value)
+  reversal = datum["metadata"]["block_metadata"].get("reversal", [False, False])
+  row["reversal"] = reversal_label(reversal)
 
-    return row
+  return row
+
 
 def make_episode_data(
-        file: str,
-        example_timestep: multitask_env.TimeStep,
-        debug: bool = False,
-        overwrite_episode_data: bool = False,
-        overwrite_episode_info: bool = False,
-        ):
-    """This groups all of the data by block/stage information and prepares 
-        (1) a list of EpisodeData objects per block/stage
-        (2) a dataframe which summarizes all episode information.
+  file: str,
+  example_timestep: multitask_env.TimeStep,
+  debug: bool = False,
+  overwrite_episode_data: bool = False,
+  overwrite_episode_info: bool = False,
+):
+  """This groups all of the data by block/stage information and prepares
+      (1) a list of EpisodeData objects per block/stage
+      (2) a dataframe which summarizes all episode information.
 
-    The dataframe can be used to get indices into the list of EpisodeData for further computation.
-    """
-    data = read_dict_list_from_file(file)
+  The dataframe can be used to get indices into the list of EpisodeData for further computation.
+  """
+  data = read_dict_list_from_file(file)
 
-    if len(data) == 0:
-        return None, None
+  if len(data) == 0:
+    return None, None
 
-    finished = data[-1].get("finished", False)
-    if not finished:
-        return None, None
-    if debug:
-        n = max(1, int(len(data) * .05))
-        data = data[:n]
+  finished = data[-1].get("finished", False)
+  if not finished:
+    return None, None
+  if debug:
+    n = max(1, int(len(data) * 0.05))
+    data = data[:n]
 
-    #####################
-    # filenames
-    #####################
-    user_filename = file.split("/")[-1].split(".json")[0]
-    base_path = file.split(user_filename)[0]
-    if debug:
-        episode_data_filename = f"{base_path}/{user_filename}_debug_episode_data.pickle"
-        episode_info_filename = f"{base_path}/{user_filename}_debug_episode_info.csv"
-    else:
-        episode_data_filename = f"{base_path}/{user_filename}_episode_data.pickle"
-        episode_info_filename = f"{base_path}/{user_filename}_episode_info.csv"
+  #####################
+  # filenames
+  #####################
+  user_filename = file.split("/")[-1].split(".json")[0]
+  base_path = file.split(user_filename)[0]
+  if debug:
+    episode_data_filename = f"{base_path}/{user_filename}_debug_episode_data.pickle"
+    episode_info_filename = f"{base_path}/{user_filename}_debug_episode_info.csv"
+  else:
+    episode_data_filename = f"{base_path}/{user_filename}_episode_data.pickle"
+    episode_info_filename = f"{base_path}/{user_filename}_episode_info.csv"
 
-    #####################
-    # filter out practice not-manipulation data
-    #####################
-    def filter_fn(datum):
-        if 'metadata' not in datum: return True
-        desc = datum['metadata']['block_metadata']['desc']
-        manipulation = datum['metadata']['block_metadata'].get('manipulation', None)
-        if manipulation is None: return True
-        if 'practice' in desc: return True
+  #####################
+  # filter out practice not-manipulation data
+  #####################
+  def filter_fn(datum):
+    if "metadata" not in datum:
+      return True
+    desc = datum["metadata"]["block_metadata"]["desc"]
+    manipulation = datum["metadata"]["block_metadata"].get("manipulation", None)
+    if manipulation is None:
+      return True
+    if "practice" in desc:
+      return True
 
-        return False
+    return False
 
-    nbefore = len(data)
-    data = [datum for datum in data if not filter_fn(datum)]
-    print(f"Filtered {nbefore-len(data)} data points")
+  nbefore = len(data)
+  data = [datum for datum in data if not filter_fn(datum)]
+  print(f"Filtered {nbefore - len(data)} data points")
 
-    #####################
-    # separate data by block/stage
-    #####################
-    gds, gd_infos = separate_data_by_block_stage(data)
-    idxs = [k['user_episode_idx'] for k in gd_infos.values()]
-    assert len(idxs) == len(set(idxs)), f"user_episode_idx is not unique. {len(idxs)} vs {len(set(idxs))}. max={max(idxs)}"
-    #####################
-    # Load or create episode_data
-    #####################
-    episode_data = None
-    if os.path.exists(episode_data_filename) and not overwrite_episode_data:
-        try:
-            with open(episode_data_filename, 'rb') as f:
-                    episode_data = pickle.load(f)
-        except Exception as e:
-            logging.warning(f"Error loading episode_data from {episode_data_filename}: {e}")
-            episode_data = None
-    
-    if not episode_data:
-        episode_data = [None] * len(gds.keys())
-        for key in tqdm(gds.keys(), desc="Processing episodes"):
-            red = raw_episode_data = gds[key]
-            actions = jnp.asarray([datum['data']['action_idx'] for datum in red])
-            timesteps = [get_timestep(datum, example_timestep) for datum in red]
-            timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+  #####################
+  # separate data by block/stage
+  #####################
+  gds, gd_infos = separate_data_by_block_stage(data)
+  idxs = [k["user_episode_idx"] for k in gd_infos.values()]
+  assert len(idxs) == len(set(idxs)), (
+    f"user_episode_idx is not unique. {len(idxs)} vs {len(set(idxs))}. max={max(idxs)}"
+  )
+  #####################
+  # Load or create episode_data
+  #####################
+  episode_data = None
+  if os.path.exists(episode_data_filename) and not overwrite_episode_data:
+    try:
+      with open(episode_data_filename, "rb") as f:
+        episode_data = pickle.load(f)
+    except Exception as e:
+      logging.warning(f"Error loading episode_data from {episode_data_filename}: {e}")
+      episode_data = None
 
-            expected_step_num = jnp.arange(len(timesteps.state.step_num))
-            correct = jnp.all(timesteps.state.step_num == expected_step_num)
-            if not correct:
-                # Get sorting indices
-                sort_indices = jnp.argsort(timesteps.state.step_num)
-                
-                # Check if sorting fixes the sequence
-                sorted_steps = timesteps.state.step_num[sort_indices]
-                if jnp.all(sorted_steps == expected_step_num):
-                    # Fix the ordering of all relevant data
-                    actions = actions[sort_indices]
-                    timesteps = jtu.tree_map(
-                        lambda x: x[sort_indices] if isinstance(x, (jnp.ndarray, np.ndarray)) else x,
-                        timesteps
-                    )
-                    logging.info(f"{user_filename}: Fixed step indices for episode {key} through sorting")
-                else:
-                    logging.warning(f"{user_filename}: Skipping episode {key} due to invalid step indices that cannot be fixed")
-                    raise RuntimeError(
-                        f"{user_filename}: episode {key} has faulty step indices: {timesteps.state.step_num}")
-            positions = timesteps.state.agent_pos
-            episode_idx = gd_infos[key]['user_episode_idx']
-            episode_data[episode_idx] = EpisodeData(
-                actions=actions,
-                positions=positions,
-                timesteps=timesteps,
-            )
-        with open(episode_data_filename, 'wb') as f:
-            pickle.dump(episode_data, f)
+  if not episode_data:
+    episode_data = [None] * len(gds.keys())
+    for key in tqdm(gds.keys(), desc="Processing episodes"):
+      red = raw_episode_data = gds[key]
+      actions = jnp.asarray([datum["data"]["action_idx"] for datum in red])
+      timesteps = [get_timestep(datum, example_timestep) for datum in red]
+      timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+
+      expected_step_num = jnp.arange(len(timesteps.state.step_num))
+      correct = jnp.all(timesteps.state.step_num == expected_step_num)
+      if not correct:
+        # Get sorting indices
+        sort_indices = jnp.argsort(timesteps.state.step_num)
+
+        # Check if sorting fixes the sequence
+        sorted_steps = timesteps.state.step_num[sort_indices]
+        if jnp.all(sorted_steps == expected_step_num):
+          # Fix the ordering of all relevant data
+          actions = actions[sort_indices]
+          timesteps = jtu.tree_map(
+            lambda x: (
+              x[sort_indices] if isinstance(x, (jnp.ndarray, np.ndarray)) else x
+            ),
+            timesteps,
+          )
+          logging.info(
+            f"{user_filename}: Fixed step indices for episode {key} through sorting"
+          )
+        else:
+          logging.warning(
+            f"{user_filename}: Skipping episode {key} due to invalid step indices that cannot be fixed"
+          )
+          raise RuntimeError(
+            f"{user_filename}: episode {key} has faulty step indices: {timesteps.state.step_num}"
+          )
+      positions = timesteps.state.agent_pos
+      episode_idx = gd_infos[key]["user_episode_idx"]
+      episode_data[episode_idx] = EpisodeData(
+        actions=actions,
+        positions=positions,
+        timesteps=timesteps,
+      )
+    with open(episode_data_filename, "wb") as f:
+      pickle.dump(episode_data, f)
+
+  #####################
+  # Load or create episode_info
+  #####################
+  if os.path.exists(episode_info_filename) and not overwrite_episode_info:
+    episode_info = pl.read_csv(episode_info_filename)
+  else:
+    # --------------
+    # first make df with raw data from file
+    # --------------
+    episode_info = [None] * len(gds.keys())
+    for key in gds.keys():
+      raw_episode_data = gds[key]
+      episode_idx = gd_infos[key]["user_episode_idx"]
+      timesteps = episode_data[episode_idx].timesteps
+      episode_info[episode_idx] = make_row(
+        datum=raw_episode_data[0],
+        episode_info=gd_infos[key],
+        timesteps=timesteps,
+        file=file,
+      )
+
+      reaction_times = [compute_reaction_time(datum) for datum in raw_episode_data]
+      reaction_times = jnp.asarray(reaction_times)
+
+      episode_data[episode_idx] = episode_data[episode_idx]._replace(
+        reaction_times=reaction_times,
+      )
+
+    episode_info = pl.DataFrame(episode_info)
+
+    # --------------
+    # next, augment df with success, termination, first_rt, avg_rt, total_rt
+    # --------------
+    def success(e: EpisodeData):
+      rewards = e.timesteps.reward
+      # return rewards
+      assert rewards.ndim == 1, "this is only defined over vector, e.g. 1 episode"
+      success = rewards > 0.5
+      return success.any().astype(np.float32)
+
+    def features_achieved(e):
+      features = e.timesteps.state.task_state.features
+      achieved = features.sum(-1) > 0
+      return achieved.any().astype(np.float32)
+
+    def terminated(e):
+      return features_achieved(e)
+
+    def total_rt(e: EpisodeData):
+      return np.sum(e.reaction_times[:-1])
+
+    def avg_rt(e: EpisodeData):
+      return np.mean(e.reaction_times[:-1])
+
+    def first_rt(e: EpisodeData):
+      return e.reaction_times[0]
+
+    def path_length(e: EpisodeData):
+      return len(e.actions[:-1])
+
+    measures = {
+      "success": success,
+      "path_length": path_length,
+      "termination": terminated,
+      "first_rt": first_rt,
+      "avg_rt": avg_rt,
+      "total_rt": total_rt,
+    }
+    computed_values = {key: [] for key in measures}
+
+    # Calculate values for each episode
+    for episode in episode_data:
+      for key, fn in measures.items():
+        computed_values[key].append(fn(episode))
+
+    # Create a new DataFrame with the additional columns
+    episode_info = episode_info.with_columns(
+      [pl.Series(key, values) for key, values in computed_values.items()]
+    )
+
+    episode_info.write_csv(episode_info_filename)
+
+  return episode_info, episode_data
 
 
-    #####################
-    # Load or create episode_info
-    #####################
-    if os.path.exists(episode_info_filename) and not overwrite_episode_info:
-        episode_info = pl.read_csv(episode_info_filename)
-    else:
-        # --------------
-        # first make df with raw data from file
-        # --------------
-        episode_info = [None] * len(gds.keys())
-        for key in gds.keys():
-            raw_episode_data = gds[key]
-            episode_idx = gd_infos[key]['user_episode_idx']
-            timesteps = episode_data[episode_idx].timesteps
-            episode_info[episode_idx] = make_row(
-                datum=raw_episode_data[0],
-                episode_info=gd_infos[key],
-                timesteps=timesteps,
-                file=file,
-            )
+def make_all_episode_data(
+  files,
+  example_timestep,
+  debug=False,
+  overwrite_episode_data=False,
+  overwrite_episode_info=False,
+):
+  def process_file(file):
+    return make_episode_data(
+      file,
+      example_timestep,
+      overwrite_episode_data=overwrite_episode_data,
+      overwrite_episode_info=overwrite_episode_info,
+      debug=debug,
+    )
 
-            reaction_times=[compute_reaction_time(datum) for datum in raw_episode_data]
-            reaction_times=jnp.asarray(reaction_times)
+  if debug:
+    files = files[: max(int(len(files) * 0.1), 10)]
+  results = Parallel(n_jobs=-1)(delayed(process_file)(file) for file in files)
 
-            episode_data[episode_idx] = episode_data[episode_idx]._replace(
-                reaction_times=reaction_times,
-            )
+  all_episode_data = []
+  episode_df_list = []
 
-        episode_info = pl.DataFrame(episode_info)
-        # --------------
-        # next, augment df with success, termination, first_rt, avg_rt, total_rt
-        # --------------
-        def success(e: EpisodeData):
-            rewards = e.timesteps.reward
-            # return rewards
-            assert rewards.ndim == 1, 'this is only defined over vector, e.g. 1 episode'
-            success = rewards > .5
-            return success.any().astype(np.float32)
+  for episode_df, episode_data in tqdm(
+    results, desc="Combining results", total=len(files)
+  ):
+    if episode_df is not None and episode_data is not None:
+      all_episode_data.extend(episode_data)
+      episode_df_list.append(episode_df)
 
+  episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
 
-        def features_achieved(e):
-            features = e.timesteps.state.task_state.features
-            achieved = features.sum(-1) > 0
-            return achieved.any().astype(np.float32)
+  return DataFrame(episode_df, all_episode_data)
 
-        def terminated(e):
-            return features_achieved(e)
-
-        def total_rt(e: EpisodeData):
-            return np.sum(e.reaction_times[:-1])
-
-        def avg_rt(e: EpisodeData):
-            return np.mean(e.reaction_times[:-1])
-
-        def first_rt(e: EpisodeData):
-            return e.reaction_times[0]
-
-        def path_length(e: EpisodeData):
-            return len(e.actions[:-1])
-
-        measures = {
-            'success': success,
-            'path_length': path_length,
-            'termination': terminated,
-            'first_rt': first_rt,
-            'avg_rt': avg_rt,
-            'total_rt': total_rt,
-        }
-        computed_values = {key: [] for key in measures}
-
-        # Calculate values for each episode
-        for episode in episode_data:
-            for key, fn in measures.items():
-                computed_values[key].append(fn(episode))
-
-        # Create a new DataFrame with the additional columns
-        episode_info = episode_info.with_columns([
-            pl.Series(key, values) for key, values in computed_values.items()
-        ])
-
-        episode_info.write_csv(episode_info_filename)
-
-    return episode_info, episode_data
-
-def make_all_episode_data(files, example_timestep, debug=False, overwrite_episode_data=False, overwrite_episode_info=False):
-    def process_file(file):
-        return make_episode_data(file, example_timestep, 
-                                 overwrite_episode_data=overwrite_episode_data, 
-                                 overwrite_episode_info=overwrite_episode_info, 
-                                 debug=debug)
-
-    if debug:
-        files = files[:max(int(len(files) * .1), 10)]
-    results = Parallel(n_jobs=-1)(delayed(process_file)(file) for file in files)
-
-    all_episode_data = []
-    episode_df_list = []
-
-    for episode_df, episode_data in tqdm(results, desc="Combining results", total=len(files)):
-        if episode_df is not None and episode_data is not None:
-            all_episode_data.extend(episode_data)
-            episode_df_list.append(episode_df)
-
-    episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
-
-    return DataFrame(episode_df, all_episode_data)
 
 def read_dict_list_from_file(filename: str):
-    dictionaries = []
-    with open(filename, 'r') as f:
-        for line in f:
-            # Parse each line as a JSON object (dictionary) and append it to the list
-            dictionaries.append(json.loads(line.strip()))
-    return dictionaries
+  dictionaries = []
+  with open(filename, "r") as f:
+    for line in f:
+      # Parse each line as a JSON object (dictionary) and append it to the list
+      dictionaries.append(json.loads(line.strip()))
+  return dictionaries
+
 
 def user_id_from_filename(filename: str):
-    return int(filename.split('/')[-1].split('.')[0].split('_')[0].split('=')[1])
-
-def compute_experiment_lengths(files, plot: bool = False, condition_name: str = '', verbose: bool = False):
-
-    experiment_lengths = {}
-
-    for file in files:
-        data = read_dict_list_from_file(file)
-        user_id = user_id_from_filename(file)
-        if len(data) < 2 or not data[-1].get('finished', False):
-            if verbose:
-                print(f"Skipping {user_id} because it's not finished")
-            continue
+  return int(filename.split("/")[-1].split(".")[0].split("_")[0].split("=")[1])
 
 
-        try:
-            start_time = datetime.strptime(
-                data[0]['data']['image_seen_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
-            
-            if 'noticed' in next(iter(data[-2]['data'].keys())):
-                end_time = datetime.strptime(
-                    data[-3]['data']['action_taken_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
-            else:
-                end_time = datetime.strptime(
-                    data[-2]['data']['action_taken_time'], '%Y-%m-%dT%H:%M:%S.%fZ')
-        except Exception as e:
-            print(f"Error processing file {file}: {e}")
-            import pdb; pdb.set_trace()
-            raise e
+def compute_experiment_lengths(
+  files, plot: bool = False, condition_name: str = "", verbose: bool = False
+):
+  experiment_lengths = {}
 
-        total_length = (end_time - start_time).total_seconds() / 60  # Convert to minutes
+  for file in files:
+    data = read_dict_list_from_file(file)
+    user_id = user_id_from_filename(file)
+    if len(data) < 2 or not data[-1].get("finished", False):
+      if verbose:
+        print(f"Skipping {user_id} because it's not finished")
+      continue
 
-        user_id = data[0]['user_data']['user_id']
-        experiment_lengths[user_id] = total_length
+    try:
+      start_time = datetime.strptime(
+        data[0]["data"]["image_seen_time"], "%Y-%m-%dT%H:%M:%S.%fZ"
+      )
 
-    if plot:
-        lengths = np.array(list(experiment_lengths.values()))
-        mean = np.mean(lengths)
-        std = np.std(lengths)
+      if "noticed" in next(iter(data[-2]["data"].keys())):
+        end_time = datetime.strptime(
+          data[-3]["data"]["action_taken_time"], "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
+      else:
+        end_time = datetime.strptime(
+          data[-2]["data"]["action_taken_time"], "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
+    except Exception as e:
+      print(f"Error processing file {file}: {e}")
+      import pdb
 
-        plt.figure(figsize=(10, 6))
-        sns.histplot(lengths, kde=True)
-        plt.axvline(mean, color='r', linestyle='--', label='Mean')
-        plt.axvline(mean + 2*std, color='g', linestyle='--', label='2 Std Dev')
-        plt.axvline(mean + 3*std, color='b', linestyle='--', label='3 Std Dev')
-        plt.axvline(mean - 2*std, color='g', linestyle='--')
-        plt.axvline(mean - 3*std, color='b', linestyle='--')
-        plt.title(f'Distribution of Experiment Lengths - {condition_name}')
-        plt.xlabel('Experiment Length (minutes)')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.show()
+      pdb.set_trace()
+      raise e
 
-    return experiment_lengths
+    total_length = (end_time - start_time).total_seconds() / 60  # Convert to minutes
+
+    user_id = data[0]["user_data"]["user_id"]
+    experiment_lengths[user_id] = total_length
+
+  if plot:
+    lengths = np.array(list(experiment_lengths.values()))
+    mean = np.mean(lengths)
+    std = np.std(lengths)
+
+    plt.figure(figsize=(10, 6))
+    sns.histplot(lengths, kde=True)
+    plt.axvline(mean, color="r", linestyle="--", label="Mean")
+    plt.axvline(mean + 2 * std, color="g", linestyle="--", label="2 Std Dev")
+    plt.axvline(mean + 3 * std, color="b", linestyle="--", label="3 Std Dev")
+    plt.axvline(mean - 2 * std, color="g", linestyle="--")
+    plt.axvline(mean - 3 * std, color="b", linestyle="--")
+    plt.title(f"Distribution of Experiment Lengths - {condition_name}")
+    plt.xlabel("Experiment Length (minutes)")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.show()
+
+  return experiment_lengths
+
 
 def get_valid_files(searches, plot: bool = False, verbose: bool = False):
-    all_valid_files = {}
+  all_valid_files = {}
 
-    for condition_name, search in searches.items():
-        files = list(set(glob(search)))
-        experiment_lengths = compute_experiment_lengths(
-            files, condition_name=condition_name, plot=plot)
-        
-        # Calculate mean and standard deviation
-        lengths = np.array(list(experiment_lengths.values()))
-        mean = np.mean(lengths)
-        std = np.std(lengths)
-        
-        # Filter files within 3 standard deviations
-        def good_user(file):
-            user_id = user_id_from_filename(file)
-            if user_id not in experiment_lengths:
-                if verbose:
-                    print(f"User {user_id} not in experiment_lengths")
-                return False
-            user_val = experiment_lengths[user_id]
-            good = abs(user_val - mean) <= 3 * std
-            if not good:
-                if verbose:
-                    print(f"User {user_id} > 3 std. x: {user_val}, mean: {mean}, 3*std: {mean+3*std}")
-            return good
-        valid_files = [file for file in files if good_user(file)]
-        
-        all_valid_files[condition_name] = valid_files
-        print(f"{condition_name}: {len(valid_files)}/{len(files)} valid files")
+  for condition_name, search in searches.items():
+    files = list(set(glob(search)))
+    experiment_lengths = compute_experiment_lengths(
+      files, condition_name=condition_name, plot=plot
+    )
 
-    # Convert the dictionary of valid files to a long list
-    all_valid_files_list = []
-    for condition_files in all_valid_files.values():
-        all_valid_files_list.extend(condition_files)
-    
-    return all_valid_files_list
+    # Calculate mean and standard deviation
+    lengths = np.array(list(experiment_lengths.values()))
+    mean = np.mean(lengths)
+    std = np.std(lengths)
+
+    # Filter files within 3 standard deviations
+    def good_user(file):
+      user_id = user_id_from_filename(file)
+      if user_id not in experiment_lengths:
+        if verbose:
+          print(f"User {user_id} not in experiment_lengths")
+        return False
+      user_val = experiment_lengths[user_id]
+      good = abs(user_val - mean) <= 3 * std
+      if not good:
+        if verbose:
+          print(
+            f"User {user_id} > 3 std. x: {user_val}, mean: {mean}, 3*std: {mean + 3 * std}"
+          )
+      return good
+
+    valid_files = [file for file in files if good_user(file)]
+
+    all_valid_files[condition_name] = valid_files
+    print(f"{condition_name}: {len(valid_files)}/{len(files)} valid files")
+
+  # Convert the dictionary of valid files to a long list
+  all_valid_files_list = []
+  for condition_files in all_valid_files.values():
+    all_valid_files_list.extend(condition_files)
+
+  return all_valid_files_list

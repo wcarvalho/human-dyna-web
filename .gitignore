@@ -1,3 +1,7 @@
+*data
+.vscode
+archive
+
 # flyctl launch added from .gitignore
 **/__pycache__
 **/*.egg-info
