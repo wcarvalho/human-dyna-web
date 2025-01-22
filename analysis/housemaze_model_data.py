@@ -15,6 +15,7 @@ import os
 from flax import serialization
 from flax.core import FrozenDict
 
+
 from jaxneurorl.agents import value_based_basics as vbb
 from housemaze.human_dyna import utils
 from housemaze.human_dyna import multitask_env
@@ -224,6 +225,7 @@ def load_algorithm(
   max_steps: int = 600,
   path: Optional[str] = None,
   name: Optional[str] = None,
+  overwrite: bool = True,
 ):
   """Loads and evaluates a trained algorithm using the same interface as make_train.
 
@@ -261,7 +263,7 @@ def load_algorithm(
   example_timestep = vmap_reset(rng_, example_env_params)
 
   # Create agent
-  agent, _, reset_fn = make_agent(
+  agent, init_params, reset_fn = make_agent(
     config=config,
     env=env,
     env_params=example_env_params,
@@ -276,7 +278,7 @@ def load_algorithm(
   # Initialize train state
   train_state = vbb.CustomTrainState.create(
     apply_fn=agent.apply,
-    params=agent_params,
+    params=agent_params if overwrite else init_params,
     target_network_params=agent_params,
     tx=make_optimizer(config),  # unnecessary
   )
@@ -309,7 +311,7 @@ def load_algorithm(
     )
 
     # [T, N, ....] --> # [N, T, ....]
-    transitions = jax.tree.map(lambda x: jnp.swapaxes(x, 1, 0), transitions)
+    transitions = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 0), transitions)
 
     return EpisodeData(
       timesteps=transitions.timestep,
@@ -341,7 +343,7 @@ def load_algorithm(
     )
 
     # [T, N, ....] --> # [N, T, ....]
-    transitions = jax.tree.map(lambda x: jnp.swapaxes(x, 1, 0), transitions)
+    transitions = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 0), transitions)
     return transitions
 
   return Algorithm(
@@ -385,6 +387,7 @@ def get_algorithm_data(
   # First try to load episodes
   ##############################
   all_episodes = None
+
   if not overwrite_episodes and os.path.exists(timesteps_filename):
     with open(timesteps_filename, "rb") as f:
       print(f"{algorithm.name}: Loading from {timesteps_filename}")
@@ -395,7 +398,7 @@ def get_algorithm_data(
       maze_name = next(iter(label2name.values()))
       env_params = make_env_params(getattr(mazes, maze_name))
       example_episodes = algorithm.eval_fn(rng, env_params, task_vector)
-      example1 = jax.tree.map(lambda x: x[0], example_episodes)
+      example1 = jax.tree_util.tree_map(lambda x: x[0], example_episodes)
 
       # Two-step deserialization
       attempt1 = serialization.from_bytes(None, serialized_data)
@@ -420,9 +423,9 @@ def get_algorithm_data(
         # Split episodes
         for i in range(nepisodes):
           # minimize space requirements
-          episode = jax.tree.map(lambda x: x[i], episodes)
+          episode = jax.tree_util.tree_map(lambda x: x[i], episodes)
           in_episode = get_in_episode(episode.timesteps)
-          episode = jax.tree.map(lambda x: x[in_episode], episode)
+          episode = jax.tree_util.tree_map(lambda x: x[in_episode], episode)
           all_episodes.append(episode)
 
     # Save serialized data
@@ -494,7 +497,7 @@ def get_qlearning_data(
   overwrite_df: bool = False,
 ):
   from simulations.networks import CategoricalHouzemazeObsEncoder
-  from simulations import qlearning
+  from simulations import qlearning_housemaze as qlearning
 
   paths_str = paths
   paths = glob(paths)
@@ -528,7 +531,7 @@ def get_qlearning_data(
       env=env,
       example_env_params=dummy_env_params,
       make_agent=functools.partial(
-        qlearning.make_agent,
+        qlearning.make_housemaze_agent,
         ObsEncoderCls=HouzemazeObsEncoder,
       ),
       num_episodes=num_episodes,
@@ -537,6 +540,7 @@ def get_qlearning_data(
       make_actor=qlearning.make_actor,
       path=path,
       name="qlearning",
+      overwrite=overwrite_episodes,
     )
 
     df, episodes = get_algorithm_data(
@@ -566,7 +570,7 @@ def get_usfa_data(
 ):
   from housemaze.human_dyna import sf_task_runner
   from simulations.networks import CategoricalHouzemazeObsEncoder
-  from simulations import usfa
+  from simulations import usfa_housemaze as usfa
 
   paths_str = paths
   paths = glob(paths)
@@ -627,6 +631,7 @@ def get_usfa_data(
       make_actor=functools.partial(usfa.make_actor, remove_gpi_dim=False),
       path=path,
       name="usfa",
+      overwrite=overwrite_episodes,
     )
 
     df, episodes = get_algorithm_data(
@@ -660,7 +665,7 @@ def get_dyna_data(
   """
 
   from simulations.networks import CategoricalHouzemazeObsEncoder
-  from simulations import offtask_dyna
+  from simulations import multitask_preplay_housemaze as offtask_dyna
 
   paths_str = paths
   paths = glob(paths)
@@ -703,6 +708,7 @@ def get_dyna_data(
       make_actor=offtask_dyna.make_actor,
       path=path,
       name="dynaq_shared",
+      overwrite=overwrite_episodes,
     )
 
     df, episodes = get_algorithm_data(
@@ -728,7 +734,7 @@ def get_dyna_data(
 
 
 def actions_from_search(env_params, rng, task, algo, budget):
-  map_init = jax.tree.map(lambda x: x[0], env_params.reset_params.map_init)
+  map_init = jax.tree_util.tree_map(lambda x: x[0], env_params.reset_params.map_init)
   grid = np.asarray(map_init.grid)
   agent_pos = tuple(int(o) for o in map_init.agent_pos)
   goal = np.array([task])
@@ -759,10 +765,10 @@ def collect_search_episodes(
     """
 
     def concat_pytrees(tree1, tree2, **kwargs):
-      return jax.tree.map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
+      return jax.tree_util.tree_map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
 
     def add_time(v):
-      return jax.tree.map(lambda x: x[None], v)
+      return jax.tree_util.tree_map(lambda x: x[None], v)
 
     return concat_pytrees(add_time(first), rest)
 
@@ -778,8 +784,8 @@ def collect_search_episodes(
     init_timestep = env.reset(rng, env_params)
     initial_carry = (rng, init_timestep)
     (rng, _), timesteps = jax.lax.scan(step_fn, initial_carry, actions)
-    init_timestep = jax.tree.map(jnp.asarray, init_timestep)
-    timesteps = jax.tree.map(jnp.asarray, timesteps)
+    init_timestep = jax.tree_util.tree_map(jnp.asarray, init_timestep)
+    timesteps = jax.tree_util.tree_map(jnp.asarray, timesteps)
     return concat_first_rest(init_timestep, timesteps)
 
   #######################

@@ -24,6 +24,8 @@ from analysis.housemaze_model_data import get_model_data
 from analysis.housemaze_user_data import get_human_data
 from analysis.housemaze_user_data import get_valid_files
 from nicewebrl.dataframe import DataFrame
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 
 DEFAULT_TITLE_SIZE = 14
 DEFAULT_LABEL_SIZE = 12
@@ -77,10 +79,10 @@ model_order = [
   "human",
   "human_success",
   "human_terminate",
-  "usfa",
   "dyna",
   "dynaq_shared",
   "qlearning",
+  "usfa",
   "bfs",
   "dfs",
 ]
@@ -507,7 +509,7 @@ def plot_rt_differences(
 
   # Create bar plot
   x_pos = np.arange(len(measures))
-  bars = ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors)
+  bars = ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors, error_kw=dict(ecolor=default_colors["vermillion"]))
 
   # Add individual points with jitter
   for i, diffs in enumerate(all_diffs):
@@ -764,6 +766,7 @@ def mixed_effects_compute_power(
   alpha: float = 0.05,
   parallel: bool = False,
   n_jobs: int = -1,
+  verbose: bool = False,
 ) -> float:
   """Compute power for mixed effects model using parallel or sequential processing.
 
@@ -807,6 +810,7 @@ def mixed_effects_compute_power(
           pool.imap(simulate_mixed_effects_trial, sim_args),
           total=n_simulations,
           desc="Simulating data",
+          disable=not verbose,
         )
       )
   else:
@@ -1464,7 +1468,7 @@ def experiment_1_results(
     stats_file.write(f"\n{idx}. {measure}\n")
     stats_file.write("--------------------\n")
 
-    fig, ax = plt.subplots(figsize=(3, 3))
+    fig, ax = plt.subplots(figsize=(4, 4))
     plot_bar_rt_comparison(
       exp1_eval_df,
       measure,
@@ -1486,6 +1490,22 @@ def experiment_1_results(
       )
     if display_figs:
       plt.show()
+
+
+  # Replace the separate success rate and path reuse plots with:
+  fig, ax1, ax2 = plot_success_rate_path_reuse_metrics(
+    df=exp1_eval_df,
+    model_df=mdf,
+    title="Exp 1 Success Rate and Path Reuse",
+    figsize=(6, 4),
+    include_raw_data=True,
+  )
+
+  if save_figs:
+    fig.savefig(os.path.join(save_dir, "exp1_combined_metrics.pdf"), bbox_inches="tight")
+
+  if display_figs:
+    plt.show()
 
   ######################
   # SF Model
@@ -1573,7 +1593,7 @@ def experiment_2_results(
 
   fig, ax = plt.subplots(figsize=(6, 3))
   plot_success_rate_comparison(
-    df=exp2_eval_df, model_df=mdf, ax=ax, title="Exp 2 Generalization Success Rate"
+    df=exp2_eval_df, model_df=mdf, ax=ax, title="Exp 3 Generalization Success Rate"
   )
 
   if save_figs:
@@ -1594,11 +1614,26 @@ def experiment_2_results(
     model_df=mdf,
     ax=ax,
     stats_file=stats_file,
-    title="Exp 2 Path Reuse",
+    title="Exp 3 Path Reuse",
   )
 
   if save_figs:
     fig.savefig(os.path.join(save_dir, "exp2_3_path_reuse.pdf"), bbox_inches="tight")
+
+  if display_figs:
+    plt.show()
+
+  # Replace the separate success rate and path reuse plots with:
+  fig, ax1, ax2 = plot_success_rate_path_reuse_metrics(
+    df=exp2_eval_df,
+    model_df=mdf,
+    title="Exp 3 Success Rate and Path Reuse",
+    figsize=(6, 4),
+    include_raw_data=True,
+  )
+
+  if save_figs:
+    fig.savefig(os.path.join(save_dir, "exp3_combined_metrics.pdf"), bbox_inches="tight")
 
   if display_figs:
     plt.show()
@@ -1660,17 +1695,26 @@ def experiment_3_results(
     exp3_eval_df._df.filter(tell_reuse=tell_reuse),
     measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
   )
+  xlabels = [
+    "First",
+    #"Max",
+    "Average"]
+  measures = [
+    "log_first_rt",
+    #"log_max_rt",
+    "log_avg_rt"]
+  colors=[
+    default_colors["google blue"],
+    #default_colors["sky blue"],
+    default_colors["google orange"],
+  ]
   fig, ax = plot_rt_differences(
     difference_df,
-    measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
-    title=f"Exp 3 RT Diff",
-    colors=[
-      default_colors["google blue"],
-      default_colors["sky blue"],
-      default_colors["google orange"],
-    ],
+    measures=measures,
+    title=f"Exp 4 RT Diff",
+    colors=colors,
     ylabel="log seconds",
-    xlabels=["First", "Max", "Average"],
+    xlabels=xlabels,
     stats_file=stats_file,
   )
 
@@ -1689,7 +1733,7 @@ def experiment_3_results(
 
 def experiment_4_results(
   user_df: DataFrame,
-  model_df: DataFrame,
+  #model_df: DataFrame,
   save_dir: str,
   filter_columns: List[str] = None,
   display_figs: bool = False,
@@ -1735,14 +1779,31 @@ def experiment_4_results(
   user_df = user_df.with_columns(
     setting=pl.col("maze").map_elements(get_maze_setting, return_dtype=pl.String)
   )
-
+  
+  ############################################
   # Create combined figure
-  fig, axs = plt.subplots(1, 4, figsize=(20, 4), sharey=True)
+  ############################################
+  fig, axs = plt.subplots(1, 3, figsize=(15, 4))
 
   idx = 0
+
+  xlabels = [
+    "First",
+    #"Max",
+    "Average"]
+  measures = [
+    "log_first_rt",
+    #"log_max_rt",
+    "log_avg_rt"]
+  colors=[
+    default_colors["google blue"],
+    #default_colors["sky blue"],
+    default_colors["google orange"],
+  ]
   for setting in ["short", "long"]:
     stats_file.write(f"\n\n=================={setting}===================\n")
     for tell_reuse in [1, 0]:
+      if idx > 2: break
       difference_df = compute_condition_difference_df(
         user_df.filter(setting=setting, tell_reuse=tell_reuse),
         measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
@@ -1756,29 +1817,44 @@ def experiment_4_results(
       plot_rt_differences(
         difference_df,
         ax=axs[idx],
-        measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
-        title=f"Exp 4 RT Diff ({label} x {v})",
-        colors=[
-          default_colors["google blue"],
-          default_colors["sky blue"],
-          default_colors["google orange"],
-        ],
+        measures=measures,
+        title=f"Exp 2 RT Diff ({label} x {v})",
+        colors=colors,
         ylabel="log seconds",
-        xlabels=["First", "Max", "Average"],
+        xlabels=xlabels,
         stats_file=stats_file,
       )
       idx += 1
 
+      # Create and save individual figure
+      if save_figs:
+        ind_fig, ind_ax = plt.subplots(figsize=(6, 4))
+        plot_rt_differences(
+          difference_df,
+          ax=ind_ax,
+          measures=measures,
+          title=f"Exp 2 RT Diff ({label} x {v})",
+          colors=colors,
+          ylabel="log seconds",
+          xlabels=xlabels,
+          stats_file=None,  # Don't write stats again
+        )
+        filter_str = ",".join(filter_columns)
+        # Save individual figure in multiple formats
+        base_path = os.path.join(save_dir, f"exp4_2_rt_diff_{setting}_{v}_filter_{filter_str}")
+        ind_fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
+        ind_fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
+        plt.close(ind_fig)  # Close individual figure
+
   # Adjust layout
   plt.tight_layout()
 
-  # Save combined figure
+  # Save combined figure in multiple formats
   if save_figs:
     filter_str = ",".join(filter_columns)
-    fig.savefig(
-      os.path.join(save_dir, f"exp4_2_rt_diff_combined_filter_{filter_str}.pdf"),
-      bbox_inches="tight",
-    )
+    base_path = os.path.join(save_dir, f"exp4_2_rt_diff_combined_filter_{filter_str}")
+    fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
+    fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
   if display_figs:
     plt.show()
 
@@ -1787,6 +1863,203 @@ def experiment_4_results(
   if verbosity > 0:
     with open(stats_filename, "r") as f:
       print(f.read())
+
+
+def plot_success_rate_path_reuse_metrics(
+    df: DataFrame,
+    model_df: DataFrame,
+    ax=None,
+    title="Success Rate and Path Reuse",
+    figsize=(8, 4),
+    include_raw_data: bool = True,
+) -> Tuple[plt.Figure, plt.Axes, plt.Axes]:
+    """Plot success rate and path reuse on the same axes with different y-axes.
+
+    Args:
+        df (DataFrame): DataFrame containing human data
+        model_df (DataFrame): DataFrame containing model data
+        ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
+        title (str, optional): Plot title
+        figsize (tuple, optional): Figure size if creating new figure
+        include_raw_data (bool, optional): Whether to include individual human data points
+
+    Returns:
+        tuple: (fig, ax1, ax2) containing the figure and both axes objects
+    """
+    # Create figure if needed
+    if ax is None:
+        fig, ax1 = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+        ax1 = ax
+
+    # Create second y-axis
+    ax2 = ax1.twinx()
+
+    # Calculate human success rate statistics
+    human_successes = (
+        df.group_by("user_id")
+        .agg(pl.col("success").mean())
+        .select("success")
+        .to_numpy()
+        .flatten()
+    )
+    human_success_mean = np.mean(human_successes)
+    human_success_se = np.sqrt((human_success_mean * (1 - human_success_mean)) / len(human_successes))
+
+    # Calculate human reuse statistics
+    human_reuse = (
+        df.group_by("user_id")
+        .agg(pl.col("reuse").mean())
+        .select("reuse")
+        .to_numpy()
+        .flatten()
+    )
+    human_reuse_mean = np.mean(human_reuse)
+    human_reuse_se = np.sqrt((human_reuse_mean * (1 - human_reuse_mean)) / len(human_reuse))
+
+    # Calculate model statistics
+    model_stats = model_df.group_by("algo").agg(
+        success_mean=pl.col("success").mean() * 100,
+        success_se=(
+            pl.col("success").mean()
+            * (1 - pl.col("success").mean())
+            / pl.col("success").count()
+        ).sqrt()
+        * 100,
+        reuse_mean=pl.col("reuse").mean() * 100,
+        reuse_se=(
+            pl.col("reuse").mean()
+            * (1 - pl.col("reuse").mean())
+            / pl.col("reuse").count()
+        ).sqrt()
+        * 100,
+    )
+
+    # Prepare data for plotting
+    all_data = {"human": {"success": 100 * human_success_mean, "reuse": 100 * human_reuse_mean}}
+    success_yerr = [100 * human_success_se]
+    reuse_yerr = [100 * human_reuse_se]
+
+    # Add model data
+    algos = model_stats["algo"].unique().to_list()
+    for algo in model_order:
+        if not algo in algos:
+            continue
+        row = model_stats.filter(algo=algo)
+        all_data[algo] = {
+            "success": row["success_mean"].to_numpy()[0],
+            "reuse": row["reuse_mean"].to_numpy()[0]
+        }
+        success_yerr.append(row["success_se"].to_numpy()[0])
+        reuse_yerr.append(row["reuse_se"].to_numpy()[0])
+
+    # Plot bars
+    x_pos = np.arange(len(all_data))
+    ordered_keys = [k for k in model_order if k in all_data]
+    bar_width = 0.35
+
+    # Success rate bars (left axis)
+    success_bars = ax1.bar(
+        x_pos - bar_width/2,
+        [all_data[k]["success"] for k in ordered_keys],
+        bar_width,
+        yerr=success_yerr,
+        capsize=5,
+        color=[model_colors.get(k, "#333333") for k in ordered_keys],
+        label="Success Rate"
+    )
+
+    # Path reuse bars (right axis) - now using same colors without alpha
+    reuse_bars = ax2.bar(
+        x_pos + bar_width/2,
+        [all_data[k]["reuse"] for k in ordered_keys],
+        bar_width,
+        yerr=reuse_yerr,
+        capsize=5,
+        color=[model_colors.get(k, "#333333") for k in ordered_keys],
+        hatch="///",
+        label="Path Reuse"
+    )
+
+    # Add individual dots for human data if requested
+    if include_raw_data:
+        x_jitter = np.random.normal(0, 0.05, size=len(human_successes))
+        #ax1.scatter(
+        #    [-bar_width/2 + j for j in x_jitter],
+        #    100 * human_successes,
+        #    color="black",
+        #    alpha=0.5,
+        #    zorder=3,
+        #    s=20
+        #)
+        ax2.scatter(
+            [bar_width/2 + j for j in x_jitter],
+            100 * human_reuse,
+            color="black",
+            alpha=0.5,
+            zorder=3,
+            s=20
+        )
+
+    # Customize axes
+    ax1.set_ylabel("Success Rate (%)", fontsize=DEFAULT_LABEL_SIZE)
+    ax2.set_ylabel("Path Reuse (%)", fontsize=DEFAULT_LABEL_SIZE)
+    
+    # Set x-ticks
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(["" for k in ordered_keys])
+
+    # Add chance level line for success rate
+    ax1.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
+
+    # Set title
+    ax1.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+
+    # Create custom legend
+    # First create legend elements for models/human
+    model_legend = []
+    for i, key in enumerate(ordered_keys):
+        # Create a patch with the model's color
+        patch = mpatches.Patch(
+            color=model_colors.get(key, "#333333"),
+            label=model_names[key]
+        )
+        model_legend.append(patch)
+
+    ## Create legend elements for metrics
+    #chance_line = mlines.Line2D([], [], color='r', linestyle='--', label='Chance')
+    #success_patch = mpatches.Patch(color='gray', label='Success Rate')
+    #reuse_patch = mpatches.Patch(color='gray', hatch='///', label='Path Reuse')
+    
+    # Combine all legend elements and organize in one row below the plot
+    ax1.legend(
+        handles=model_legend,
+        ncol=len(model_legend)//2,  # Single row with all models
+        bbox_to_anchor=(0.5, -0.2),  # Center horizontally, place below plot
+        loc='lower center',
+        columnspacing=1,
+        handletextpad=0.5
+    )
+
+    # Add grids to both axes
+    ax1.grid(True, linestyle='--', alpha=0.7, which='major', axis='y')
+    #ax2.grid(True, linestyle='--', alpha=0.3, which='major', axis='y')
+
+    ax1.set_ylim(0, 110)  # Set fixed range for percentage
+    ax2.set_ylim(0, 110)
+    
+    # Ensure grid lines are behind the bars
+    #ax1.set_axisbelow(True)
+    #ax2.set_axisbelow(True)
+
+    # Adjust layout with more space at bottom for legend
+    #plt.subplots_adjust(bottom=0.2)  # Increase bottom margin to accommodate legend
+
+    # Remove the automatic legend from ax2 
+    ax2.get_legend().remove() if ax2.get_legend() else None
+
+    return fig, ax1, ax2
 
 
 if __name__ == "__main__":

@@ -170,6 +170,7 @@ possible_goals = jnp.array(
     Achievement.EAT_COW.value,
     Achievement.COLLECT_WOOD.value,
     Achievement.COLLECT_DRINK.value,
+    #Achievement.COLLECT_STONE.value,
   )
 )
 

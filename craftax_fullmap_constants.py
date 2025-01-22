@@ -20,7 +20,7 @@ BLOCK_PIXEL_SIZE_AGENT = 10
 INVENTORY_OBS_HEIGHT = 4
 
 TEXTURE_CACHE_FILE = os.path.join(
-  original_constant_directory, "assets", "fullmap_texture_cache.pbz2"
+  original_constant_directory, "assets", "fullmap_texture_cache_.pbz2"
 )
 
 
@@ -1123,8 +1123,8 @@ else:
 if not load_cached_textures_success:
   print("Processing textures.")
   TEXTURES = {
-    # BLOCK_PIXEL_SIZE_AGENT: load_all_textures(BLOCK_PIXEL_SIZE_AGENT),
-    # BLOCK_PIXEL_SIZE_IMG: load_all_textures(BLOCK_PIXEL_SIZE_IMG),
+     BLOCK_PIXEL_SIZE_AGENT: load_all_textures(BLOCK_PIXEL_SIZE_AGENT),
+     BLOCK_PIXEL_SIZE_IMG: load_all_textures(BLOCK_PIXEL_SIZE_IMG),
     BLOCK_PIXEL_SIZE_HUMAN: load_all_textures(BLOCK_PIXEL_SIZE_HUMAN),
   }
 

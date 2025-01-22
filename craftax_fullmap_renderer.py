@@ -11,16 +11,16 @@ from craftax.craftax.util.game_logic_utils import is_boss_vulnerable
   static_argnums=(
     1,
     2,
+    3,
   ),
 )
-def render_craftax_pixels(state, block_pixel_size, do_night_noise=True):
+def render_craftax_pixels(state, block_pixel_size, do_night_noise=True, show_inventory=False):
   textures = TEXTURES[block_pixel_size]
   obs_dim_array = jnp.array([OBS_DIM[0], OBS_DIM[1]], dtype=jnp.int32)
 
   # RENDER MAP
   # Get view of map
   map = state.map[state.player_level]
-  print(map.shape)
   padded_grid = jnp.pad(
     map,
     (MAX_OBS_DIM + 2, MAX_OBS_DIM + 2),
@@ -688,7 +688,10 @@ def render_craftax_pixels(state, block_pixel_size, do_night_noise=True):
   inv_pixels = _render_digit(inv_pixels, state.player_intelligence, 9, 3)
 
   # Combine map and inventory
-  pixels = jnp.concatenate([map_pixels, inv_pixels], axis=0)
+  if show_inventory:
+    pixels = jnp.concatenate([map_pixels, inv_pixels], axis=0)
+  else:
+    pixels = map_pixels
 
   # # Downscale by 2
   # pixels = pixels[::downscale, ::downscale]
