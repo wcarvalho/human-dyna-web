@@ -765,7 +765,9 @@ def collect_search_episodes(
     """
 
     def concat_pytrees(tree1, tree2, **kwargs):
-      return jax.tree_util.tree_map(lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2)
+      return jax.tree_util.tree_map(
+        lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2
+      )
 
     def add_time(v):
       return jax.tree_util.tree_map(lambda x: x[None], v)

@@ -1,4 +1,4 @@
-from typing import Union, Tuple
+from typing import Union, Tuple, List, Optional
 import jax
 import jax.numpy as jnp
 from collections import deque
@@ -8,14 +8,25 @@ import craftax_fullmap_constants as constants
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+from collections import namedtuple
 
 try:
-    from tqdm.notebook import tqdm
+  from tqdm.notebook import tqdm
 except ImportError:
-    from tqdm import tqdm
-CACHE_DIR = 'craftax_cache'
+  from tqdm import tqdm
 
-def bfs(state, goal: Union[int, Tuple[int, int]], key = None, walkable_blocks = None, budget=1e8):
+CACHE_DIR = "craftax_cache"
+
+
+def array_to_tuple(array):
+  if isinstance(array, tuple):
+    return array
+  return tuple(int(i) for i in array)
+
+
+def bfs(
+  state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=None, budget=1e8
+):
   """Performs Breadth-First Search to find a path from the player's position to a goal.
 
   Args:
@@ -57,12 +68,12 @@ def bfs(state, goal: Union[int, Tuple[int, int]], key = None, walkable_blocks = 
 
   # Create progress bar without total to show raw counts
   pbar = tqdm(desc="BFS Iterations")
-  
+
   while queue:
     key, subkey = jax.random.split(key)
     iterations += 1
     pbar.update(1)  # Update progress bar
-    
+
     if iterations >= budget:
       pbar.close()  # Close progress bar before returning
       return [], iterations
@@ -104,13 +115,16 @@ def manhattan_distance(pos1, pos2):
   """Calculate Manhattan distance between two positions."""
   return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
-def astar(state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=None, budget=1e8):
+
+def astar(
+  state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=None, budget=1e8
+):
   """Performs A* Search to find a path from the player's position to a goal.
-  
+
   Args: [same as before]
   """
   map = state.map[state.player_level]
-  agent_pos = tuple(int(i) for i in state.player_position)
+  agent_pos = array_to_tuple(state.player_position)
 
   if key is None:
     key = jax.random.PRNGKey(42)
@@ -119,10 +133,11 @@ def astar(state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=No
       BlockType.GRASS.value,
       BlockType.STONE.value,
       BlockType.PATH.value,
+      BlockType.SAND.value,
     ]
 
   rows, cols = map.shape
-  
+
   # Handle different goal types
   is_position_goal = isinstance(goal, (tuple, jnp.ndarray)) and len(goal) == 2
   if is_position_goal:
@@ -135,7 +150,9 @@ def astar(state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=No
     if len(matches[0]) == 0:
       return [], 0
     # Use Manhattan distance to find closest goal
-    distances = [manhattan_distance(agent_pos, (y, x)) for y, x in zip(matches[0], matches[1])]
+    distances = [
+      manhattan_distance(agent_pos, (y, x)) for y, x in zip(matches[0], matches[1])
+    ]
     closest_idx = jnp.argmin(jnp.array(distances))
     goal_pos = (int(matches[0][closest_idx]), int(matches[1][closest_idx]))
 
@@ -143,6 +160,7 @@ def astar(state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=No
 
   # Priority queue implemented as a list of (priority, count, pos, path) tuples
   import heapq
+
   count = 0  # Tiebreaker for equal priorities
   open_set = [(0, count, agent_pos, [agent_pos])]
   closed_set = set()
@@ -181,7 +199,7 @@ def astar(state, goal: Union[int, Tuple[int, int]], key=None, walkable_blocks=No
     for dx, dy in directions:
       new_x, new_y = int(current_pos[0] + dx), int(current_pos[1] + dy)
       new_pos = (new_x, new_y)
-      
+
       if (
         0 <= new_x < rows
         and 0 <= new_y < cols
@@ -226,6 +244,7 @@ def actions_from_path(path):
   actions.append(Action.NOOP.value)
   return jnp.array(actions)
 
+
 def place_arrows_on_image(
   image,
   positions,
@@ -234,9 +253,11 @@ def place_arrows_on_image(
   maze_width,
   arrow_scale=5,
   arrow_color="b",
+  start_color="w",
   ax=None,
   display_image=True,
-  ):
+  show_path_length=True,
+):
   # Get the dimensions of the image and the maze
   image_height, image_width, _ = image.shape
 
@@ -255,6 +276,32 @@ def place_arrows_on_image(
   # Display the rendered image
   if display_image:
     ax.imshow(image)
+
+  # Add star at starting position (first position) with specified color
+  if len(positions) > 0:
+    start_y = offset_y + (positions[0][0] + 0.5) * scale_y
+    start_x = offset_x + (positions[0][1] + 0.5) * scale_x
+    ax.plot(
+      start_x, start_y, "*", color=start_color, markersize=15, markeredgecolor="black"
+    )
+
+  # Calculate the center coordinates near the end position for text placement
+  if show_path_length and len(positions) > 3:
+    # Position text 3 steps from the end
+    text_idx = len(positions) - 3
+    text_y = offset_y + (positions[text_idx][0] + 0.5) * scale_y
+    text_x = offset_x + (positions[text_idx][1] + 0.5) * scale_x
+    # Add text showing path length
+    ax.text(
+      text_x + scale_x,  # Slightly offset
+      text_y - scale_y,
+      f"{len(positions)}",
+      color=arrow_color,
+      fontsize=18,
+      ha="left",
+      va="bottom",
+      weight="bold",
+    )
 
   # Iterate over each position and action
   for (y, x), action in zip(positions, actions):
@@ -288,105 +335,303 @@ def place_arrows_on_image(
     )
 
   # Remove the axis ticks and labels
-
   ax.set_xticks([])
   ax.set_yticks([])
   return ax
+
 
 def get_object_positions(state, block_type):
   map = state.map
   # Find all positions where the block type matches
   matches = jnp.where(map[0] == block_type.value)
   # Stack the y and x coordinates into a single array of shape (N, 2)
-  # where N is the number of matching positions
   positions = jnp.stack([matches[0], matches[1]], axis=1)
+
+  # Calculate distances to agent position
+  agent_pos = state.player_position
+  distances = jnp.sqrt(
+    jnp.sum((positions - agent_pos) ** 2, axis=1)  # Euclidean distance
+  )
+
+  # Sort positions by distance
+  sorted_indices = jnp.argsort(distances)
+  positions = positions[sorted_indices]
+
   return positions
 
 
-def render_fn(state, block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG):
+def render_fn(state, show_agent=True, block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG):
   image = render_craftax_pixels(
-    state, block_pixel_size=block_pixel_size
+    state, block_pixel_size=block_pixel_size, show_agent=show_agent
   )
   return image.astype(jnp.uint8)
 
-def get_cached_path(start_pos, goal_pos):
-    """Load cached path if it exists."""
-    cache_file = os.path.join(CACHE_DIR, f"path_{start_pos}_{goal_pos}.npy")
-    if os.path.exists(cache_file):
-        try:
-            print(f"Loading path from cache: {cache_file}")
-            return np.load(cache_file, allow_pickle=True)
-        except Exception as e:
-            return None
-    return None
 
-def save_path_to_cache(path, start_pos, goal_pos):
-    """Save path to cache."""
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    cache_file = os.path.join(CACHE_DIR, f"path_{start_pos}_{goal_pos}.npy")
-    print(f"Saving path to cache: {cache_file}")
-    np.save(cache_file, path)
+def get_cached_path(world, start_pos, goal_pos):
+  """Load cached path if it exists."""
+  start_pos = array_to_tuple(start_pos)
+  goal_pos = array_to_tuple(goal_pos)
+  cache_dir = os.path.join(CACHE_DIR, "paths")
+  cache_file = os.path.join(cache_dir, f"world_{world}_path_{start_pos}_{goal_pos}.npy")
+  if os.path.exists(cache_file):
+    try:
+      print(f"Loading path from cache: {cache_file}")
+      return np.load(cache_file, allow_pickle=True)
+    except Exception:
+      return None
+  return None
 
-def display_map_with_paths(
+
+def save_path_to_cache(path, world, start_pos, goal_pos):
+  """Save path to cache."""
+  start_pos = array_to_tuple(start_pos)
+  goal_pos = array_to_tuple(goal_pos)
+  cache_dir = os.path.join(CACHE_DIR, "paths")
+  os.makedirs(cache_dir, exist_ok=True)
+  cache_file = os.path.join(cache_dir, f"world_{world}_path_{start_pos}_{goal_pos}.npy")
+  print(f"Saving path to cache: {cache_file}")
+  np.save(cache_file, path)
+
+
+def display_map(
   state,
-  goal,
   params,
-  block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG,
-  display_paths=True,
-  ):
-
+  block_pixel_size: int = constants.BLOCK_PIXEL_SIZE_IMG,
+  goals: Optional[Union[BlockType, List[BlockType]]] = None,
+  refresh_cache: bool = False,
+  show_agent: bool = True,
+  display_paths: bool = True,
+  paths_nearby: Optional[Union[int, Tuple[int, int]]] = None,
+  nearby_radius: int = 10,
+  goal_idx: int = None,
+):
   world = int(params.world_seeds[0])
-  fig, ax = plt.subplots(1, figsize=(10, 10))
+  fig, ax = plt.subplots(1, figsize=(12, 12))
 
-  image = render_fn(state, block_pixel_size=block_pixel_size)
+  image = render_fn(state, show_agent=show_agent, block_pixel_size=block_pixel_size)
   ax.imshow(image)
 
   ax.axis("off")  # This removes the axes and grid
-  if not display_paths:
+  if goals is None or not display_paths:
     ax.set_title(f"World {world}")
-    return ax
-
-  goal_positions = get_object_positions(state, goal)
-
-  paths = []
-  start_pos = tuple(state.player_position)
-  for goal_position in goal_positions:
-    goal_pos = tuple(goal_position)
-    # Try to load from cache first
-    path = get_cached_path(start_pos, goal_pos)
-    
-    if path is None:
-      path, _ = astar(state, goal_position)
-      save_path_to_cache(path, start_pos, goal_pos)
-
-    if path is not None and len(path) > 0:
-      # Check if path exists before getting actions
-      actions = actions_from_path(path)
-      paths.append((path, actions))
-
-  # sort paths by length
-  paths.sort(key=lambda x: len(x[0]))
+    return image, fig, ax
 
   colors = [
-    "#FFB700", # google orange
-    "#D55E00", # vermillion
-    "#CC79A7", # reddish purple
-    "#9B80E6", # nice purple
-    "#679FE5", # pretty blue
-    "#186CED", # google blue
-    (86 / 255, 180 / 255, 233 / 255), # sky blue
+    "#FFB700",  # google orange
+    "#679FE5",  # pretty blue
+    "#D55E00",  # vermillion
+    "#186CED",  # google blue
+    "#CC79A7",  # reddish purple
+    "#9B80E6",  # nice purple
+    "#186CED",  # google blue
+    (86 / 255, 180 / 255, 233 / 255),  # sky blue
   ]
-  path_lengths = [len(path) for path, _ in paths]
+  color_idx = -1
+  if isinstance(goals, BlockType):
+    goals = [goals]
+
+  path_lengths = []
+  for goal in goals:
+    color_idx += 1
+    goal_positions = get_object_positions(state, goal)
+
+    # Filter goal positions if paths_nearby is specified
+    if paths_nearby is not None:
+      filtered_positions = []
+      for pos in goal_positions:
+        # Calculate Manhattan distance to paths_nearby point
+        distance = jnp.sqrt(
+          (pos[0] - paths_nearby[0]) ** 2 + (pos[1] - paths_nearby[1]) ** 2
+        )
+        if distance <= nearby_radius:
+          filtered_positions.append(pos)
+      goal_positions = jnp.array(filtered_positions)
+
+    if goal_idx is not None:
+      goal_positions = [goal_positions[goal_idx]]
+
+    paths = []
+    start_pos = tuple(state.player_position)
+    for goal_position in goal_positions:
+      goal_pos = tuple(goal_position)
+      path = None
+      if not refresh_cache:
+        # Try to load from cache first
+        path = get_cached_path(world, start_pos, goal_pos)
+
+      if path is None:
+        path, _ = astar(state, goal_position)
+        save_path_to_cache(path, world, start_pos, goal_pos)
+
+      if path is not None and len(path) > 0:
+        # Check if path exists before getting actions
+        actions = actions_from_path(path)
+        paths.append((path, actions))
+
+    # sort paths by length
+    paths.sort(key=lambda x: len(x[0]))
+
+    for path, actions in paths:
+      print(f"path length: {len(path)}")
+      path_lengths.append(int(len(path)))
+      place_arrows_on_image(
+        image,
+        path,
+        actions,
+        state.map.shape[1],
+        state.map.shape[2],
+        ax=ax,
+        display_image=False,
+        arrow_color=colors[color_idx % len(colors)],
+        show_path_length=True,
+      )
   ax.set_title(f"World {world}\nPath lengths: {path_lengths}")
-  for idx, (path, actions) in enumerate(paths):
+  return image, fig, ax
+
+
+def train_test_paths(
+  jax_env,
+  params,
+  world_seed,
+  start_position,
+  train_object,
+  test_object,
+  prefix: str = "",
+  second_start_position: Optional[Tuple[int, int]] = None,
+  nearby_goal: bool = True,
+  goal_idx: bool = False,
+):
+  key = jax.random.PRNGKey(0)
+  params = params.replace(
+    world_seeds=(world_seed,), always_diamond=True, start_position=start_position
+  )
+  obs, state = jax_env.reset(key, params)
+
+  train_position = get_object_positions(state, train_object)[0]
+  with jax.disable_jit():
+    image, fig, ax = display_map(
+      state=state,
+      goals=[train_object, test_object],
+      params=params,
+      paths_nearby=train_position if nearby_goal else None,
+      show_agent=False,
+      display_paths=True,
+      goal_idx=goal_idx,
+    )
+  if second_start_position is not None:
+    goal_position = get_object_positions(state, test_object)[goal_idx]
+    path = get_cached_path(world_seed, second_start_position, goal_position)
+    if path is None:
+      state = state.replace(player_position=second_start_position)
+      path, _ = astar(state, goal_position)
+      save_path_to_cache(path, world_seed, second_start_position, goal_position)
+    actions = actions_from_path(path)
     place_arrows_on_image(
-      image,
-      path,
-      actions,
-      state.map.shape[1],
-      state.map.shape[2],
+      image=image,
+      positions=path,
+      actions=actions,
+      maze_height=state.map.shape[1],
+      maze_width=state.map.shape[2],
       ax=ax,
       display_image=False,
-      arrow_color=colors[idx % len(colors)],
+      arrow_color="#D55E00",  # vermillion
+      show_path_length=True,
+      start_color="#D55E00",
     )
-  return ax
+
+  cache_dir = os.path.join(CACHE_DIR)
+  if prefix:
+    cache_dir = os.path.join(cache_dir, prefix)
+  os.makedirs(cache_dir, exist_ok=True)
+  output_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
+  plt.savefig(output_path, bbox_inches="tight", pad_inches=0)
+  print(f"Saved to {output_path}")
+  plt.show()
+  plt.close()
+
+
+if __name__ == "__main__":
+  import os
+  from craftax.craftax.constants import BlockType
+  from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
+  from tqdm import tqdm
+
+  WorldConfig = namedtuple(
+    "WorldConfig", ["world_seed", "start_position", "train_object", "test_object"]
+  )
+  # Example usage:
+  # config = WorldConfig(world_seed=123,
+  #                     start_position=(10,10),
+  #                     train_object=BlockType.DIAMOND,
+  #                     test_object=BlockType.CRAFTING_TABLE)
+
+  #########################################
+  # Create default environment
+  #########################################
+  MONSTERS = 1
+  static_env_params = CraftaxSymbolicWebEnvNoAutoReset.default_static_params()
+  static_env_params = static_env_params.replace(
+    max_melee_mobs=MONSTERS,
+    max_ranged_mobs=MONSTERS,
+    max_passive_mobs=10,  # cows
+    initial_crafting_tables=True,
+    initial_strength=20,
+    map_size=(48, 48),
+  )
+  jax_env = CraftaxSymbolicWebEnvNoAutoReset(
+    static_env_params=static_env_params,
+  )
+  default_params = jax_env.default_params.replace(
+    day_length=100000,
+    mob_despawn_distance=100000,
+  )
+
+  #########################################
+  # Create maps
+  #########################################
+  # Create cache directory if it doesn't exist
+  cache_dir = os.path.join(CACHE_DIR, "maps")
+  os.makedirs(cache_dir, exist_ok=True)
+  # Generate and save maps for each world seed
+  for world_seed in tqdm(range(100), desc="world"):
+    # Check if file already exists
+    output_path = os.path.join(cache_dir, f"world_{world_seed}.png")
+    if not os.path.exists(output_path):
+      # Set params for this world
+      world_params = default_params.replace(
+        world_seeds=(world_seed,),
+      )
+
+      # Generate world
+      key = jax.random.PRNGKey(0)
+      obs, state = jax_env.reset(key, world_params)
+
+      # Save visualization
+      with jax.disable_jit():
+        image, fig, ax = display_map(
+          state=state,
+          params=world_params,
+        )
+      # Save figure
+      plt.savefig(output_path, bbox_inches="tight", pad_inches=0)
+      plt.close()
+  ###########################
+  ### 2 paths (single goal)
+  ##########################
+
+  # configs = [
+  #  WorldConfig(world_seed=3, start_position=(22,25), train_object=BlockType.DIAMOND, test_object=BlockType.CRAFTING_TABLE),
+  #  WorldConfig(world_seed=15, start_position=(24,24), train_object=BlockType.DIAMOND, test_object=BlockType.CRAFTING_TABLE),
+  #  #WorldConfig(world_seed=16, start_position=(40,30), train_object=BlockType.DIAMOND, test_object=BlockType.CRAFTING_TABLE),
+  #  #WorldConfig(world_seed=21, start_position=(10,10), train_object=BlockType.DIAMOND, test_object=BlockType.CRAFTING_TABLE),
+  # ]
+
+  # for config in configs:
+  #  fig, ax = train_test_paths(
+  #    jax_env,
+  #    params=default_params,
+  #    world_seed=config.world_seed,
+  #    start_position=config.start_position,
+  #    train_object=config.train_object,
+  #    test_object=config.test_object,
+  #  )

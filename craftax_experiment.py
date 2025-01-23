@@ -69,7 +69,9 @@ def get_remaining(possible_goals, num_success):
   logger.info(f"remaining={remaining}")
 
   # maintain order of goals
-  output = jnp.array([remaining.get(g, n) for g, n in zip(possible_goals, num_success)], dtype=jnp.int32)
+  output = jnp.array(
+    [remaining.get(g, n) for g, n in zip(possible_goals, num_success)], dtype=jnp.int32
+  )
   return output
 
 
@@ -170,7 +172,7 @@ possible_goals = jnp.array(
     Achievement.EAT_COW.value,
     Achievement.COLLECT_WOOD.value,
     Achievement.COLLECT_DRINK.value,
-    #Achievement.COLLECT_STONE.value,
+    # Achievement.COLLECT_STONE.value,
   )
 )
 
