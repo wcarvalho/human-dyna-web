@@ -10,7 +10,7 @@ from housemaze.human_dyna import multitask_env as maze
 import jax
 import jax.numpy as jnp
 import numpy as np
-import jaxmaze_experiment as experiment
+import jaxmaze_experiment_structure as experiment
 
 
 class EpisodeData(NamedTuple):

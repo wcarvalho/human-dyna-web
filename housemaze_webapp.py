@@ -80,7 +80,7 @@ setup_logging(
 )
 logger = get_logger("main")
 
-import jaxmaze_experiment as experiment
+import jaxmaze_experiment_structure as experiment
 
 APP_TITLE = "Dyna 4"
 all_stages = experiment.all_stages

@@ -708,5 +708,5 @@ def render_craftax_pixels(
 
   # # Downscale by 2
   # pixels = pixels[::downscale, ::downscale]
-
+  pixels = pixels[block_pixel_size:, block_pixel_size:]
   return pixels

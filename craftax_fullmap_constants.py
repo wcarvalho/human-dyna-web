@@ -11,7 +11,7 @@ from craftax.craftax import constants as original_constants
 original_constant_directory = os.path.dirname(original_constants.__file__)
 
 # GAME CONSTANTS
-OBS_DIM = (47, 47)
+OBS_DIM = (49, 49)
 assert OBS_DIM[0] % 2 == 1 and OBS_DIM[1] % 2 == 1
 MAX_OBS_DIM = max(OBS_DIM)
 BLOCK_PIXEL_SIZE_HUMAN = 64
@@ -20,7 +20,7 @@ BLOCK_PIXEL_SIZE_AGENT = 10
 INVENTORY_OBS_HEIGHT = 4
 
 TEXTURE_CACHE_FILE = os.path.join(
-  original_constant_directory, "assets", "fullmap_texture_cache_.pbz2"
+  original_constant_directory, "assets", "fullmap_texture_cache_48.pbz2"
 )
 
 

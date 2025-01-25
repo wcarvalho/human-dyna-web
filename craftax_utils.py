@@ -19,9 +19,74 @@ CACHE_DIR = "craftax_cache"
 
 
 def array_to_tuple(array):
-  if isinstance(array, tuple):
-    return array
   return tuple(int(i) for i in array)
+
+
+def find_n_empty_positions(
+  rng, state, n, static_params, radius=20, center_pos=(24, 24)
+):
+  """Find n empty positions within radius of center_pos.
+
+  Args:
+      rng: JAX random key
+      current_map: 2D array representing the game map
+      n: Number of empty positions to find
+      center_pos: Reference position [y, x]
+      radius: Maximum distance from center_pos
+      static_params: Environment parameters containing map size
+
+  Returns:
+      positions: Array of shape [n, 2] containing empty positions
+      rng: Updated random key
+  """
+  current_map = state.map[state.player_level]
+  center_pos = jnp.asarray(center_pos)
+  # Generate many candidate positions to increase success chance
+  num_candidates = n * 10  # Try 10x more positions than needed
+
+  rng, _rng = jax.random.split(rng)
+
+  # Generate offsets from -radius to +radius
+  offsets = jax.random.randint(
+    _rng, shape=(num_candidates, 2), minval=-radius, maxval=radius + 1
+  )
+
+  # Add offsets to center position
+  positions = center_pos + offsets
+
+  # Clip to ensure within map bounds
+  positions = jnp.clip(
+    positions,
+    a_min=2,
+    a_max=jnp.array([static_params.map_size[0] - 2, static_params.map_size[1] - 2]),
+  )
+
+  # Check which positions match any walkable block (not just empty space)
+  walkable_blocks = jnp.array(
+    [
+      BlockType.GRASS.value,
+      BlockType.STONE.value,
+      BlockType.PATH.value,
+    ]
+  )
+  is_walkable = (
+    current_map[positions[:, 0], positions[:, 1]][:, None] == walkable_blocks
+  ).any(axis=1)
+
+  # Get indices of empty positions
+  empty_indices = jnp.where(is_walkable)[0]
+
+  # Take the first n empty positions (or all if fewer than n exist)
+  num_empty = jnp.minimum(n, empty_indices.shape[0])
+
+  selected_indices = empty_indices[:num_empty]
+  valid_positions = positions[selected_indices]
+
+  # Pad with zeros if we found fewer than n positions
+  padding = jnp.zeros((n - num_empty, 2), dtype=jnp.int32)
+  valid_positions = jnp.concatenate([valid_positions, padding], axis=0)
+
+  return valid_positions, rng
 
 
 def bfs(
@@ -277,13 +342,13 @@ def place_arrows_on_image(
   if display_image:
     ax.imshow(image)
 
-  # Add star at starting position (first position) with specified color
-  if len(positions) > 0:
-    start_y = offset_y + (positions[0][0] + 0.5) * scale_y
-    start_x = offset_x + (positions[0][1] + 0.5) * scale_x
-    ax.plot(
-      start_x, start_y, "*", color=start_color, markersize=15, markeredgecolor="black"
-    )
+  ## Add star at starting position (first position) with specified color
+  # if len(positions) > 0:
+  #  start_y = offset_y + (positions[0][0] + 0.5) * scale_y
+  #  start_x = offset_x + (positions[0][1] + 0.5) * scale_x
+  #  ax.plot(
+  #    start_x, start_y, "*", color=start_color, markersize=15, markeredgecolor="black"
+  #  )
 
   # Calculate the center coordinates near the end position for text placement
   if show_path_length and len(positions) > 3:
@@ -371,6 +436,7 @@ def get_cached_path(world, start_pos, goal_pos):
   """Load cached path if it exists."""
   start_pos = array_to_tuple(start_pos)
   goal_pos = array_to_tuple(goal_pos)
+
   cache_dir = os.path.join(CACHE_DIR, "paths")
   cache_file = os.path.join(cache_dir, f"world_{world}_path_{start_pos}_{goal_pos}.npy")
   if os.path.exists(cache_file):
@@ -402,7 +468,7 @@ def display_map(
   show_agent: bool = True,
   display_paths: bool = True,
   paths_nearby: Optional[Union[int, Tuple[int, int]]] = None,
-  nearby_radius: int = 10,
+  nearby_radius: int = 15,
   goal_idx: int = None,
 ):
   world = int(params.world_seeds[0])
@@ -434,7 +500,6 @@ def display_map(
   for goal in goals:
     color_idx += 1
     goal_positions = get_object_positions(state, goal)
-
     # Filter goal positions if paths_nearby is specified
     if paths_nearby is not None:
       filtered_positions = []
@@ -472,7 +537,6 @@ def display_map(
     paths.sort(key=lambda x: len(x[0]))
 
     for path, actions in paths:
-      print(f"path length: {len(path)}")
       path_lengths.append(int(len(path)))
       place_arrows_on_image(
         image,
@@ -489,6 +553,35 @@ def display_map(
   return image, fig, ax
 
 
+def place_start_marker(ax, position, state, image, start_color="w"):
+  """Place a star marker at the starting position.
+
+  Args:
+      ax: matplotlib axis
+      position: tuple of (y, x) coordinates in maze space
+      image: rendered image array of shape (height, width, channels)
+      start_color: color of the star marker
+  """
+  # Get image dimensions
+  image_height, image_width, _ = image.shape
+
+  # No need for wall offsets
+  offset_y = 0
+  offset_x = 0
+
+  # Calculate the scaling factors for mapping maze coordinates to image coordinates
+  scale_y = image_height / state.map.shape[1]
+  scale_x = image_width / state.map.shape[2]
+
+  # Calculate marker position
+  start_y = offset_y + (position[0] + 0.5) * scale_y
+  start_x = offset_x + (position[1] + 0.5) * scale_x
+
+  ax.plot(
+    start_x, start_y, "*", color=start_color, markersize=15, markeredgecolor="black"
+  )
+
+
 def train_test_paths(
   jax_env,
   params,
@@ -497,11 +590,16 @@ def train_test_paths(
   train_object,
   test_object,
   prefix: str = "",
+  static_params=None,
+  num_extra_start_positions: int = 7,
+  extra_start_positions_rng=None,
   second_start_position: Optional[Tuple[int, int]] = None,
+  extra_start_position_center: Optional[Tuple[int, int]] = None,
   nearby_goal: bool = True,
-  goal_idx: bool = False,
+  goal_idx: Optional[int] = None,
 ):
   key = jax.random.PRNGKey(0)
+  start_position = start_position or (24, 24)
   params = params.replace(
     world_seeds=(world_seed,), always_diamond=True, start_position=start_position
   )
@@ -518,6 +616,31 @@ def train_test_paths(
       display_paths=True,
       goal_idx=goal_idx,
     )
+
+    # Place start marker for the first position
+    place_start_marker(ax, start_position, state, image)
+    # print(start_position)
+
+    # Sample and place extra start positions if requested
+    if num_extra_start_positions > 0:
+      if extra_start_positions_rng is None:
+        extra_start_positions_rng = jax.random.PRNGKey(0)
+      if extra_start_position_center is None:
+        extra_start_position_center = start_position
+      extra_positions, _ = find_n_empty_positions(
+        extra_start_positions_rng,
+        state,
+        num_extra_start_positions,
+        static_params or jax_env.default_static_params(),
+        radius=15,
+        center_pos=extra_start_position_center,
+      )
+      print(
+        f"Extra start positions: {[(int(pos[0]), int(pos[1])) for pos in extra_positions]}"
+      )
+      for pos in extra_positions:
+        place_start_marker(ax, pos, state, image, start_color="green")
+
   if second_start_position is not None:
     goal_position = get_object_positions(state, test_object)[goal_idx]
     path = get_cached_path(world_seed, second_start_position, goal_position)
@@ -593,7 +716,7 @@ if __name__ == "__main__":
   cache_dir = os.path.join(CACHE_DIR, "maps")
   os.makedirs(cache_dir, exist_ok=True)
   # Generate and save maps for each world seed
-  for world_seed in tqdm(range(100), desc="world"):
+  for world_seed in tqdm(range(200), desc="world"):
     # Check if file already exists
     output_path = os.path.join(cache_dir, f"world_{world_seed}.png")
     if not os.path.exists(output_path):
