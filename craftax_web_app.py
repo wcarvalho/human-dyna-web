@@ -6,6 +6,7 @@ from asyncio import Lock
 from nicegui import app, ui
 from fastapi import Request
 from tortoise import Tortoise
+import time
 
 from gcs import save_to_gcs_with_retries
 import nicewebrl
@@ -14,12 +15,26 @@ from nicewebrl.utils import wait_for_button_or_keypress
 from nicewebrl import stages
 
 
-import craftax_experiment
+# Add a global variable to store the cached module
+_cached_experiment_structure = None
+
+
+async def experiment_structure():
+  """Lazily import and cache the experiment structure module"""
+  global _cached_experiment_structure
+  if _cached_experiment_structure is None:
+    print("Loading experiment structure")
+    # Import the module first since this is the potentially slow operation
+    import craftax_experiment_structure
+
+    _cached_experiment_structure = craftax_experiment_structure
+  return _cached_experiment_structure
+
 
 DATABASE_FILE = os.environ.get("DB_FILE", "db.sqlite")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
-DEBUG = int(os.environ.get("DEBUG", 0))
+DEBUG = int(os.environ.get("DEBUG", 1))
 DEBUG_SEED = int(os.environ.get("SEED", 0))
 DISPLAY_FULL_MAP = int(os.environ.get("DISPLAY_FULL_MAP", 0))
 NAME = os.environ.get("NAME", "exp")
@@ -68,7 +83,9 @@ async def experiment_not_finished():
   """Check if the experiment is not finished"""
   async with get_user_lock():
     not_finished = not app.storage.user.get("experiment_finished", False)
-    not_finished &= app.storage.user["stage_idx"] < len(craftax_experiment.all_stages)
+    not_finished &= app.storage.user["stage_idx"] < len(
+      await experiment_structure().all_stages
+    )
   return not_finished
 
 
@@ -91,10 +108,10 @@ async def global_handle_key_press(e, container):
   """
 
   stage_idx = app.storage.user["stage_idx"]
-  if app.storage.user["stage_idx"] >= len(craftax_experiment.all_stages):
+  if app.storage.user["stage_idx"] >= len(await experiment_structure().all_stages):
     return
 
-  stage = craftax_experiment.all_stages[stage_idx]
+  stage = await experiment_structure().all_stages[stage_idx]
   if stage.get_user_data("finished", False):
     return
 
@@ -105,7 +122,7 @@ async def global_handle_key_press(e, container):
 
 
 async def save_data(final_save=True, feedback=None, **kwargs):
-  user_data_file = craftax_experiment.get_user_save_file_fn()
+  user_data_file = await experiment_structure().get_user_save_file_fn()
 
   if final_save:
     # --------------------------------
@@ -246,7 +263,7 @@ async def start_experiment(meta_container, stage_container, button_container):
   while True and await experiment_not_finished():
     # get current stage
     stage_idx = app.storage.user["stage_idx"]
-    stage = craftax_experiment.all_stages[stage_idx]
+    stage = await experiment_structure().all_stages[stage_idx]
 
     logger.info("=" * 30)
     logger.info(f"Began stage '{stage.name}'")
@@ -266,7 +283,7 @@ async def start_experiment(meta_container, stage_container, button_container):
       app.storage.user["stage_idx"] = stage_idx + 1
 
     # check if we've finished all stages
-    if app.storage.user["stage_idx"] >= len(craftax_experiment.all_stages):
+    if app.storage.user["stage_idx"] >= len(await experiment_structure().all_stages):
       break
 
   await finish_experiment(meta_container, stage_container, button_container)
@@ -373,24 +390,6 @@ async def run_stage(stage, stage_container, button_container):
   with button_container.style("align-items: center;"):
     nicewebrl.clear_element(button_container)
     ####################
-    # Button to change world seed
-    ####################
-    if DEBUG:
-
-      async def handle_number_input(e):
-        value = e.sender.value
-        if value.strip().isdigit():  # Check if input is a valid number
-          number = int(value.strip())
-          await stage.change_world(stage_container, number)
-          logger.info(f"Activating world {number}")
-          ui.notify(f"Activating world {number}", type="info", position="top")
-
-      ui.input(
-        placeholder="Set world number",
-        on_change=lambda e: None,  # Needed to make the input work
-      ).on("keydown.enter", handle_number_input)
-
-    ####################
     # Button to go to next page
     ####################
     checking_fullscreen = DEBUG == 0
@@ -417,7 +416,6 @@ async def run_stage(stage, stage_container, button_container):
         await create_button_and_wait()
 
   await stage_over_event.wait()
-  # nicewebrl.clear_element(button_container)
   nicewebrl.clear_element(button_container)
 
 
@@ -458,7 +456,7 @@ async def index(request: Request):
     ui.card(align_items=["center"])
     .classes("fixed-center")
     .style(
-      "max-width: 90vw;"  # Set the max width of the card
+      "max-width: 180vw;"  # Set the max width of the card
       "max-height: 90vh;"  # Ensure the max height is 90% of the viewport height
       "overflow: auto;"  # Allow scrolling inside the card if content overflows
       "display: flex;"  # Use flexbox for centering
@@ -471,6 +469,37 @@ async def index(request: Request):
     episode_limit = 200
     meta_container = ui.column()
     with meta_container.style("align-items: center;"):
+      #########################################
+      # Load experiment
+      #########################################
+      ui.markdown("""
+      # Loading experiment
+
+      Please ignore the "connection lost" message.
+
+      The experiment is being set up and will be ready in about 2 minutes.
+
+      Please keep your browser window open.
+      """)
+      loading_notification = ui.notification(
+        "Loading", position="bottom", type="info", timeout=None
+      )
+
+      start_time = time.time()
+
+      async def update_time():
+        elapsed = time.time() - start_time
+        loading_notification.text = f"Loading: {elapsed:.1f}s"
+
+      timer = ui.timer(interval=0.1, callback=update_time, active=True)
+      await asyncio.sleep(3)
+      await experiment_structure()
+      timer.delete()
+      loading_notification.dismiss()
+      nicewebrl.clear_element(meta_container)
+      #########################################
+      # Run experiment
+      #########################################
       stage_container = ui.column()
       button_container = ui.column()
       ui.timer(
@@ -483,7 +512,7 @@ async def index(request: Request):
         ),
       )
       footer_container = ui.row()
-      footer(footer_container)
+      await footer(footer_container)
     with meta_container.style("align-items: center;"):
       await start_experiment(meta_container, stage_container, button_container)
 
@@ -494,20 +523,28 @@ async def check_if_over(*args, episode_limit=60, **kwargs):
   minutes_passed = app.storage.user["session_duration"]
   if minutes_passed > episode_limit:
     logger.info(f"experiment timed out after {minutes_passed} minutes")
-    app.storage.user["stage_idx"] = len(craftax_experiment.all_stages)
+    app.storage.user["stage_idx"] = len(await experiment_structure().all_stages)
     await finish_experiment(*args, **kwargs)
 
 
-def footer(footer_container):
+async def footer(footer_container):
   """Add user information and progress bar to the footer"""
   with footer_container:
     with ui.row():
+      user_id = app.storage.user.get("seed", None)
+      if user_id is None:
+        return
+
       ui.label().bind_text_from(app.storage.user, "seed", lambda v: f"user id: {v}.")
       ui.label()
+
+      async def get_stage_idx(v):
+        return f"stage: {int(v) + 1}/{len(await experiment_structure().all_stages)}."
+
       ui.label().bind_text_from(
         app.storage.user,
         "stage_idx",
-        lambda v: f"stage: {int(v) + 1}/{len(craftax_experiment.all_stages)}.",
+        get_stage_idx,
       )
       ui.label()
       ui.label().bind_text_from(
@@ -516,11 +553,12 @@ def footer(footer_container):
         lambda v: f"minutes passed: {int(v)}.",
       )
 
-    stage_progress = lambda: float(
-      f"{(app.storage.user['stage_idx'] + 1) / len(craftax_experiment.all_stages):.2f}"
-    )
+    async def get_stage_progress():
+      return float(
+        f"{(app.storage.user['stage_idx'] + 1) / len(await experiment_structure().all_stages):.2f}"
+      )
 
-    ui.linear_progress(value=stage_progress()).bind_value_from(
+    ui.linear_progress(value=get_stage_progress()).bind_value_from(
       app.storage.user, "stage_progress"
     )
 
@@ -534,6 +572,6 @@ def footer(footer_container):
 ui.run(
   storage_secret="private key to secure the browser session cookie",
   # reload='FLY_ALLOC_ID' not in os.environ,
-  reload=DUMMY_ENV,
+  reload=DEBUG > 0,
   title="Crafter Web App",
 )

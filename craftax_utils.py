@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from collections import deque
 from craftax.craftax.constants import Action, BlockType
-from craftax_fullmap_renderer import render_craftax_pixels
+from craftax_fullmap_renderer import render_craftax_pixels, TEXTURES
 import craftax_fullmap_constants as constants
 import matplotlib.pyplot as plt
 import os
@@ -671,6 +671,27 @@ def train_test_paths(
   print(f"Saved to {output_path}")
   plt.show()
   plt.close()
+
+
+def render_goal_object(goal_object_idx: int, block_pixel_size: int):
+  """Render just the goal object texture."""
+  textures = TEXTURES[block_pixel_size]
+
+  # For blocks
+  if goal_object_idx < len(BlockType):
+    return textures["full_map_block_textures"][goal_object_idx]
+
+  # For items
+  elif goal_object_idx < len(BlockType) + len(ItemType):
+    item_idx = goal_object_idx - len(BlockType)
+    item_texture = textures["full_map_item_textures"][item_idx]
+    # Items have alpha channel, so we need to handle transparency
+    rgb = item_texture[:, :, :3]
+    alpha = item_texture[:, :, 3:4]
+    return rgb * alpha + (1 - alpha) * np.ones_like(rgb)
+
+  else:
+    raise ValueError(f"Unknown goal object index: {goal_object_idx}")
 
 
 if __name__ == "__main__":
