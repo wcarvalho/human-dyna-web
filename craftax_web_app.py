@@ -15,25 +15,10 @@ from nicewebrl.utils import wait_for_button_or_keypress
 from nicewebrl import stages
 
 
-# Add a global variable to store the cached module
-_cached_experiment_structure = None
-
-
-async def experiment_structure():
-  """Lazily import and cache the experiment structure module"""
-  global _cached_experiment_structure
-  if _cached_experiment_structure is None:
-    print("Loading experiment structure")
-    # Import the module first since this is the potentially slow operation
-    import craftax_experiment_structure
-
-    _cached_experiment_structure = craftax_experiment_structure
-  return _cached_experiment_structure
-
-
 DATABASE_FILE = os.environ.get("DB_FILE", "db.sqlite")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
+DELAY_EXPERIMENT_LOADING = int(os.environ.get("DELAY_EXPERIMENT_LOADING", 0))
 DEBUG = int(os.environ.get("DEBUG", 1))
 DEBUG_SEED = int(os.environ.get("SEED", 0))
 DISPLAY_FULL_MAP = int(os.environ.get("DISPLAY_FULL_MAP", 0))
@@ -44,6 +29,24 @@ DUMMY_ENV = int(os.environ.get("DUMMY_ENV", 1))
 os.makedirs(DATA_DIR, exist_ok=True)
 
 _user_locks = {}
+
+# Add a global variable to store the cached module
+_cached_experiment_structure = None
+
+
+# async def experiment_structure():
+#  """Lazily import and cache the experiment structure module"""
+#  global _cached_experiment_structure
+#  if _cached_experiment_structure is None:
+#    print("Loading experiment structure")
+#    # Import the module first since this is the potentially slow operation
+#    import craftax_experiment_structure
+
+#    _cached_experiment_structure = craftax_experiment_structure
+#  return _cached_experiment_structure
+
+# if DELAY_EXPERIMENT_LOADING:
+import craftax_experiment_structure
 
 
 #####################################
@@ -81,11 +84,13 @@ def get_user_lock():
 
 async def experiment_not_finished():
   """Check if the experiment is not finished"""
+  # if DELAY_EXPERIMENT_LOADING:
+  # experiment = await experiment_structure()
+  # else:
+  experiment = craftax_experiment_structure
   async with get_user_lock():
     not_finished = not app.storage.user.get("experiment_finished", False)
-    not_finished &= app.storage.user["stage_idx"] < len(
-      await experiment_structure().all_stages
-    )
+    not_finished &= app.storage.user["stage_idx"] < len(experiment.all_stages)
   return not_finished
 
 
@@ -106,13 +111,19 @@ async def global_handle_key_press(e, container):
   call the stage-specific key handler. When the experiment begins, we'll register
   a key listener to call this function
   """
-
+  logger.info(f"global_handle_key_press key: {e.args}")
+  # if DELAY_EXPERIMENT_LOADING:
+  # experiment = await experiment_structure()
+  # else:
+  experiment = craftax_experiment_structure
   stage_idx = app.storage.user["stage_idx"]
-  if app.storage.user["stage_idx"] >= len(await experiment_structure().all_stages):
+  if stage_idx >= len(experiment.all_stages):
+    logger.info("global_handle_key_press key: stage idx out of bounds")
     return
 
-  stage = await experiment_structure().all_stages[stage_idx]
+  stage = experiment.all_stages[stage_idx]
   if stage.get_user_data("finished", False):
+    logger.info("global_handle_key_press key: stage finished")
     return
 
   await stage.handle_key_press(e, container)
@@ -122,7 +133,11 @@ async def global_handle_key_press(e, container):
 
 
 async def save_data(final_save=True, feedback=None, **kwargs):
-  user_data_file = await experiment_structure().get_user_save_file_fn()
+  # if DELAY_EXPERIMENT_LOADING:
+  # experiment = await experiment_structure()
+  # else:
+  experiment = craftax_experiment_structure
+  user_data_file = experiment.get_user_save_file_fn()
 
   if final_save:
     # --------------------------------
@@ -163,6 +178,8 @@ if not os.path.exists(DATA_DIR):
 
 
 async def init_db() -> None:
+  import craftax_experiment_structure
+
   await Tortoise.init(
     db_url=f"sqlite://{DATA_DIR}/{DATABASE_FILE}",
     # this will look in models.py,
@@ -254,23 +271,28 @@ async def start_experiment(meta_container, stage_container, button_container):
   # ========================================
   # Register global key press handler
   # ========================================
-  ui.on("key_pressed", lambda e: global_handle_key_press(e, meta_container))
+  ui.on("key_pressed", lambda e: global_handle_key_press(e, stage_container))
 
   # ========================================
   # Run experiment
   # ========================================
   logger.info("Starting experiment")
+  # if DELAY_EXPERIMENT_LOADING:
+  # experiment = await experiment_structure()
+  # else:
+  experiment = craftax_experiment_structure
   while True and await experiment_not_finished():
     # get current stage
     stage_idx = app.storage.user["stage_idx"]
-    stage = await experiment_structure().all_stages[stage_idx]
+    stage = experiment.all_stages[stage_idx]
 
+    logger.info("=" * 30)
+    logger.info("=" * 30)
     logger.info("=" * 30)
     logger.info(f"Began stage '{stage.name}'")
     # activate stage
     await run_stage(stage, stage_container, button_container)
     logger.info(f"Finished stage '{stage.name}'")
-    ui.notify("Loading next page...", type="info", position="top")
 
     # wait for any saves to finish before updating stage
     # very important, otherwise may lose data
@@ -283,7 +305,7 @@ async def start_experiment(meta_container, stage_container, button_container):
       app.storage.user["stage_idx"] = stage_idx + 1
 
     # check if we've finished all stages
-    if app.storage.user["stage_idx"] >= len(await experiment_structure().all_stages):
+    if app.storage.user["stage_idx"] >= len(experiment.all_stages):
       break
 
   await finish_experiment(meta_container, stage_container, button_container)
@@ -354,7 +376,6 @@ async def run_stage(stage, stage_container, button_container):
       if stage.get_user_data("finished", False):
         # Signal that the stage is over
         logger.info(f"Finished {stage_name(stage)} via key press")
-        ui.notify("Loading next page...", type="info", position="top")
         stage_over_event.set()
 
   async def handle_button_press():
@@ -370,7 +391,6 @@ async def run_stage(stage, stage_container, button_container):
       if stage.get_user_data("finished", False):
         # Signal that the stage is over
         logger.info(f"Finished {stage_name(stage)} via button press")
-        ui.notify("Loading next page...", type="info", position="top")
         stage_over_event.set()
 
   #############################################
@@ -382,7 +402,6 @@ async def run_stage(stage, stage_container, button_container):
   if stage.get_user_data("finished", False):
     # over as soon as stage activation was complete
     logger.info(f"Finished {stage_name(stage)} immediately after activation")
-    ui.notify("Loading next page...", type="info", position="top")
     stage_over_event.set()
 
   await stage.set_user_data(local_handle_key_press=local_handle_key_press)
@@ -399,6 +418,7 @@ async def run_stage(stage, stage_container, button_container):
       with next_button_container:
         nicewebrl.clear_element(next_button_container)
         button = ui.button("Next page").bind_visibility_from(stage, "next_button")
+        # await button.clicked()
         await wait_for_button_or_keypress(button)
         logger.info("Button or key pressed")
         await handle_button_press()
@@ -416,7 +436,9 @@ async def run_stage(stage, stage_container, button_container):
         await create_button_and_wait()
 
   await stage_over_event.wait()
+  nicewebrl.clear_element(stage_container)
   nicewebrl.clear_element(button_container)
+  logger.info(f"Ending {stage_name(stage)} run function")
 
 
 #####################################
@@ -456,47 +478,51 @@ async def index(request: Request):
     ui.card(align_items=["center"])
     .classes("fixed-center")
     .style(
-      "max-width: 180vw;"  # Set the max width of the card
-      "max-height: 90vh;"  # Ensure the max height is 90% of the viewport height
-      "overflow: auto;"  # Allow scrolling inside the card if content overflows
-      "display: flex;"  # Use flexbox for centering
-      "flex-direction: column;"  # Stack content vertically
+      "width: 80vw;"  # Set width to 90% of viewport width
+      "max-height: 90vh;"  # Keep the same max height
+      "overflow: auto;"
+      "display: flex;"
+      "flex-direction: column;"
       "justify-content: flex-start;"
       "align-items: center;"
+      "padding: 1rem;"
     )
   )
   with card:
     episode_limit = 200
     meta_container = ui.column()
     with meta_container.style("align-items: center;"):
-      #########################################
-      # Load experiment
-      #########################################
-      ui.markdown("""
-      # Loading experiment
+      ##########################################
+      ## Load experiment
+      ##########################################
+      # ui.markdown("""
+      ## Loading experiment
 
-      Please ignore the "connection lost" message.
+      # Please ignore the "connection lost" message.
 
-      The experiment is being set up and will be ready in about 2 minutes.
+      # The experiment is being set up and will be ready in about 2 minutes.
 
-      Please keep your browser window open.
-      """)
-      loading_notification = ui.notification(
-        "Loading", position="bottom", type="info", timeout=None
-      )
+      # Please keep your browser window open.
+      # """)
+      # loading_notification = ui.notification(
+      #  "Loading", position="bottom", type="info", timeout=None
+      # )
 
-      start_time = time.time()
+      # start_time = time.time()
 
-      async def update_time():
-        elapsed = time.time() - start_time
-        loading_notification.text = f"Loading: {elapsed:.1f}s"
+      # async def update_time():
+      #  elapsed = time.time() - start_time
+      #  loading_notification.text = f"Loading: {elapsed:.1f}s"
 
-      timer = ui.timer(interval=0.1, callback=update_time, active=True)
-      await asyncio.sleep(3)
-      await experiment_structure()
-      timer.delete()
-      loading_notification.dismiss()
-      nicewebrl.clear_element(meta_container)
+      # timer = ui.timer(interval=0.1, callback=update_time, active=True)
+      # await asyncio.sleep(3)
+      # await experiment_structure()
+      # try:
+      #  timer.delete()
+      #  loading_notification.dismiss()
+      #  nicewebrl.clear_element(meta_container)
+      # except Exception:
+      #  pass
       #########################################
       # Run experiment
       #########################################
@@ -523,11 +549,19 @@ async def check_if_over(*args, episode_limit=60, **kwargs):
   minutes_passed = app.storage.user["session_duration"]
   if minutes_passed > episode_limit:
     logger.info(f"experiment timed out after {minutes_passed} minutes")
-    app.storage.user["stage_idx"] = len(await experiment_structure().all_stages)
+    # if DELAY_EXPERIMENT_LOADING:
+    # experiment = await experiment_structure()
+    # else:
+    experiment = craftax_experiment_structure
+    app.storage.user["stage_idx"] = len(experiment.all_stages)
     await finish_experiment(*args, **kwargs)
 
 
 async def footer(footer_container):
+  # if DELAY_EXPERIMENT_LOADING:
+  # experiment = await experiment_structure()
+  # else:
+  experiment = craftax_experiment_structure
   """Add user information and progress bar to the footer"""
   with footer_container:
     with ui.row():
@@ -538,24 +572,18 @@ async def footer(footer_container):
       ui.label().bind_text_from(app.storage.user, "seed", lambda v: f"user id: {v}.")
       ui.label()
 
-      async def get_stage_idx(v):
-        return f"stage: {int(v) + 1}/{len(await experiment_structure().all_stages)}."
+      def get_stage_idx(v):
+        return f"stage: {int(v) + 1}/{len(experiment.all_stages)}."
 
-      ui.label().bind_text_from(
-        app.storage.user,
-        "stage_idx",
-        get_stage_idx,
-      )
+      ui.label().bind_text_from(app.storage.user, "stage_idx", get_stage_idx)
       ui.label()
       ui.label().bind_text_from(
-        app.storage.user,
-        "session_duration",
-        lambda v: f"minutes passed: {int(v)}.",
+        app.storage.user, "session_duration", lambda v: f"minutes passed: {int(v)}."
       )
 
-    async def get_stage_progress():
+    def get_stage_progress():
       return float(
-        f"{(app.storage.user['stage_idx'] + 1) / len(await experiment_structure().all_stages):.2f}"
+        f"{(app.storage.user['stage_idx'] + 1) / len(experiment.all_stages):.2f}"
       )
 
     ui.linear_progress(value=get_stage_progress()).bind_value_from(
@@ -574,4 +602,5 @@ ui.run(
   # reload='FLY_ALLOC_ID' not in os.environ,
   reload=DEBUG > 0,
   title="Crafter Web App",
+  port=8081,
 )
