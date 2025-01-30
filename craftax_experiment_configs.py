@@ -1,3 +1,4 @@
+import math
 from typing import List, Tuple
 from flax import struct
 import numpy as np
@@ -19,6 +20,7 @@ class BlockConfig(struct.PyTreeNode):
   train_objects: List[int]
   test_objects: List[int]
   start_eval2_positions: List[Tuple[int, int]] = None
+  eval2_goal_location: Tuple[int, int] = (-1, -1)
   type: str = ""
 
 
@@ -95,20 +97,21 @@ PATHS_CONFIGS = [
 ]
 
 # Juncture manipulation configs
+# rotate eval 2 being {below, left, right, above}
 JUNCTURE_CONFIGS = [
   BlockConfig(
     world_seed=1,
     start_train_positions=[
       (31, 32),
       (25, 46),
-      (24, 46),
-      (14, 46),
-      (9, 46),
-      (11, 46),
-      (28, 34),
+      #(24, 46),
+       (14, 46),
+      # (9, 46),
+      # (11, 46),
+      # (28, 34),
     ],
     start_eval_positions=[(23, 40)],
-    start_eval2_positions=[(19, 23)],
+    start_eval2_positions=[(21, 26)],
     train_objects=TRAIN_OBJECTS,
     test_objects=TEST_OBJECTS,
     type="juncture",
@@ -119,13 +122,13 @@ JUNCTURE_CONFIGS = [
       (23, 18),
       (17, 34),
       (6, 35),
-      (2, 41),
-      (3, 40),
-      (21, 35),
-      (15, 16),
+      # (2, 41),
+      # (3, 40),
+      # (21, 35),
+      # (15, 16),
     ],
     start_eval_positions=[(15, 30)],
-    start_eval2_positions=[(34, 24)],
+    start_eval2_positions=[(34, 25)],
     train_objects=TRAIN_OBJECTS,
     test_objects=TEST_OBJECTS,
     type="juncture",
@@ -136,13 +139,13 @@ JUNCTURE_CONFIGS = [
       (26, 25),
       (25, 33),
       (15, 26),
-      (10, 32),
-      (12, 31),
-      (38, 27),
-      (23, 7),
+      # (10, 32),
+      # (12, 31),
+      # (38, 27),
+      # (23, 7),
     ],
     start_eval_positions=[(24, 21)],
-    start_eval2_positions=[(15, 8)],
+    start_eval2_positions=[(15, 18)],
     train_objects=TRAIN_OBJECTS,
     test_objects=TEST_OBJECTS,
     type="juncture",
@@ -153,15 +156,97 @@ JUNCTURE_CONFIGS = [
       (2, 46),
       (27, 37),
       (9, 40),
-      (4, 46),
-      (23, 40),
-      (25, 46),
-      (5, 39),
+      # (4, 46),
+      # (23, 40),
+      # (25, 46),
+      # (5, 39),
     ],
     start_eval_positions=[(5, 43)],
-    start_eval2_positions=[(12, 32)],
+    start_eval2_positions=[(12, 33)],
     train_objects=TRAIN_OBJECTS,
     test_objects=TEST_OBJECTS,
+    type="juncture",
+  ),
+]
+
+DONT_TELL_TEST_OBJECTS = [
+  BlockType.SAPPHIRE.value,
+  BlockType.RUBY.value,
+  BlockType.CHEST.value,
+  BlockType.CRAFTING_TABLE.value,
+]
+
+DONT_TELL_JUNCTURE_CONFIGS = [
+  BlockConfig(
+    world_seed=1,
+    start_train_positions=[
+      (31, 32),
+      (25, 46),
+      #(24, 46),
+       (14, 46),
+      # (9, 46),
+      # (11, 46),
+      # (28, 34),
+    ],
+    start_eval_positions=[(23, 40)],
+    start_eval2_positions=[(21, 26)],
+    train_objects=TRAIN_OBJECTS,
+    test_objects=[DONT_TELL_TEST_OBJECTS[0]],
+    eval2_goal_location=(19, 26),
+    type="juncture",
+  ),
+  BlockConfig(
+    world_seed=2,
+    start_train_positions=[
+      (23, 18),
+      (17, 34),
+      (6, 35),
+      # (2, 41),
+      # (3, 40),
+      # (21, 35),
+      # (15, 16),
+    ],
+    start_eval_positions=[(15, 30)],
+    start_eval2_positions=[(34, 25)],
+    train_objects=TRAIN_OBJECTS,
+    test_objects=[DONT_TELL_TEST_OBJECTS[1]],
+    eval2_goal_location=(34, 27),
+    type="juncture",
+  ),
+  BlockConfig(
+    world_seed=16,
+    start_train_positions=[
+      (26, 25),
+      (25, 33),
+      (15, 26),
+      # (10, 32),
+      # (12, 31),
+      # (38, 27),
+      # (23, 7),
+    ],
+    start_eval_positions=[(24, 21)],
+    start_eval2_positions=[(15, 18)],
+    train_objects=TRAIN_OBJECTS,
+    test_objects=[DONT_TELL_TEST_OBJECTS[2]],
+    eval2_goal_location=(18, 18),
+    type="juncture",
+  ),
+  BlockConfig(
+    world_seed=21,
+    start_train_positions=[
+      (2, 46),
+      (27, 37),
+      (9, 40),
+      # (4, 46),
+      # (23, 40),
+      # (25, 46),
+      # (5, 39),
+    ],
+    start_eval_positions=[(5, 43)],
+    start_eval2_positions=[(12, 33)],
+    train_objects=TRAIN_OBJECTS,
+    test_objects=[DONT_TELL_TEST_OBJECTS[3]],
+    eval2_goal_location=(12, 36),
     type="juncture",
   ),
 ]
@@ -221,6 +306,8 @@ def visualize_block_config(config: BlockConfig, jax_env):
   env_params = jax_env.default_params.replace(
     world_seeds=(config.world_seed,),
     max_timesteps=100000,
+    goal_location=config.eval2_goal_location,
+    placed_goal=config.test_objects[0],
   )
   key = jax.random.PRNGKey(0)
   obs, state = jax_env.reset(key, env_params)
@@ -241,21 +328,20 @@ def visualize_block_config(config: BlockConfig, jax_env):
 
   # Create agent views figure
   columns = 4
-  rows = (total_positions + 2) // columns  # Round up division
+  rows = math.ceil((total_positions) / columns)  # Round up divisionn
+
   fig_views = plt.figure(figsize=(15, 4 * rows))
 
   # Function to render from a position
   def render_from_position(pos, idx, title_prefix):
     # Create environment params with this start position
-    env_params = jax_env.default_params.replace(
-      world_seeds=(config.world_seed,),
-      max_timesteps=100000,
+    render_env_params = env_params.replace(
       start_position=(pos,),
     )
 
     # Reset environment
     key = jax.random.PRNGKey(0)
-    obs, state = jax_env.reset(key, env_params)
+    obs, state = jax_env.reset(key, render_env_params)
 
     # Get partial observation using partial renderer
     obs = render_partial(state, block_pixel_size=BLOCK_PIXEL_SIZE_IMG).astype(np.uint8)
@@ -281,6 +367,11 @@ def visualize_block_config(config: BlockConfig, jax_env):
     offset = n_train + n_eval
     for idx, pos in enumerate(config.start_eval2_positions):
       render_from_position(pos, idx + offset, "Eval2")
+
+  # Remove any empty subplots
+  for idx in range(total_positions, rows * columns):
+    ax = plt.subplot(rows, columns, idx + 1)
+    ax.remove()
 
   plt.figure(fig_views.number)  # Ensure we're adjusting the views figure
   plt.tight_layout()

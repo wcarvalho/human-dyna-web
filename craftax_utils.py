@@ -2,7 +2,7 @@ from typing import Union, Tuple, List, Optional
 import jax
 import jax.numpy as jnp
 from collections import deque
-from craftax.craftax.constants import Action, BlockType
+from craftax.craftax.constants import Action, BlockType, Achievement
 from craftax_fullmap_renderer import render_craftax_pixels, TEXTURES
 import craftax_fullmap_constants as constants
 import matplotlib.pyplot as plt
@@ -17,6 +17,9 @@ except ImportError:
 
 CACHE_DIR = "craftax_cache"
 
+TRAIN_COLOR = "red"
+TEST_COLOR = "#679FE5"  # pretty blue
+TEST_COLOR2 = "#FFB700"
 
 def array_to_tuple(array):
   return tuple(int(i) for i in array)
@@ -482,22 +485,26 @@ def display_map(
     ax.set_title(f"World {world}")
     return image, fig, ax
 
-  colors = [
-    "#FFB700",  # google orange
-    "#679FE5",  # pretty blue
-    "#D55E00",  # vermillion
-    "#186CED",  # google blue
-    "#CC79A7",  # reddish purple
-    "#9B80E6",  # nice purple
-    "#186CED",  # google blue
-    (86 / 255, 180 / 255, 233 / 255),  # sky blue
-  ]
+  #colors = [
+  #  "#FFB700",  # google orange
+  #  "#679FE5",  # pretty blue
+  #  "#D55E00",  # vermillion
+  #  "#186CED",  # google blue
+  #  "#CC79A7",  # reddish purple
+  #  "#9B80E6",  # nice purple
+  #  "#186CED",  # google blue
+  #  (86 / 255, 180 / 255, 233 / 255),  # sky blue
+  #]
+  colors = [TRAIN_COLOR, TEST_COLOR, TEST_COLOR2]
   color_idx = -1
   if isinstance(goals, BlockType):
     goals = [goals]
 
   path_lengths = []
   for goal in goals:
+    print("=" * 30)
+    print(f"Goal: {goal}")
+    print("=" * 30)
     color_idx += 1
     goal_positions = get_object_positions(state, goal)
     # Filter goal positions if paths_nearby is specified
@@ -514,6 +521,7 @@ def display_map(
 
     if goal_idx is not None:
       goal_positions = [goal_positions[goal_idx]]
+    print("Goal positions: ", goal_positions)
 
     paths = []
     start_pos = tuple(state.player_position)
@@ -635,9 +643,10 @@ def train_test_paths(
         radius=15,
         center_pos=extra_start_position_center,
       )
-      print(
-        f"Extra start positions: {[(int(pos[0]), int(pos[1])) for pos in extra_positions]}"
-      )
+      print("=" * 30)
+      print("Extra start positions")
+      print("=" * 30)
+      print(f"{[(int(pos[0]), int(pos[1])) for pos in extra_positions]}")
       for pos in extra_positions:
         place_start_marker(ax, pos, state, image, start_color="green")
 
@@ -657,9 +666,9 @@ def train_test_paths(
       maze_width=state.map.shape[2],
       ax=ax,
       display_image=False,
-      arrow_color="#D55E00",  # vermillion
+      arrow_color=TEST_COLOR2,  # vermillion
       show_path_length=True,
-      start_color="#D55E00",
+      start_color=TEST_COLOR2,
     )
 
   cache_dir = os.path.join(CACHE_DIR)

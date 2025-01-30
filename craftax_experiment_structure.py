@@ -1,4 +1,3 @@
-
 import asyncio
 from functools import partial
 from typing import Callable, List, Tuple, Optional
@@ -39,6 +38,9 @@ DEBUG = int(os.environ.get("DEBUG", 1))
 DEBUG_DISPLAY = int(os.environ.get("DEBUG_DISPLAY", 1))
 MANIPULATION = os.environ.get("MANIPULATION", "paths")
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 1))
+EVAL_SHOW_MAP = int(os.environ.get("EVAL_SHOW_MAP", 1))
+
+
 GIVE_INSTRUCTIONS = int(os.environ.get("GIVE_INSTRUCTIONS", 0))
 
 PRECOMPILE = int(os.environ.get("PRECOMPILE", 1))
@@ -57,6 +59,7 @@ class WorldConfig(struct.PyTreeNode):
   world_seed: int
   start_positions: List[Tuple[int, int]]
   goals: List[int]
+  goal_location: Tuple[int, int] = (-1, -1)
 
 
 if DUMMY_ENV:
@@ -195,6 +198,7 @@ block_type_2_goal = {
   BlockType.STONE.value: Achievement.COLLECT_STONE.value,
   BlockType.WATER.value: Achievement.COLLECT_DRINK.value,
 }
+
 
 def goals_from_blocktypes(blocks: List[BlockType], ngoals: int = 4) -> jnp.ndarray:
   """Creates a binary vector indicating which goals are active based on the provided Achievements."""
@@ -561,7 +565,10 @@ async def env_reset_display_fn(
 
 
 async def env_stage_display_fn(
-  stage: EnvStage, container: ui.element, timestep: nicewebrl.TimeStep
+  stage: EnvStage,
+  container: ui.element,
+  timestep: nicewebrl.TimeStep,
+  display_full_map: bool = True,
 ):
   # Get partial observation image
   partial_obs_image = stage.render_fn(timestep)
@@ -611,18 +618,27 @@ async def env_stage_display_fn(
     ui.html(text).style("align-items: center;")
     # ui.html(make_image_html(src=partial_obs_image, id="stateImage"))
     # Side by side images using direct HTML with optimized sizing
-    ui.html(f"""
-    <div id="stateImageContainer" style="display: flex; width: 100%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
-      <div style="flex: 3; max-width: 60%;">
-          <div style="text-align: center; margin-bottom: 5px;">Full Map</div>
-          <img src="{full_map_image}" id="fullMapImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
+    if display_full_map:
+      ui.html(f"""
+      <div id="stateImageContainer" style="display: flex; width: 100%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
+        <div style="flex: 3; max-width: 60%;">
+            <div style="text-align: center; margin-bottom: 5px;">Full Map</div>
+            <img src="{full_map_image}" id="fullMapImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
+        </div>
+        <div style="flex: 2; max-width: 35%;">
+            <div style="text-align: center; margin-bottom: 5px;">Current View</div>
+            <img src="{partial_obs_image}" id="stateImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
+        </div>
       </div>
-      <div style="flex: 2; max-width: 35%;">
-          <div style="text-align: center; margin-bottom: 5px;">Current View</div>
-          <img src="{partial_obs_image}" id="stateImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
-      </div>
-    </div>
-    """)
+      """)
+    else:
+      ui.html(f"""
+      <div id="stateImageContainer" style="display: flex; width: 100%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
+        <div style="flex: 2; max-width: 100%;">
+            <div style="text-align: center; margin-bottom: 5px;">Current View</div>
+            <img src="{partial_obs_image}" id="stateImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
+        </div>
+      """)
 
 
 def make_env_stage(
@@ -631,6 +647,7 @@ def make_env_stage(
   metadata: dict,
   min_success: Optional[int] = None,
 ):
+  eval_stage = metadata.get("eval", False)
   active_goals = goals_from_blocktypes(config.goals)
   start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
   start_position = start_position.at[: len(config.start_positions)].set(
@@ -640,8 +657,21 @@ def make_env_stage(
     active_goals=active_goals.astype(jnp.float32),
     world_seeds=(config.world_seed,),
     start_position=start_position,
+    placed_goal=config.test_objects[0],
   )
   min_success = min_success or MIN_SUCCESS_TASK
+
+  if eval_stage:
+    display_fn = partial(
+      env_stage_display_fn,
+      display_full_map=EVAL_SHOW_MAP,
+    )
+  else:
+    display_fn = partial(
+      env_stage_display_fn,
+      display_full_map=True,
+    )
+
   return EnvStage(
     name=name,
     web_env=jax_web_env,
@@ -651,7 +681,7 @@ def make_env_stage(
     render_fn=render_fn,
     vmap_render_fn=vmap_render_fn,
     reset_display_fn=env_reset_display_fn,
-    display_fn=env_stage_display_fn,
+    display_fn=display_fn,
     evaluate_success_fn=evaluate_success_fn,
     min_success=min_success * sum(active_goals),
     max_episodes=MAX_STAGE_EPISODES,
@@ -727,8 +757,7 @@ def make_block(
   train_stage_instructions = Stage(
     name="Phase 1 instructions",
     body=train_text,
-    display_fn=partial(
-      stage_instructions_display_fn, new_world=True),
+    display_fn=partial(stage_instructions_display_fn, new_world=True),
   )
 
   train_stage_env = make_env_stage(
@@ -828,6 +857,7 @@ def make_manipulation_block(
   desc: str,
   long: str,
   start_eval2_positions: Optional[List[Tuple[int, int]]] = None,
+  eval2_goal_location: Optional[Tuple[int, int]] = (-1, -1),
 ):
   """Creates a manipulation block for either paths or juncture experiments."""
   train_config = WorldConfig(
@@ -848,6 +878,7 @@ def make_manipulation_block(
       world_seed=world_seed,
       start_positions=start_eval2_positions,
       goals=test_objects,
+      goal_location=eval2_goal_location,
     )
 
   metadata = dict(
@@ -902,6 +933,7 @@ elif MANIPULATION == "juncture":
       desc="probe behavior at juncture",
       long="Here there is a juncture to the test object. We predict that people will be faster at a juncture than at another point on the map.",
       start_eval2_positions=config.start_eval2_positions,
+      eval2_goal_location=config.eval2_goal_location,
     )
     for config in JUNCTURE_CONFIGS
   ]
