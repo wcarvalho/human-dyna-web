@@ -1,4 +1,6 @@
+
 import asyncio
+from functools import partial
 from typing import Callable, List, Tuple, Optional
 from dotenv import load_dotenv
 from flax import struct
@@ -465,7 +467,22 @@ async def experiment_instructions_display_fn(stage, container):
       fig.tight_layout()
 
 
-async def stage_instructions_display_fn(stage, container):
+async def stage_instructions_display_fn(stage, container, new_world=False):
+  if new_world:
+    ########################################
+    # First tell participant that entering a new world
+    ########################################
+    with container.style("align-items: center;"):
+      nicewebrl.clear_element(container)
+      ui.markdown("# You are entering a new world.")
+      ui.markdown("Please wait 3 seconds before continuing.")
+      await asyncio.sleep(3)
+      button = ui.button("click to start")
+      await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
+
+  ########################################
+  # Then tell participant the task
+  ########################################
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
 
@@ -516,8 +533,8 @@ async def stage_instructions_display_fn(stage, container):
 
       fig.tight_layout()
 
-    if DEBUG == 0:
-      await asyncio.sleep(3)
+    ui.markdown("Please wait 3 seconds before continuing.")
+    await asyncio.sleep(3)
 
 
 async def env_reset_display_fn(
@@ -710,7 +727,8 @@ def make_block(
   train_stage_instructions = Stage(
     name="Phase 1 instructions",
     body=train_text,
-    display_fn=stage_instructions_display_fn,
+    display_fn=partial(
+      stage_instructions_display_fn, new_world=True),
   )
 
   train_stage_env = make_env_stage(
