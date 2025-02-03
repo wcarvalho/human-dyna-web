@@ -2,8 +2,9 @@ import asyncio
 from functools import partial
 from typing import Callable, List, Tuple, Optional
 from dotenv import load_dotenv
-from flax import struct
+from flax import struct, serialization
 import jax
+import jax.tree_util as jtu
 import distrax
 from jax.experimental import io_callback
 import jax.numpy as jnp
@@ -18,16 +19,24 @@ from nicewebrl import JaxWebEnv, base64_npimage, TimestepWrapper
 from nicewebrl import Stage, EnvStage
 from nicewebrl import get_logger
 from craftax.craftax.constants import BlockType
-from craftax.craftax.renderer import render_craftax_pixels, TEXTURES
+from craftax.craftax.renderer import render_craftax_pixels
 from craftax.craftax.constants import (
   Action,
-  BLOCK_PIXEL_SIZE_HUMAN,
+  #BLOCK_PIXEL_SIZE_HUMAN,
   BLOCK_PIXEL_SIZE_IMG,
   Achievement,
 )
+#import craftax_experiment_configs
 from craftax_experiment_configs import (
   PATHS_CONFIGS,
   JUNCTURE_CONFIGS,
+  BlockConfig,
+  make_block_env_params,
+  POSSIBLE_GOALS,
+  BLOCK_TO_GOAL,
+  GOAL_TO_BLOCK,
+  BLOCK_TO_IDX,
+  get_goal_image
 )
 
 load_dotenv()
@@ -36,8 +45,8 @@ logger = get_logger(__name__)
 VERBOSITY = int(os.environ.get("VERBOSITY", 2))
 DEBUG = int(os.environ.get("DEBUG", 1))
 DEBUG_DISPLAY = int(os.environ.get("DEBUG_DISPLAY", 1))
-MANIPULATION = os.environ.get("MANIPULATION", "paths")
-SAY_REUSE = int(os.environ.get("SAY_REUSE", 1))
+MANIPULATION = os.environ.get("MANIPULATION", "juncture")
+SAY_REUSE = int(os.environ.get("SAY_REUSE", 0))
 EVAL_SHOW_MAP = int(os.environ.get("EVAL_SHOW_MAP", 1))
 
 
@@ -50,12 +59,12 @@ MONSTERS = int(os.environ.get("MONSTERS", 1))
 NAME = os.environ.get("NAME", "exp")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
-MAX_STAGE_EPISODES = 100 if DEBUG == 0 else 2
+MAX_STAGE_EPISODES = 100 if DEBUG == 0 else 8
 MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 2
 MAX_START_POSITIONS = 10
 
 
-class WorldConfig(struct.PyTreeNode):
+class BlockStageConfig(struct.PyTreeNode):
   world_seed: int
   start_positions: List[Tuple[int, int]]
   goals: List[int]
@@ -63,7 +72,8 @@ class WorldConfig(struct.PyTreeNode):
 
 
 if DUMMY_ENV:
-  from craftax_dummy_env import CraftaxSymbolicWebEnvNoAutoReset
+  #from craftax_dummy_env import CraftaxSymbolicWebEnvNoAutoReset
+  from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoResetDummy as CraftaxSymbolicWebEnvNoAutoReset
 else:
   from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
 
@@ -165,7 +175,7 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
     goal_sampler = distrax.Categorical(probs=goal_probs)
     key, key_ = jax.random.split(key)
     goal_idx = goal_sampler.sample(seed=key_)
-    goal = jax.lax.dynamic_index_in_dim(params.possible_goals, goal_idx, keepdims=False)
+    goal = jax.lax.dynamic_index_in_dim(self.possible_goals, goal_idx, keepdims=False)
     params = params.replace(current_goal=goal.astype(jnp.int32))
     timestep = super().reset(key, params)
     return timestep
@@ -182,49 +192,29 @@ action_to_name = [a.name for a in actions]
 ########################################
 # Define goals
 ########################################
-possible_goals = jnp.array(
-  (
-    Achievement.COLLECT_DIAMOND.value,
-    Achievement.MAKE_WOOD_SWORD.value,
-    Achievement.COLLECT_STONE.value,
-    Achievement.COLLECT_DRINK.value,
-    # Achievement.COLLECT_STONE.value,
-  )
-)
+possible_goals = jnp.array(POSSIBLE_GOALS)
 
-block_type_2_goal = {
-  BlockType.DIAMOND.value: Achievement.COLLECT_DIAMOND.value,
-  BlockType.CRAFTING_TABLE.value: Achievement.MAKE_WOOD_SWORD.value,
-  BlockType.STONE.value: Achievement.COLLECT_STONE.value,
-  BlockType.WATER.value: Achievement.COLLECT_DRINK.value,
-}
-
-
-def goals_from_blocktypes(blocks: List[BlockType], ngoals: int = 4) -> jnp.ndarray:
+def blocks_to_active_goals(blocks: List[BlockType]) -> jnp.ndarray:
   """Creates a binary vector indicating which goals are active based on the provided Achievements."""
+  ngoals = len(POSSIBLE_GOALS)
   goals = jnp.zeros(ngoals, dtype=jnp.float32)
   for block in blocks:
-    if block in (BlockType.DIAMOND, BlockType.DIAMOND.value):
-      # Collect diamond
-      goals = goals.at[0].set(1)
-    elif block in (BlockType.CRAFTING_TABLE, BlockType.CRAFTING_TABLE.value):
-      # Make wood sword
-      goals = goals.at[1].set(1)
-    elif block in (BlockType.STONE, BlockType.STONE.value):
-      # Collect stone
-      goals = goals.at[2].set(1)
-    elif block in (BlockType.WATER, BlockType.WATER.value):
-      # Collect drink
-      goals = goals.at[3].set(1)
-    else:
-      raise RuntimeError(f"Don't know how to handle blocktype {BlockType(block).name}")
+    if hasattr(block, 'value'):
+      block = block.value
+    idx = BLOCK_TO_IDX[block]
+    goals = goals.at[idx].set(1)
   return goals
 
 
 # random default
 all_goals_active = jnp.ones(len(possible_goals), dtype=jnp.float32)
 
-
+if MANIPULATION == "paths":
+  dummy_block_config = PATHS_CONFIGS[0]
+elif MANIPULATION == "juncture":
+  dummy_block_config = JUNCTURE_CONFIGS[0]
+else:
+  raise ValueError(f"Invalid manipulation: {MANIPULATION}")
 ########################################
 # Define Craftax environment
 ########################################
@@ -242,17 +232,28 @@ jax_env = CraftaxSymbolicWebEnvNoAutoReset(
   static_env_params=static_env_params,
 )
 
-dummy_start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
-dummy_start_position = dummy_start_position.at[:1].set(jnp.array((24, 24)))
+def make_start_position(start_positions):
+  start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
+  return start_position.at[: len(start_positions)].set(
+    jnp.asarray(start_positions)
+  )
+dummy_start_position = make_start_position((24, 24))
+
+
 
 default_params = jax_env.default_params.replace(
   day_length=100000,
   max_timesteps=500 if DEBUG == 0 else 2,
   mob_despawn_distance=100000,
-  possible_goals=possible_goals,
+  #possible_goals=possible_goals,
   active_goals=all_goals_active,
   world_seeds=(0,),
-  start_position=dummy_start_position,
+  start_positions=dummy_start_position,
+)
+dummy_params = make_block_env_params(
+  dummy_block_config, default_params).replace(
+    # to have compilation use valid current_goal value
+    current_goal=dummy_block_config.train_objects[0],
 )
 
 jax_env = GoalSettingSuccessTrackingEnvWrapper(
@@ -284,11 +285,11 @@ else:
 vmap_render_fn = None
 # pre-compile jax functions before experiment starts.
 if PRECOMPILE:
-  jax_web_env.precompile(dummy_env_params=default_params)
-  vmap_render_fn = jax_web_env.precompile_vmap_render_fn(render_fn, default_params)
+  jax_web_env.precompile(dummy_env_params=dummy_params)
+  vmap_render_fn = jax_web_env.precompile_vmap_render_fn(render_fn, dummy_params)
   render_fn = (
     jax.jit(render_fn)
-    .lower(jax_web_env.reset(jax.random.PRNGKey(0), default_params))
+    .lower(jax_web_env.reset(jax.random.PRNGKey(0), dummy_params))
     .compile()
   )
 
@@ -374,33 +375,6 @@ def make_image_html(src, id="stateImage", percent=50):
   return html
 
 
-def get_goal_image(
-  achievement_idx: int, block_pixel_size: int = BLOCK_PIXEL_SIZE_HUMAN
-):
-  """Get the image for a goal Achievement."""
-  textures = TEXTURES[block_pixel_size]
-
-  # Map Achievement to corresponding BlockType/ItemType
-  achievement = Achievement(achievement_idx)
-
-  if achievement == Achievement.COLLECT_DIAMOND:
-    texture = textures["full_map_block_textures"][BlockType.DIAMOND.value]
-    # Extract just one cell (block_pixel_size x block_pixel_size)
-    return texture[:block_pixel_size, :block_pixel_size]
-  elif achievement == Achievement.COLLECT_IRON:
-    texture = textures["full_map_block_textures"][BlockType.IRON.value]
-    return texture[:block_pixel_size, :block_pixel_size]
-  elif achievement == Achievement.MAKE_WOOD_SWORD:
-    # sword_idx = constants.ItemType.WOOD_SWORD.value
-    return textures["sword_textures"][Achievement.MAKE_WOOD_SWORD.value]
-  elif achievement == Achievement.COLLECT_DRINK:
-    texture = textures["full_map_block_textures"][BlockType.WATER.value]
-    return texture[:block_pixel_size, :block_pixel_size]
-  elif achievement == Achievement.COLLECT_STONE:
-    texture = textures["full_map_block_textures"][BlockType.STONE.value]
-    return texture[:block_pixel_size, :block_pixel_size]
-  else:
-    raise ValueError(f"Unknown achievement: {achievement}")
 
 
 def debug_info(stage):
@@ -420,7 +394,7 @@ def debug_info(stage):
     # ------------
     # position information
     # ------------
-    start_positions = stage.env_params.start_position
+    start_positions = stage.env_params.start_positions
     debug_info += f"**start_positions**: {start_positions}. "
     debug_info += f"**position**: {stage_state.timestep.state.player_position}. "
     ui.markdown(debug_info)
@@ -445,9 +419,9 @@ async def experiment_instructions_display_fn(stage, container):
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
 
-    ui.markdown(f"## {stage.name}")
+    ui.markdown(f"## {stage.title}")
     ui.markdown(f"{remove_extra_spaces(stage.body)}", extras=["cuddled-lists"])
-    ui.markdown("Task objects will be selected from the set below:")
+    ui.markdown("Below are the stones you will need to mine.")
 
     # Get all possible goals and create images for each
     goals = [int(g) for g in possible_goals]
@@ -461,7 +435,8 @@ async def experiment_instructions_display_fn(stage, container):
         image = get_goal_image(goal_idx)
         # Plot in matplotlib
         axs[i].imshow(image)
-        category = Achievement(goal_idx).name.replace("_", "\n").title()
+        block_idx = GOAL_TO_BLOCK[goal_idx]
+        category = BlockType(block_idx).name.title()
         axs[i].set_title(f"{category}")
         axs[i].set_xticks([])
         axs[i].set_yticks([])
@@ -478,7 +453,7 @@ async def stage_instructions_display_fn(stage, container, new_world=False):
     ########################################
     with container.style("align-items: center;"):
       nicewebrl.clear_element(container)
-      ui.markdown("# You are entering a new world.")
+      ui.markdown("# You are entering a new mining world.")
       ui.markdown("Please wait 3 seconds before continuing.")
       await asyncio.sleep(3)
       button = ui.button("click to start")
@@ -490,14 +465,14 @@ async def stage_instructions_display_fn(stage, container, new_world=False):
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
 
-    ui.markdown(f"## {stage.name}")
+    ui.markdown(f"## {stage.title}")
     if DEBUG:
       debug_info(stage)
     ui.markdown(f"{remove_extra_spaces(stage.body)}", extras=["cuddled-lists"])
 
-    ui.markdown("Task objects will be selected from the set below.")
+    ui.markdown("Below are the stones you will need to mine.")
     if SAY_REUSE:
-      ui.markdown("**We note objects relevant to phase 2**")
+      ui.markdown("**We note the stone relevant to phase 2**")
 
     # Get all possible goals
     goals = [int(g) for g in possible_goals]
@@ -507,7 +482,7 @@ async def stage_instructions_display_fn(stage, container, new_world=False):
     order = jax.random.permutation(key, jnp.arange(len(goals)))
 
     test_objects = stage.metadata["block_metadata"]["test_objects"]
-    test_objects = [block_type_2_goal[t] for t in test_objects]
+    test_objects = [BLOCK_TO_GOAL[t] for t in test_objects]
 
     width = 1.5
     figsize = (len(goals) * width, width)
@@ -516,7 +491,8 @@ async def stage_instructions_display_fn(stage, container, new_world=False):
       for i, idx in enumerate(order):
         goal_idx = goals[idx]
         image = get_goal_image(goal_idx)
-        category = Achievement(goal_idx).name.replace("_", "\n").title()
+        block_idx = GOAL_TO_BLOCK[goal_idx]
+        category = BlockType(block_idx).name.title()
 
         axs[i].imshow(image)
         if SAY_REUSE:
@@ -545,9 +521,8 @@ async def env_reset_display_fn(
   stage: EnvStage,
   container: ui.element,
   timestep: nicewebrl.TimeStep,
-  pause: int = 0,
-):
-  goal_object_idx = timestep.state.current_goal
+  ):
+  goal_object_idx = int(timestep.state.current_goal)
   image = get_goal_image(goal_object_idx)
   image = resize(image, (64, 64, 3), anti_aliasing=True, preserve_range=True).astype(
     np.uint8
@@ -563,6 +538,81 @@ async def env_reset_display_fn(
     button = ui.button("click to start")
     await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
 
+def distance(x1, x2):
+    # Euclidean distance
+    return jnp.sqrt(jnp.sum((x1 - x2) ** 2, axis=0))
+
+async def env_reset_juncture_display_fn(
+  stage: EnvStage,
+  container: ui.element,
+  timestep: nicewebrl.TimeStep,
+):
+  juncture_stage = 'juncture' in stage.name
+  eval1 = stage.metadata['condition'] == 1
+  if juncture_stage and eval1:
+    ############################
+    # Set initial timestep
+    ############################
+    ui.markdown("# Loading task. One moment please")
+    current_name = stage.name  # e.g. "juncture_0_eval1"
+    training_name = current_name.replace("_eval1", "_training")
+    # first get stages that match name (index should be covered)
+    training_stage_states = await nicewebrl.StageStateModel.filter(
+        session_id=app.storage.browser["id"],
+        name=training_name,
+      ).all()
+
+    # deserialize training stage states 
+    current_stage_state = stage.get_user_data("stage_state")
+    training_stage_states = [serialization.from_bytes(current_stage_state, s.data) for s in training_stage_states]
+    timesteps = [s.timestep for s in training_stage_states]
+
+    # combine all timesteps from all stages
+    all_timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+
+    # get timesteps where agent started in position we care about
+    goal_start_position = stage.env_params.start_positions[0]  # [2]
+    timestep_start_position = all_timesteps.state.start_position  # [N, 2]
+    match = (timestep_start_position == goal_start_position[None]).sum(axis=-1) == 2
+    relevant_timesteps = jax.tree_map(lambda t: t[match], all_timesteps)
+
+    # for each timestep, compute distance to goal
+    goal_location = jnp.asarray(current_stage_state.timestep.state.goal_location)
+    distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
+        goal_location, relevant_timesteps.state.player_position
+    )
+    # pick closest timestep as starting point
+    sorted_indices = jnp.argsort(distances)
+    closest_idx = sorted_indices[0]
+    relevant_timestep = jax.tree_map(lambda t: t[closest_idx], relevant_timesteps)
+    relevant_timestep_agent_pos = relevant_timestep.state.player_position
+
+    # set the initial params for the stage to have this as a start position
+    # reset env with this position and update stage accordingly
+    stage.env_params = stage.env_params.replace(
+      start_positions = make_start_position(relevant_timestep_agent_pos))
+    rng = nicewebrl.new_rng()
+    new_timestep = stage.web_env.reset(rng, stage.env_params) 
+    await stage.set_user_data(stage_state=stage.state_cls(timestep=new_timestep))
+
+  ############################
+  # Display goal object image
+  ############################
+  goal_object_idx = int(timestep.state.current_goal)
+  image = get_goal_image(goal_object_idx)
+  image = resize(image, (64, 64, 3), anti_aliasing=True, preserve_range=True).astype(
+    np.uint8
+  )
+  image = base64_npimage(image)
+
+  category = Achievement(goal_object_idx).name.replace("_", " ").title()
+
+  with container.style("align-items: center;"):
+    nicewebrl.clear_element(container)
+    ui.markdown(f"#### Goal task: {category}")
+    ui.html(make_image_html(src=image))
+    button = ui.button("click to start")
+    await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
 
 async def env_stage_display_fn(
   stage: EnvStage,
@@ -580,7 +630,7 @@ async def env_stage_display_fn(
   full_map_image = base64_npimage(full_map_image)
 
   # Get goal object image
-  goal_object_idx = timestep.state.current_goal
+  goal_object_idx = int(timestep.state.current_goal)
   goal_image = get_goal_image(goal_object_idx)
   current_goal_name = Achievement(int(goal_object_idx)).name
   current_goal_name = current_goal_name.replace("_", " ").title()
@@ -643,21 +693,19 @@ async def env_stage_display_fn(
 
 def make_env_stage(
   name: str,
-  config: WorldConfig,
+  title: str,
+  block_config: BlockConfig,
+  stage_config: BlockStageConfig,
   metadata: dict,
   min_success: Optional[int] = None,
 ):
   eval_stage = metadata.get("eval", False)
-  active_goals = goals_from_blocktypes(config.goals)
-  start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
-  start_position = start_position.at[: len(config.start_positions)].set(
-    jnp.array(config.start_positions)
-  )
-  env_params = default_params.replace(
+  active_goals = blocks_to_active_goals(stage_config.goals)
+  env_params = make_block_env_params(block_config, default_params)
+
+  env_params = env_params.replace(
     active_goals=active_goals.astype(jnp.float32),
-    world_seeds=(config.world_seed,),
-    start_position=start_position,
-    placed_goal=config.test_objects[0],
+    start_positions=make_start_position(stage_config.start_positions),
   )
   min_success = min_success or MIN_SUCCESS_TASK
 
@@ -672,15 +720,22 @@ def make_env_stage(
       display_full_map=True,
     )
 
+  juncture_display = 'juncture' in name
+  if juncture_display and eval_stage:
+    reset_display_fn = env_reset_juncture_display_fn
+  else:
+    reset_display_fn = env_reset_display_fn
+
   return EnvStage(
     name=name,
+    title=title,
     web_env=jax_web_env,
     action_keys=action_keys,
     action_to_name=action_to_name,
     env_params=env_params,
     render_fn=render_fn,
     vmap_render_fn=vmap_render_fn,
-    reset_display_fn=env_reset_display_fn,
+    reset_display_fn=reset_display_fn,
     display_fn=display_fn,
     evaluate_success_fn=evaluate_success_fn,
     min_success=min_success * sum(active_goals),
@@ -699,52 +754,53 @@ def make_env_stage(
 #########################################################################
 
 
+#if SAY_REUSE:
+#  instruct_text = """
+#    This experiment tests how effectively people can learn about goals before direct experience on them.
+
+#    It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects that you could have learned about previously.
+#  """
+
+#else:
+#  instruct_text = """
+#    This experiment tests how people learn to navigate maps.
+
+#    It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects.
+#  """
+
+instruct_text = """
+  In this experiment, you will play a game where you are a traveling miner in a crafting world. In different episodes, you will need to obtain different stones. 
+
+  There will be different worlds you can mine in. In each world, there will be two phases where you try to retrive different objects.
+"""
+
 def train_phase_text():
   phase_1_text = f"""
-    Please learn to obtain these objects. You need to succeed {MIN_SUCCESS_TASK} times per object.
+    Please learn obtain the specified stone. You need to succeed {MIN_SUCCESS_TASK} times per specified stone.
 
-    If you retrieve the wrong object, the episode ends early.
+    If you retrieve the wrong stone, the episode ends early.
     """
   return phase_1_text
 
-
-if SAY_REUSE:
-  instruct_text = """
-          This experiment tests how effectively people can learn about goals before direct experience on them.
-
-          It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects that you could have learned about previously.
-  """
-
-  def eval_phase_text(time=30):
-    threshold = int(time * 2 / 3)
-    phase_2_text = f"""
-      You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds. 
-      """
-    return phase_2_text
-
-else:
-  instruct_text = """
-    This experiment tests how people learn to navigate maps.
-
-    It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects.
-  """
-
-  def eval_phase_text(time=30):
-    threshold = int(time * 2 / 3)
-    phase_2_text = f"""
-      You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds.
-      """
-    return phase_2_text
+def eval_phase_text(time=30):
+  threshold = int(time * 2 / 3)
+  phase_2_text = f"""
+    You will get a <span style="color: green; font-weight: bold;">bonus</span> if you complete the task in less than <span style="color: green; font-weight: bold;">{int(threshold)}</span> seconds.
+    """
+  return phase_2_text
 
 
 def make_block(
+  block_config: BlockConfig,
   map: jax.Array,
   train_text: str,
   eval_text: str,
-  train_config: WorldConfig,
-  eval_config: WorldConfig,
+  train_config: BlockStageConfig,
+  eval_config: BlockStageConfig,
   metadata: dict,
-  eval2_config: Optional[WorldConfig] = None,
+  eval2_config: Optional[BlockStageConfig] = None,
+  name: Optional[str] = None,
+  min_success: Optional[int] = None,
 ):
   """
   A block is defined by
@@ -754,15 +810,20 @@ def make_block(
   4. evaluation stage environment
   5. (optional) second evaluation stage environment
   """
+
   train_stage_instructions = Stage(
-    name="Phase 1 instructions",
+    name=f"{name}_train_instructions",
+    title="Phase 1 instructions",
     body=train_text,
     display_fn=partial(stage_instructions_display_fn, new_world=True),
   )
 
   train_stage_env = make_env_stage(
-    name="Phase 1 training",
-    config=train_config,
+    name=f"{name}_training",
+    title="Phase 1",
+    block_config=block_config,
+    stage_config=train_config,
+    min_success=min_success,
     metadata=dict(
       world_seed=train_config.world_seed,
       condition=0,
@@ -771,14 +832,18 @@ def make_block(
   )
 
   eval_stage_instructions = Stage(
-    name="Phase 2 instructions",
+    name=f"{name}_eval_instructions",
+    title="Phase 2 instructions",
     body=eval_text,
     display_fn=stage_instructions_display_fn,
   )
-
+  
   eval_stage_env = make_env_stage(
-    name="Phase 2 eval",
-    config=eval_config,
+    name=f"{name}_eval1",
+    title="Phase 2",
+    block_config=block_config,
+    stage_config=eval_config,
+    min_success=min_success,
     metadata=dict(
       world_seed=eval_config.world_seed,
       condition=1,
@@ -797,9 +862,16 @@ def make_block(
     # If have 2 evals, randomize them
     randomize = [False, False, False, True, True]
     eval2_stage = make_env_stage(
-      name="Phase 2 eval 2",
-      config=eval2_config,
-      metadata=dict(world_seed=eval2_config.world_seed, condition=2, eval=True),
+      name=f"{name}_eval2",
+      title="Phase 2",
+      block_config=block_config,
+      stage_config=eval2_config,
+      min_success=min_success,
+      metadata=dict(
+        world_seed=eval2_config.world_seed,
+        condition=2,
+        eval=True,
+      ),
     )
     stages.append(eval2_stage)
 
@@ -816,7 +888,7 @@ def make_block(
 ####################
 def make_practice_block():
   world_seed = 1
-  train_config = WorldConfig(
+  train_config = BlockStageConfig(
     world_seed=world_seed,
     start_positions=[(24, 24)],
     goals=[
@@ -825,7 +897,7 @@ def make_practice_block():
       # BlockType.STONE.value
     ],
   )
-  eval_config = WorldConfig(
+  eval_config = BlockStageConfig(
     world_seed=world_seed,
     start_positions=[(24, 24)],
     goals=[BlockType.STONE.value],
@@ -836,6 +908,7 @@ def make_practice_block():
     eval_config=eval_config,
     train_text=train_phase_text(),
     eval_text=eval_phase_text(10),
+    min_success=1,
     metadata=dict(
       manipulation="practice",
       world_seed=world_seed,
@@ -846,97 +919,101 @@ def make_practice_block():
 
 
 def make_manipulation_block(
-  world_seed: int,
-  train_text: str,
-  eval_text: str,
-  start_train_positions: List[Tuple[int, int]],
-  start_eval_positions: List[Tuple[int, int]],
-  train_objects: List[int],
-  test_objects: List[int],
-  manipulation: str,
-  desc: str,
-  long: str,
-  start_eval2_positions: Optional[List[Tuple[int, int]]] = None,
-  eval2_goal_location: Optional[Tuple[int, int]] = (-1, -1),
+    config,
+    manipulation: str,
+    name: str,
+    desc: str,
+    long: str,
+    train_text: str,
+    eval_text: str,
 ):
-  """Creates a manipulation block for either paths or juncture experiments."""
-  train_config = WorldConfig(
-    world_seed=world_seed,
-    start_positions=start_train_positions + start_eval_positions,
-    goals=train_objects,
-  )
+    """Creates a manipulation block for either paths or juncture experiments.
 
-  eval_config = WorldConfig(
-    world_seed=world_seed,
-    start_positions=start_eval_positions,
-    goals=test_objects,
-  )
+    Args:
+        config: Block configuration object containing world_seed, positions, objects etc.
+        manipulation: String indicating experiment type
+        name: Name of the block
+        desc: Short description of the block
+        long: Long description of the block
+        train_text: Text to display during training phase
+        eval_text: Text to display during evaluation phase
+    """
 
-  eval2_config = None
-  if start_eval2_positions is not None:
-    eval2_config = WorldConfig(
-      world_seed=world_seed,
-      start_positions=start_eval2_positions,
-      goals=test_objects,
-      goal_location=eval2_goal_location,
+    if DEBUG:
+      start_positions = config.start_eval_positions
+    else:
+      start_positions = config.start_train_positions + config.start_eval_positions
+
+    train_config = BlockStageConfig(
+        world_seed=config.world_seed,
+        start_positions=start_positions,
+        goals=config.train_objects,
     )
 
-  metadata = dict(
-    manipulation=manipulation,
-    world_seed=world_seed,
-    train_objects=train_objects,
-    test_objects=test_objects,
-    desc=desc,
-    long=long,
-  )
+    eval_config = BlockStageConfig(
+        world_seed=config.world_seed,
+        start_positions=config.start_eval_positions,
+        goals=config.test_objects,
+    )
 
-  return make_block(
-    map=FULLMAP_IMAGES[world_seed],
-    train_config=train_config,
-    eval_config=eval_config,
-    eval2_config=eval2_config,
-    train_text=train_text,
-    eval_text=eval_text,
-    metadata=metadata,
-  )
+    eval2_config = None
+    if config.start_eval2_positions:
+        eval2_config = BlockStageConfig(
+            world_seed=config.world_seed,
+            start_positions=config.start_eval2_positions,
+            goals=config.test_objects,
+        )
+
+    metadata = dict(
+        manipulation=manipulation,
+        world_seed=config.world_seed,
+        train_objects=config.train_objects,
+        test_objects=config.test_objects,
+        desc=desc,
+        long=long,
+        name=name,
+    )
+
+    return make_block(
+        block_config=config,
+        map=FULLMAP_IMAGES[config.world_seed],
+        train_config=train_config,
+        eval_config=eval_config,
+        eval2_config=eval2_config,
+        train_text=train_text,
+        eval_text=eval_text,
+        metadata=metadata,
+        name=name,
+    )
 
 
 # Create experiment blocks with descriptions inline
 if MANIPULATION == "paths":
-  experiment_blocks = [
-    make_manipulation_block(
-      world_seed=config.world_seed,
-      start_train_positions=config.start_train_positions,
-      start_eval_positions=config.start_eval_positions,
-      train_objects=config.train_objects,
-      test_objects=config.test_objects,
-      train_text=train_phase_text(),
-      eval_text=eval_phase_text(),
-      manipulation=MANIPULATION,
-      desc="reusing longer of two paths which matches training path",
-      long="Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.",
-    )
-    for config in PATHS_CONFIGS
-  ]
+    experiment_blocks = [
+        make_manipulation_block(
+            config=config,
+            manipulation="paths",
+            name=f"paths_{idx}",
+            desc="reusing longer of two paths which matches training path",
+            long="Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.",
+            train_text=train_phase_text(),
+            eval_text=eval_phase_text(),
+        )
+        for idx, config in enumerate(PATHS_CONFIGS)
+    ]
 elif MANIPULATION == "juncture":
-  experiment_blocks = [
-    make_manipulation_block(
-      world_seed=config.world_seed,
-      start_train_positions=config.start_train_positions,
-      start_eval_positions=config.start_eval_positions,
-      start_eval2_position=config.start_eval2_positions,
-      train_objects=config.train_objects,
-      test_objects=config.test_objects,
-      train_text=train_phase_text(),
-      eval_text=eval_phase_text(10),
-      manipulation=MANIPULATION,
-      desc="probe behavior at juncture",
-      long="Here there is a juncture to the test object. We predict that people will be faster at a juncture than at another point on the map.",
-      start_eval2_positions=config.start_eval2_positions,
-      eval2_goal_location=config.eval2_goal_location,
-    )
-    for config in JUNCTURE_CONFIGS
-  ]
+    experiment_blocks = [
+        make_manipulation_block(
+            config=config,
+            manipulation="juncture", 
+            name=f"juncture_{idx}",
+            desc="probe behavior at juncture",
+            long="Here there is a juncture to the test object. We predict that people will be faster at a juncture than at another point on the map.",
+            train_text=train_phase_text(),
+            eval_text=eval_phase_text(10),
+        )
+        for idx, config in enumerate(JUNCTURE_CONFIGS)
+    ]
 
 instruct_block = nicewebrl.Block(
   [

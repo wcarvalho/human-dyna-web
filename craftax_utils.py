@@ -590,6 +590,46 @@ def place_start_marker(ax, position, state, image, start_color="w"):
   )
 
 
+def draw_object_path(
+    state,
+    object_type,
+    start_position,
+    color,
+    ax,
+    image,
+    world_seed,
+    goal_idx: Optional[int] = None,
+    nearby_goal: bool = False,
+):
+    """Draw path to a specific object type from start position."""
+    # Get goal position for the object
+    goal_positions = get_object_positions(state, object_type)
+    goal_position = goal_positions[goal_idx if goal_idx is not None else 0]
+    
+    # Get cached path or compute new one
+    path = get_cached_path(world_seed, start_position, goal_position)
+    if path is None:
+        state = state.replace(player_position=start_position)
+        path, _ = astar(state, goal_position)
+        save_path_to_cache(path, world_seed, start_position, goal_position)
+    
+    # Draw the path
+    actions = actions_from_path(path)
+    place_arrows_on_image(
+        image=image,
+        positions=path,
+        actions=actions,
+        maze_height=state.map.shape[1],
+        maze_width=state.map.shape[2],
+        ax=ax,
+        display_image=False,
+        arrow_color=color,
+        show_path_length=True,
+        start_color=color,
+    )
+    return path
+
+
 def train_test_paths(
   jax_env,
   params,
@@ -597,79 +637,91 @@ def train_test_paths(
   start_position,
   train_object,
   test_object,
+  train_object_location,
+  test_object_location,
   prefix: str = "",
+  train_distractor_object = None,
+  train_distractor_object_location = None,
   static_params=None,
-  num_extra_start_positions: int = 7,
-  extra_start_positions_rng=None,
+  num_extra_start_positions: int = 0,
+  extra_positions = None,
+  extra_start_positions_rng = None,
   second_start_position: Optional[Tuple[int, int]] = None,
   extra_start_position_center: Optional[Tuple[int, int]] = None,
   nearby_goal: bool = True,
   goal_idx: Optional[int] = None,
 ):
-  key = jax.random.PRNGKey(0)
+  #########################################
+  # Create params
+  #########################################
   start_position = start_position or (24, 24)
+
+  goal_objects = (train_object, test_object)
+  goal_locations = (train_object_location, test_object_location)
+
+  if train_distractor_object_location is not None:
+    goal_objects = goal_objects + (train_distractor_object,)
+    goal_locations = goal_locations + (train_distractor_object_location,)
+
   params = params.replace(
-    world_seeds=(world_seed,), always_diamond=True, start_position=start_position
+    world_seeds=(world_seed,),
+    always_diamond=False,
+    start_positions=start_position,
+    goal_locations=goal_locations,
+    placed_goals=tuple(g.value for g in goal_objects),
   )
+
+  #########################################
+  # Reset env + display
+  #########################################
+  key = jax.random.PRNGKey(0)
   obs, state = jax_env.reset(key, params)
 
-  train_position = get_object_positions(state, train_object)[0]
+  fig, ax = plt.subplots(1, figsize=(8, 8))
   with jax.disable_jit():
-    image, fig, ax = display_map(
-      state=state,
-      goals=[train_object, test_object],
-      params=params,
-      paths_nearby=train_position if nearby_goal else None,
+    image = render_fn(state,
       show_agent=False,
-      display_paths=True,
-      goal_idx=goal_idx,
+      block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG)
+    ax.imshow(image)
+    ax.axis("off")  # This removes the axes and grid
+
+  # Draw paths for each object
+  if train_distractor_object is not None:
+    draw_object_path(state, train_distractor_object, start_position, TRAIN_COLOR, ax, image, world_seed)
+  draw_object_path(state, test_object, start_position, TEST_COLOR, ax, image, world_seed, goal_idx=goal_idx)
+  draw_object_path(state, train_object, start_position, TRAIN_COLOR, ax, image, world_seed, nearby_goal=nearby_goal)
+
+
+  # Place start marker for the first position
+  place_start_marker(ax, start_position, state, image)
+
+  if extra_positions is not None:
+    for pos in extra_positions:
+      place_start_marker(ax, pos, state, image, start_color="green")
+
+  # Sample and place extra start positions if requested
+  if num_extra_start_positions > 0:
+    if extra_start_positions_rng is None:
+      extra_start_positions_rng = jax.random.PRNGKey(0)
+    if extra_start_position_center is None:
+      extra_start_position_center = start_position
+    extra_positions, _ = find_n_empty_positions(
+      extra_start_positions_rng,
+      state,
+      num_extra_start_positions,
+      static_params or jax_env.default_static_params(),
+      radius=15,
+      center_pos=extra_start_position_center,
     )
-
-    # Place start marker for the first position
-    place_start_marker(ax, start_position, state, image)
-    # print(start_position)
-
-    # Sample and place extra start positions if requested
-    if num_extra_start_positions > 0:
-      if extra_start_positions_rng is None:
-        extra_start_positions_rng = jax.random.PRNGKey(0)
-      if extra_start_position_center is None:
-        extra_start_position_center = start_position
-      extra_positions, _ = find_n_empty_positions(
-        extra_start_positions_rng,
-        state,
-        num_extra_start_positions,
-        static_params or jax_env.default_static_params(),
-        radius=15,
-        center_pos=extra_start_position_center,
-      )
-      print("=" * 30)
-      print("Extra start positions")
-      print("=" * 30)
-      print(f"{[(int(pos[0]), int(pos[1])) for pos in extra_positions]}")
-      for pos in extra_positions:
-        place_start_marker(ax, pos, state, image, start_color="green")
+    print("=" * 30)
+    print("Extra start positions")
+    print("=" * 30)
+    print(f"{[(int(pos[0]), int(pos[1])) for pos in extra_positions]}")
+    for pos in extra_positions:
+      place_start_marker(ax, pos, state, image, start_color="green")
 
   if second_start_position is not None:
-    goal_position = get_object_positions(state, test_object)[goal_idx]
-    path = get_cached_path(world_seed, second_start_position, goal_position)
-    if path is None:
-      state = state.replace(player_position=second_start_position)
-      path, _ = astar(state, goal_position)
-      save_path_to_cache(path, world_seed, second_start_position, goal_position)
-    actions = actions_from_path(path)
-    place_arrows_on_image(
-      image=image,
-      positions=path,
-      actions=actions,
-      maze_height=state.map.shape[1],
-      maze_width=state.map.shape[2],
-      ax=ax,
-      display_image=False,
-      arrow_color=TEST_COLOR2,  # vermillion
-      show_path_length=True,
-      start_color=TEST_COLOR2,
-    )
+    draw_object_path(state, test_object, second_start_position, TEST_COLOR2, ax, image, world_seed, goal_idx=goal_idx)
 
   cache_dir = os.path.join(CACHE_DIR)
   if prefix:
