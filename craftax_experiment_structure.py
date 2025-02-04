@@ -22,11 +22,12 @@ from craftax.craftax.constants import BlockType
 from craftax.craftax.renderer import render_craftax_pixels
 from craftax.craftax.constants import (
   Action,
-  #BLOCK_PIXEL_SIZE_HUMAN,
+  # BLOCK_PIXEL_SIZE_HUMAN,
   BLOCK_PIXEL_SIZE_IMG,
   Achievement,
 )
-#import craftax_experiment_configs
+
+# import craftax_experiment_configs
 from craftax_experiment_configs import (
   PATHS_CONFIGS,
   JUNCTURE_CONFIGS,
@@ -36,7 +37,7 @@ from craftax_experiment_configs import (
   BLOCK_TO_GOAL,
   GOAL_TO_BLOCK,
   BLOCK_TO_IDX,
-  get_goal_image
+  get_goal_image,
 )
 
 load_dotenv()
@@ -72,10 +73,13 @@ class BlockStageConfig(struct.PyTreeNode):
 
 
 if DUMMY_ENV:
-  #from craftax_dummy_env import CraftaxSymbolicWebEnvNoAutoReset
-  from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoResetDummy as CraftaxSymbolicWebEnvNoAutoReset
+  # from craftax_dummy_env import CraftaxSymbolicWebEnvNoAutoReset
+  from simulations.craftax_web_env import (
+    CraftaxSymbolicWebEnvNoAutoResetDummy as CraftaxSymbolicWebEnvNoAutoReset,
+  )
 else:
   from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
+  from craftax_fullmap_renderer import render_craftax_pixels as render_fullmap_pixels
 
 
 def get_user_save_file_fn():
@@ -194,12 +198,13 @@ action_to_name = [a.name for a in actions]
 ########################################
 possible_goals = jnp.array(POSSIBLE_GOALS)
 
+
 def blocks_to_active_goals(blocks: List[BlockType]) -> jnp.ndarray:
   """Creates a binary vector indicating which goals are active based on the provided Achievements."""
   ngoals = len(POSSIBLE_GOALS)
   goals = jnp.zeros(ngoals, dtype=jnp.float32)
   for block in blocks:
-    if hasattr(block, 'value'):
+    if hasattr(block, "value"):
       block = block.value
     idx = BLOCK_TO_IDX[block]
     goals = goals.at[idx].set(1)
@@ -232,28 +237,27 @@ jax_env = CraftaxSymbolicWebEnvNoAutoReset(
   static_env_params=static_env_params,
 )
 
+
 def make_start_position(start_positions):
   start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
-  return start_position.at[: len(start_positions)].set(
-    jnp.asarray(start_positions)
-  )
-dummy_start_position = make_start_position((24, 24))
+  return start_position.at[: len(start_positions)].set(jnp.asarray(start_positions))
 
+
+dummy_start_position = make_start_position((24, 24))
 
 
 default_params = jax_env.default_params.replace(
   day_length=100000,
   max_timesteps=500 if DEBUG == 0 else 2,
   mob_despawn_distance=100000,
-  #possible_goals=possible_goals,
+  # possible_goals=possible_goals,
   active_goals=all_goals_active,
   world_seeds=(0,),
   start_positions=dummy_start_position,
 )
-dummy_params = make_block_env_params(
-  dummy_block_config, default_params).replace(
-    # to have compilation use valid current_goal value
-    current_goal=dummy_block_config.train_objects[0],
+dummy_params = make_block_env_params(dummy_block_config, default_params).replace(
+  # to have compilation use valid current_goal value
+  current_goal=dummy_block_config.train_objects[0],
 )
 
 jax_env = GoalSettingSuccessTrackingEnvWrapper(
@@ -299,6 +303,14 @@ if PRECOMPILE:
 ########################################
 def get_fullmap_image(world_seed):
   # Use same cache directory as defined in craftax_utils
+  if not DUMMY_ENV:
+    params = dummy_params.replace(world_seeds=(world_seed,))
+    timestep = jax_env.reset(jax.random.PRNGKey(0), params)
+    with jax.disable_jit():
+      return render_craftax_pixels(
+        timestep.state, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+      ).astype(jnp.uint8)
+
   if DEBUG:
     subdir = "single" if MANIPULATION == "paths" else "juncture"
     cache_dir = os.path.join("craftax_cache", subdir)
@@ -373,8 +385,6 @@ def make_image_html(src, id="stateImage", percent=50):
   </div>
   """
   return html
-
-
 
 
 def debug_info(stage):
@@ -521,7 +531,7 @@ async def env_reset_display_fn(
   stage: EnvStage,
   container: ui.element,
   timestep: nicewebrl.TimeStep,
-  ):
+):
   goal_object_idx = int(timestep.state.current_goal)
   image = get_goal_image(goal_object_idx)
   image = resize(image, (64, 64, 3), anti_aliasing=True, preserve_range=True).astype(
@@ -538,17 +548,19 @@ async def env_reset_display_fn(
     button = ui.button("click to start")
     await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
 
+
 def distance(x1, x2):
-    # Euclidean distance
-    return jnp.sqrt(jnp.sum((x1 - x2) ** 2, axis=0))
+  # Euclidean distance
+  return jnp.sqrt(jnp.sum((x1 - x2) ** 2, axis=0))
+
 
 async def env_reset_juncture_display_fn(
   stage: EnvStage,
   container: ui.element,
   timestep: nicewebrl.TimeStep,
 ):
-  juncture_stage = 'juncture' in stage.name
-  eval1 = stage.metadata['condition'] == 1
+  juncture_stage = "juncture" in stage.name
+  eval1 = stage.metadata["condition"] == 1
   if juncture_stage and eval1:
     ############################
     # Set initial timestep
@@ -558,13 +570,16 @@ async def env_reset_juncture_display_fn(
     training_name = current_name.replace("_eval1", "_training")
     # first get stages that match name (index should be covered)
     training_stage_states = await nicewebrl.StageStateModel.filter(
-        session_id=app.storage.browser["id"],
-        name=training_name,
-      ).all()
+      session_id=app.storage.browser["id"],
+      name=training_name,
+    ).all()
 
-    # deserialize training stage states 
+    # deserialize training stage states
     current_stage_state = stage.get_user_data("stage_state")
-    training_stage_states = [serialization.from_bytes(current_stage_state, s.data) for s in training_stage_states]
+    training_stage_states = [
+      serialization.from_bytes(current_stage_state, s.data)
+      for s in training_stage_states
+    ]
     timesteps = [s.timestep for s in training_stage_states]
 
     # combine all timesteps from all stages
@@ -579,7 +594,7 @@ async def env_reset_juncture_display_fn(
     # for each timestep, compute distance to goal
     goal_location = jnp.asarray(current_stage_state.timestep.state.goal_location)
     distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
-        goal_location, relevant_timesteps.state.player_position
+      goal_location, relevant_timesteps.state.player_position
     )
     # pick closest timestep as starting point
     sorted_indices = jnp.argsort(distances)
@@ -590,9 +605,10 @@ async def env_reset_juncture_display_fn(
     # set the initial params for the stage to have this as a start position
     # reset env with this position and update stage accordingly
     stage.env_params = stage.env_params.replace(
-      start_positions = make_start_position(relevant_timestep_agent_pos))
+      start_positions=make_start_position(relevant_timestep_agent_pos)
+    )
     rng = nicewebrl.new_rng()
-    new_timestep = stage.web_env.reset(rng, stage.env_params) 
+    new_timestep = stage.web_env.reset(rng, stage.env_params)
     await stage.set_user_data(stage_state=stage.state_cls(timestep=new_timestep))
 
   ############################
@@ -613,6 +629,7 @@ async def env_reset_juncture_display_fn(
     ui.html(make_image_html(src=image))
     button = ui.button("click to start")
     await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
+
 
 async def env_stage_display_fn(
   stage: EnvStage,
@@ -720,7 +737,7 @@ def make_env_stage(
       display_full_map=True,
     )
 
-  juncture_display = 'juncture' in name
+  juncture_display = "juncture" in name
   if juncture_display and eval_stage:
     reset_display_fn = env_reset_juncture_display_fn
   else:
@@ -754,14 +771,14 @@ def make_env_stage(
 #########################################################################
 
 
-#if SAY_REUSE:
+# if SAY_REUSE:
 #  instruct_text = """
 #    This experiment tests how effectively people can learn about goals before direct experience on them.
 
 #    It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects that you could have learned about previously.
 #  """
 
-#else:
+# else:
 #  instruct_text = """
 #    This experiment tests how people learn to navigate maps.
 
@@ -774,6 +791,7 @@ instruct_text = """
   There will be different worlds you can mine in. In each world, there will be two phases where you try to retrive different objects.
 """
 
+
 def train_phase_text():
   phase_1_text = f"""
     Please learn obtain the specified stone. You need to succeed {MIN_SUCCESS_TASK} times per specified stone.
@@ -781,6 +799,7 @@ def train_phase_text():
     If you retrieve the wrong stone, the episode ends early.
     """
   return phase_1_text
+
 
 def eval_phase_text(time=30):
   threshold = int(time * 2 / 3)
@@ -837,7 +856,7 @@ def make_block(
     body=eval_text,
     display_fn=stage_instructions_display_fn,
   )
-  
+
   eval_stage_env = make_env_stage(
     name=f"{name}_eval1",
     title="Phase 2",
@@ -919,101 +938,101 @@ def make_practice_block():
 
 
 def make_manipulation_block(
-    config,
-    manipulation: str,
-    name: str,
-    desc: str,
-    long: str,
-    train_text: str,
-    eval_text: str,
+  config,
+  manipulation: str,
+  name: str,
+  desc: str,
+  long: str,
+  train_text: str,
+  eval_text: str,
 ):
-    """Creates a manipulation block for either paths or juncture experiments.
+  """Creates a manipulation block for either paths or juncture experiments.
 
-    Args:
-        config: Block configuration object containing world_seed, positions, objects etc.
-        manipulation: String indicating experiment type
-        name: Name of the block
-        desc: Short description of the block
-        long: Long description of the block
-        train_text: Text to display during training phase
-        eval_text: Text to display during evaluation phase
-    """
+  Args:
+      config: Block configuration object containing world_seed, positions, objects etc.
+      manipulation: String indicating experiment type
+      name: Name of the block
+      desc: Short description of the block
+      long: Long description of the block
+      train_text: Text to display during training phase
+      eval_text: Text to display during evaluation phase
+  """
 
-    if DEBUG:
-      start_positions = config.start_eval_positions
-    else:
-      start_positions = config.start_train_positions + config.start_eval_positions
+  if DEBUG:
+    start_positions = config.start_eval_positions
+  else:
+    start_positions = config.start_train_positions + config.start_eval_positions
 
-    train_config = BlockStageConfig(
-        world_seed=config.world_seed,
-        start_positions=start_positions,
-        goals=config.train_objects,
+  train_config = BlockStageConfig(
+    world_seed=config.world_seed,
+    start_positions=start_positions,
+    goals=config.train_objects,
+  )
+
+  eval_config = BlockStageConfig(
+    world_seed=config.world_seed,
+    start_positions=config.start_eval_positions,
+    goals=config.test_objects,
+  )
+
+  eval2_config = None
+  if config.start_eval2_positions:
+    eval2_config = BlockStageConfig(
+      world_seed=config.world_seed,
+      start_positions=config.start_eval2_positions,
+      goals=config.test_objects,
     )
 
-    eval_config = BlockStageConfig(
-        world_seed=config.world_seed,
-        start_positions=config.start_eval_positions,
-        goals=config.test_objects,
-    )
+  metadata = dict(
+    manipulation=manipulation,
+    world_seed=config.world_seed,
+    train_objects=config.train_objects,
+    test_objects=config.test_objects,
+    desc=desc,
+    long=long,
+    name=name,
+  )
 
-    eval2_config = None
-    if config.start_eval2_positions:
-        eval2_config = BlockStageConfig(
-            world_seed=config.world_seed,
-            start_positions=config.start_eval2_positions,
-            goals=config.test_objects,
-        )
-
-    metadata = dict(
-        manipulation=manipulation,
-        world_seed=config.world_seed,
-        train_objects=config.train_objects,
-        test_objects=config.test_objects,
-        desc=desc,
-        long=long,
-        name=name,
-    )
-
-    return make_block(
-        block_config=config,
-        map=FULLMAP_IMAGES[config.world_seed],
-        train_config=train_config,
-        eval_config=eval_config,
-        eval2_config=eval2_config,
-        train_text=train_text,
-        eval_text=eval_text,
-        metadata=metadata,
-        name=name,
-    )
+  return make_block(
+    block_config=config,
+    map=FULLMAP_IMAGES[config.world_seed],
+    train_config=train_config,
+    eval_config=eval_config,
+    eval2_config=eval2_config,
+    train_text=train_text,
+    eval_text=eval_text,
+    metadata=metadata,
+    name=name,
+  )
 
 
 # Create experiment blocks with descriptions inline
 if MANIPULATION == "paths":
-    experiment_blocks = [
-        make_manipulation_block(
-            config=config,
-            manipulation="paths",
-            name=f"paths_{idx}",
-            desc="reusing longer of two paths which matches training path",
-            long="Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.",
-            train_text=train_phase_text(),
-            eval_text=eval_phase_text(),
-        )
-        for idx, config in enumerate(PATHS_CONFIGS)
-    ]
+  experiment_blocks = [
+    make_manipulation_block(
+      config=config,
+      manipulation="paths",
+      name=f"paths_{idx}",
+      desc="reusing longer of two paths which matches training path",
+      long="Here there are two paths to the test object. We predict that people will take the path that was used to get to the training object.",
+      train_text=train_phase_text(),
+      eval_text=eval_phase_text(),
+    )
+    for idx, config in enumerate(PATHS_CONFIGS)
+  ]
 elif MANIPULATION == "juncture":
-    experiment_blocks = [
-        make_manipulation_block(
-            config=config,
-            manipulation="juncture", 
-            name=f"juncture_{idx}",
-            desc="probe behavior at juncture",
-            long="Here there is a juncture to the test object. We predict that people will be faster at a juncture than at another point on the map.",
-            train_text=train_phase_text(),
-            eval_text=eval_phase_text(10),
-        )
-        for idx, config in enumerate(JUNCTURE_CONFIGS)
-    ]
+  experiment_blocks = [
+    make_manipulation_block(
+      config=config,
+      manipulation="juncture",
+      name=f"juncture_{idx}",
+      desc="probe behavior at juncture",
+      long="Here there is a juncture to the test object. We predict that people will be faster at a juncture than at another point on the map.",
+      train_text=train_phase_text(),
+      eval_text=eval_phase_text(10),
+    )
+    for idx, config in enumerate(JUNCTURE_CONFIGS)
+  ]
 
 instruct_block = nicewebrl.Block(
   [

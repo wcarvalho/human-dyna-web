@@ -4,7 +4,7 @@ import os.path
 import asyncio
 from asyncio import Lock
 from nicegui import app, ui
-from fastapi import Request
+from fastapi import Request, APIRouter
 from tortoise import Tortoise
 import time
 
@@ -30,23 +30,18 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 _user_locks = {}
 
-# Add a global variable to store the cached module
-_cached_experiment_structure = None
+# Add module loading management
+craftax_module = None
+craftax_loaded = asyncio.Event()
 
-
-# async def experiment_structure():
-#  """Lazily import and cache the experiment structure module"""
-#  global _cached_experiment_structure
-#  if _cached_experiment_structure is None:
-#    print("Loading experiment structure")
-#    # Import the module first since this is the potentially slow operation
-#    import craftax_experiment_structure
-
-#    _cached_experiment_structure = craftax_experiment_structure
-#  return _cached_experiment_structure
-
-# if DELAY_EXPERIMENT_LOADING:
-import craftax_experiment_structure
+async def load_craftax_module():
+    global craftax_module
+    loop = asyncio.get_event_loop()
+    craftax_module = await loop.run_in_executor(
+        None, 
+        lambda: __import__('craftax_experiment_structure')
+    )
+    craftax_loaded.set()
 
 
 #####################################
@@ -87,7 +82,7 @@ async def experiment_not_finished():
   # if DELAY_EXPERIMENT_LOADING:
   # experiment = await experiment_structure()
   # else:
-  experiment = craftax_experiment_structure
+  experiment = craftax_module
   async with get_user_lock():
     not_finished = not app.storage.user.get("experiment_finished", False)
     not_finished &= app.storage.user["stage_idx"] < len(experiment.all_stages)
@@ -111,11 +106,13 @@ async def global_handle_key_press(e, container):
   call the stage-specific key handler. When the experiment begins, we'll register
   a key listener to call this function
   """
+  if not craftax_loaded.is_set():
+    return
   logger.info(f"global_handle_key_press key: {e.args}")
   # if DELAY_EXPERIMENT_LOADING:
   # experiment = await experiment_structure()
   # else:
-  experiment = craftax_experiment_structure
+  experiment = craftax_module
   stage_idx = app.storage.user["stage_idx"]
   if stage_idx >= len(experiment.all_stages):
     logger.info("global_handle_key_press key: stage idx out of bounds")
@@ -136,7 +133,7 @@ async def save_data(final_save=True, feedback=None, **kwargs):
   # if DELAY_EXPERIMENT_LOADING:
   # experiment = await experiment_structure()
   # else:
-  experiment = craftax_experiment_structure
+  experiment = craftax_module
   user_data_file = experiment.get_user_save_file_fn()
 
   if final_save:
@@ -178,8 +175,6 @@ if not os.path.exists(DATA_DIR):
 
 
 async def init_db() -> None:
-  import craftax_experiment_structure
-
   await Tortoise.init(
     db_url=f"sqlite://{DATA_DIR}/{DATABASE_FILE}",
     # this will look in models.py,
@@ -193,8 +188,12 @@ async def close_db() -> None:
   await Tortoise.close_connections()
 
 
-app.on_startup(init_db)
-app.on_shutdown(close_db)
+# Modify startup handler
+@app.on_startup
+async def startup():
+    asyncio.create_task(load_craftax_module())
+    await init_db()
+
 
 #####################################
 # Consent Form and demographic info
@@ -280,7 +279,7 @@ async def start_experiment(meta_container, stage_container, button_container):
   # if DELAY_EXPERIMENT_LOADING:
   # experiment = await experiment_structure()
   # else:
-  experiment = craftax_experiment_structure
+  experiment = craftax_module
   while True and await experiment_not_finished():
     # get current stage
     stage_idx = app.storage.user["stage_idx"]
@@ -468,6 +467,29 @@ async def index(request: Request):
 
   ui.on("ping", print_ping)
 
+  # Show loading screen if module not ready
+  if not craftax_loaded.is_set():
+    with ui.card().classes("fixed-center") as card:
+      card.style("width: 80vw; max-height: 90vh;")
+      ui.label("Loading experiment, please wait...").classes("text-h4")
+      ui.add_body_html('''
+          <script>
+              function checkStatus() {
+                  fetch('/status')
+                      .then(response => response.json())
+                      .then(data => {
+                          if (data.loaded) {
+                              window.location.reload();
+                          } else {
+                              setTimeout(checkStatus, 1000);
+                          }
+                      });
+              }
+              checkStatus();
+          </script>
+      ''')
+    return
+
   ################
   # Start experiment
   ################
@@ -492,37 +514,6 @@ async def index(request: Request):
     episode_limit = 200
     meta_container = ui.column()
     with meta_container.style("align-items: center;"):
-      ##########################################
-      ## Load experiment
-      ##########################################
-      # ui.markdown("""
-      ## Loading experiment
-
-      # Please ignore the "connection lost" message.
-
-      # The experiment is being set up and will be ready in about 2 minutes.
-
-      # Please keep your browser window open.
-      # """)
-      # loading_notification = ui.notification(
-      #  "Loading", position="bottom", type="info", timeout=None
-      # )
-
-      # start_time = time.time()
-
-      # async def update_time():
-      #  elapsed = time.time() - start_time
-      #  loading_notification.text = f"Loading: {elapsed:.1f}s"
-
-      # timer = ui.timer(interval=0.1, callback=update_time, active=True)
-      # await asyncio.sleep(3)
-      # await experiment_structure()
-      # try:
-      #  timer.delete()
-      #  loading_notification.dismiss()
-      #  nicewebrl.clear_element(meta_container)
-      # except Exception:
-      #  pass
       #########################################
       # Run experiment
       #########################################
@@ -552,7 +543,7 @@ async def check_if_over(*args, episode_limit=60, **kwargs):
     # if DELAY_EXPERIMENT_LOADING:
     # experiment = await experiment_structure()
     # else:
-    experiment = craftax_experiment_structure
+    experiment = craftax_module
     app.storage.user["stage_idx"] = len(experiment.all_stages)
     await finish_experiment(*args, **kwargs)
 
@@ -561,7 +552,7 @@ async def footer(footer_container):
   # if DELAY_EXPERIMENT_LOADING:
   # experiment = await experiment_structure()
   # else:
-  experiment = craftax_experiment_structure
+  experiment = craftax_module
   """Add user information and progress bar to the footer"""
   with footer_container:
     with ui.row():
@@ -595,6 +586,14 @@ async def footer(footer_container):
       icon="fullscreen",
       on_click=nicewebrl.utils.toggle_fullscreen,
     ).props("flat")
+
+
+# Add status endpoint
+router = APIRouter()
+@router.get("/status")
+async def get_status():
+    return {"loaded": craftax_loaded.is_set()}
+app.include_router(router)
 
 
 ui.run(

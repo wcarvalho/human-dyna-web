@@ -9,11 +9,13 @@ from craftax.craftax.renderer import render_craftax_pixels as render_partial
 from craftax_fullmap_renderer import render_craftax_pixels as render_full
 from craftax.craftax.constants import BLOCK_PIXEL_SIZE_IMG, BLOCK_PIXEL_SIZE_HUMAN
 import jax
+import craftax_utils
 
 class ManipulationConfig(struct.PyTreeNode):
   """Configuration for a single experimental block"""
 
   possible_goals: List[int]
+
 
 class BlockConfig(struct.PyTreeNode):
   """Configuration for a single experimental block"""
@@ -27,14 +29,15 @@ class BlockConfig(struct.PyTreeNode):
   train_object_location: Tuple[int, int] = None
   test_object_location: Tuple[int, int] = None
   train_distractor_object_location: Tuple[int, int] = None
-  #eval_goal_location: Tuple[int, int] = (-1, -1)
+  # eval_goal_location: Tuple[int, int] = (-1, -1)
   type: str = ""
+
 
 POSSIBLE_GOALS = (
   Achievement.COLLECT_SAPPHIRE.value,
   Achievement.COLLECT_RUBY.value,
   Achievement.COLLECT_DIAMOND.value,
-  #Achievement.OPEN_CHEST.value,
+  # Achievement.OPEN_CHEST.value,
 )
 GOAL_TO_BLOCK = {
   Achievement.COLLECT_SAPPHIRE.value: BlockType.SAPPHIRE.value,
@@ -50,8 +53,7 @@ BLOCK_TO_IDX = {
   BlockType.CHEST.value: 3,
 }
 POSSIBLE_BLOCKS = [GOAL_TO_BLOCK[i] for i in POSSIBLE_GOALS]
-POSSIBLE_BLOCKS_MOD = list(POSSIBLE_BLOCKS+POSSIBLE_BLOCKS+POSSIBLE_BLOCKS)
-
+POSSIBLE_BLOCKS_MOD = list(POSSIBLE_BLOCKS + POSSIBLE_BLOCKS + POSSIBLE_BLOCKS)
 
 
 ########################################################
@@ -65,17 +67,11 @@ PATHS_CONFIGS = [
       (32, 30),
       (17, 28),
       (29, 15),
-      #(25, 18),
-      #(4, 33),
-      #(22, 29),
-      #(4, 5),
     ],
     start_eval_positions=[(28, 25)],
     train_object_location=(39, 44),
     train_distractor_object_location=(35, 13),
-    test_object_location=(37, 47),
-    #train_objects=TRAIN_OBJECTS,
-    #test_objects=TEST_OBJECTS,
+    test_object_location=(39, 46),
     type="paths",
   ),
   BlockConfig(
@@ -84,17 +80,13 @@ PATHS_CONFIGS = [
       (46, 8),
       (45, 32),
       (35, 25),
-      #(30, 31),
-      #(32, 30),
-      #(43, 6),
-      #(46, 10),
     ],
     start_eval_positions=[(24, 24)],
     train_object_location=(41, 44),
     train_distractor_object_location=(37, 13),
-    test_object_location=(38, 46),
-    #train_objects=TRAIN_OBJECTS,
-    #test_objects=TEST_OBJECTS,
+    test_object_location=(40, 46),
+    # train_objects=TRAIN_OBJECTS,
+    # test_objects=TEST_OBJECTS,
     type="paths",
   ),
   BlockConfig(
@@ -103,17 +95,17 @@ PATHS_CONFIGS = [
       (25, 22),
       (15, 15),
       (10, 21),
-      #(12, 20),
-      #(38, 16),
-      #(29, 2),
-      #(12, 10),
+      # (12, 20),
+      # (38, 16),
+      # (29, 2),
+      # (12, 10),
     ],
     start_eval_positions=[(18, 30)],
     train_object_location=(42, 30),
     train_distractor_object_location=(13, 13),
     test_object_location=(40, 32),
-    #train_objects=TRAIN_OBJECTS,
-    #test_objects=TEST_OBJECTS,
+    # train_objects=TRAIN_OBJECTS,
+    # test_objects=TEST_OBJECTS,
     type="paths",
   ),
   BlockConfig(
@@ -122,17 +114,17 @@ PATHS_CONFIGS = [
       (9, 3),
       (3, 19),
       (2, 27),
-      #(2, 20),
-      #(2, 26),
-      #(15, 21),
-      #(2, 2),
+      # (2, 20),
+      # (2, 26),
+      # (15, 21),
+      # (2, 2),
     ],
     start_eval_positions=[(7, 16)],
     train_object_location=(3, 36),
     train_distractor_object_location=(17, 13),
     test_object_location=(6, 34),
-    #train_objects=TRAIN_OBJECTS,
-    #test_objects=TEST_OBJECTS,
+    # train_objects=TRAIN_OBJECTS,
+    # test_objects=TEST_OBJECTS,
     type="paths",
   ),
 ]
@@ -140,8 +132,9 @@ PATHS_CONFIGS = [
 
 for i in range(len(PATHS_CONFIGS)):
   PATHS_CONFIGS[i] = PATHS_CONFIGS[i].replace(
-    train_objects=POSSIBLE_BLOCKS_MOD[i:i+2],
-    test_objects=POSSIBLE_BLOCKS_MOD[i+2:i+3])
+    train_objects=POSSIBLE_BLOCKS_MOD[i : i + 2],
+    test_objects=POSSIBLE_BLOCKS_MOD[i + 2 : i + 3],
+  )
 
 ########################################################
 # Juncture manipulation configs
@@ -153,17 +146,12 @@ JUNCTURE_CONFIGS = [
     start_train_positions=[
       (31, 32),
       (25, 46),
-      #(24, 46),
-       (14, 46),
-      # (9, 46),
-      # (11, 46),
-      # (28, 34),
+      (14, 46),
     ],
     start_eval_positions=[(23, 40)],
-    start_eval2_positions=[(22, 26)],
+    start_eval2_positions=[(19, 26)],
     train_object_location=(14, 24),
-    test_object_location=(19, 26),
-    #eval_goal_location=(19, 26),
+    test_object_location=(16, 26),
     type="juncture",
   ),
   BlockConfig(
@@ -181,13 +169,13 @@ JUNCTURE_CONFIGS = [
     start_eval2_positions=[(34, 25)],
     train_object_location=(37, 28),
     test_object_location=(34, 27),
-    #eval_goal_location=(34, 27),
+    # eval_goal_location=(34, 27),
     type="juncture",
   ),
   BlockConfig(
     world_seed=16,
     start_train_positions=[
-      (26, 25),
+      (26, 20),
       (25, 33),
       (15, 26),
       # (10, 32),
@@ -199,19 +187,19 @@ JUNCTURE_CONFIGS = [
     start_eval2_positions=[(15, 18)],
     train_object_location=(14, 21),
     test_object_location=(18, 18),
-    #eval_goal_location=(18, 18),
+    # eval_goal_location=(18, 18),
     type="juncture",
   ),
   BlockConfig(
     world_seed=21,
     start_train_positions=[
-      (2, 46),
+      (2, 38),
       (27, 37),
       (9, 40),
     ],
     start_eval_positions=[(5, 43)],
     start_eval2_positions=[(12, 33)],
-    train_object_location=(32, 38),
+    train_object_location=(15, 38),
     test_object_location=(12, 36),
     type="juncture",
   ),
@@ -219,8 +207,9 @@ JUNCTURE_CONFIGS = [
 
 for i in range(len(JUNCTURE_CONFIGS)):
   JUNCTURE_CONFIGS[i] = JUNCTURE_CONFIGS[i].replace(
-    train_objects=POSSIBLE_BLOCKS_MOD[i:i+1],
-    test_objects=POSSIBLE_BLOCKS_MOD[i+1:i+2])
+    train_objects=POSSIBLE_BLOCKS_MOD[i : i + 1],
+    test_objects=POSSIBLE_BLOCKS_MOD[i + 1 : i + 2],
+  )
 
 
 def get_fullmap_image(world_seed, type="paths"):
@@ -250,6 +239,7 @@ def get_fullmap_image(world_seed, type="paths"):
   assert image.ndim == 3 and image.shape[2] == 3, "Image must have exactly 3 channels"
   return image
 
+
 def make_block_env_params(config: BlockConfig, default_params):
   goal_objects = np.concatenate((config.train_objects, config.test_objects))
   goal_locations = (
@@ -273,6 +263,7 @@ def make_block_env_params(config: BlockConfig, default_params):
   )
   return env_params
 
+
 def get_goal_image(
   achievement_idx: int, block_pixel_size: int = BLOCK_PIXEL_SIZE_HUMAN
 ):
@@ -283,13 +274,16 @@ def get_goal_image(
     block = GOAL_TO_BLOCK[achievement_idx]
     texture = textures["full_map_block_textures"][block]
   except KeyError:
-    #try:
+    # try:
     #  texture = textures["sword_textures"][achievement]
-    #except KeyError:
-    import ipdb; ipdb.set_trace()
+    # except KeyError:
+    import ipdb
+
+    ipdb.set_trace()
     achievement = Achievement(achievement_idx)
     raise ValueError(f"Unmapped achievement: {achievement}")
   return texture[:block_pixel_size, :block_pixel_size]
+
 
 def visualize_block_config(config: BlockConfig, jax_env):
   """Visualizes a block configuration showing the full map and agent views from all starting positions.
@@ -307,7 +301,7 @@ def visualize_block_config(config: BlockConfig, jax_env):
   n_train = len(config.start_train_positions)
   n_eval = len(config.start_eval_positions)
   n_eval2 = len(config.start_eval2_positions) if config.start_eval2_positions else 0
-  total_positions = n_train + n_eval + n_eval2
+  total_positions = n_train + n_eval + n_eval2 + 1
 
   # Create full map figure with two subplots side by side
   fig_map = plt.figure(figsize=(14, 7))
@@ -349,11 +343,25 @@ def visualize_block_config(config: BlockConfig, jax_env):
   plt.axis("off")
 
   # Right subplot - cached full map
-  plt.subplot(1, 2, 2)
-  cached_map = get_fullmap_image(config.world_seed, config.type)
-  plt.imshow(cached_map)
-  plt.title(f"Cached Full Map (World Seed: {config.world_seed})")
-  plt.axis("off")
+  ax2 = plt.subplot(1, 2, 2)
+  # Call train_test_paths to get the visualization
+  craftax_utils.train_test_paths(
+      jax_env=jax_env,
+      params=env_params,
+      world_seed=config.world_seed,
+      start_position=config.start_eval_positions[0],
+      train_object=BlockType(config.train_objects[0]),
+      test_object=BlockType(config.test_objects[0]),
+      train_object_location=config.train_object_location,
+      test_object_location=config.test_object_location,
+      train_distractor_object=BlockType(config.train_objects[1]) if len(config.train_objects) > 1 else None,
+      train_distractor_object_location=config.train_distractor_object_location,
+      extra_positions=config.start_train_positions,
+      second_start_position=config.start_eval2_positions[0] if config.start_eval2_positions else None,
+      ax=ax2  # Pass the specific subplot axis
+  )
+  ax2.set_title(f"Path Visualization (World Seed: {config.world_seed})")
+  ax2.axis("off")
 
   # Create agent views figure
   columns = 4
@@ -397,8 +405,12 @@ def visualize_block_config(config: BlockConfig, jax_env):
     for idx, pos in enumerate(config.start_eval2_positions):
       render_from_position(pos, idx + offset, "Eval2")
 
+  # Add view from near test object location
+  test_view_pos = (config.train_object_location[0] + 1, config.train_object_location[1])
+  render_from_position(test_view_pos, total_positions - 1, "Test Object View")
+
   # Remove any empty subplots
-  for idx in range(total_positions, rows * columns):
+  for idx in range(total_positions + 1, rows * columns):  # +1 to account for new plot
     ax = plt.subplot(rows, columns, idx + 1)
     ax.remove()
 

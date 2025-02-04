@@ -21,6 +21,7 @@ TRAIN_COLOR = "red"
 TEST_COLOR = "#679FE5"  # pretty blue
 TEST_COLOR2 = "#FFB700"
 
+
 def array_to_tuple(array):
   return tuple(int(i) for i in array)
 
@@ -485,7 +486,7 @@ def display_map(
     ax.set_title(f"World {world}")
     return image, fig, ax
 
-  #colors = [
+  # colors = [
   #  "#FFB700",  # google orange
   #  "#679FE5",  # pretty blue
   #  "#D55E00",  # vermillion
@@ -494,7 +495,7 @@ def display_map(
   #  "#9B80E6",  # nice purple
   #  "#186CED",  # google blue
   #  (86 / 255, 180 / 255, 233 / 255),  # sky blue
-  #]
+  # ]
   colors = [TRAIN_COLOR, TEST_COLOR, TEST_COLOR2]
   color_idx = -1
   if isinstance(goals, BlockType):
@@ -591,43 +592,43 @@ def place_start_marker(ax, position, state, image, start_color="w"):
 
 
 def draw_object_path(
-    state,
-    object_type,
-    start_position,
-    color,
-    ax,
-    image,
-    world_seed,
-    goal_idx: Optional[int] = None,
-    nearby_goal: bool = False,
+  state,
+  object_type,
+  start_position,
+  color,
+  ax,
+  image,
+  world_seed,
+  goal_idx: Optional[int] = None,
+  nearby_goal: bool = False,
 ):
-    """Draw path to a specific object type from start position."""
-    # Get goal position for the object
-    goal_positions = get_object_positions(state, object_type)
-    goal_position = goal_positions[goal_idx if goal_idx is not None else 0]
-    
-    # Get cached path or compute new one
-    path = get_cached_path(world_seed, start_position, goal_position)
-    if path is None:
-        state = state.replace(player_position=start_position)
-        path, _ = astar(state, goal_position)
-        save_path_to_cache(path, world_seed, start_position, goal_position)
-    
-    # Draw the path
-    actions = actions_from_path(path)
-    place_arrows_on_image(
-        image=image,
-        positions=path,
-        actions=actions,
-        maze_height=state.map.shape[1],
-        maze_width=state.map.shape[2],
-        ax=ax,
-        display_image=False,
-        arrow_color=color,
-        show_path_length=True,
-        start_color=color,
-    )
-    return path
+  """Draw path to a specific object type from start position."""
+  # Get goal position for the object
+  goal_positions = get_object_positions(state, object_type)
+  goal_position = goal_positions[goal_idx if goal_idx is not None else 0]
+
+  # Get cached path or compute new one
+  path = get_cached_path(world_seed, start_position, goal_position)
+  if path is None:
+    state = state.replace(player_position=start_position)
+    path, _ = astar(state, goal_position)
+    save_path_to_cache(path, world_seed, start_position, goal_position)
+
+  # Draw the path
+  actions = actions_from_path(path)
+  place_arrows_on_image(
+    image=image,
+    positions=path,
+    actions=actions,
+    maze_height=state.map.shape[1],
+    maze_width=state.map.shape[2],
+    ax=ax,
+    display_image=False,
+    arrow_color=color,
+    show_path_length=True,
+    start_color=color,
+  )
+  return path
 
 
 def train_test_paths(
@@ -640,16 +641,17 @@ def train_test_paths(
   train_object_location,
   test_object_location,
   prefix: str = "",
-  train_distractor_object = None,
-  train_distractor_object_location = None,
+  train_distractor_object=None,
+  train_distractor_object_location=None,
   static_params=None,
   num_extra_start_positions: int = 0,
-  extra_positions = None,
-  extra_start_positions_rng = None,
+  extra_positions=None,
+  extra_start_positions_rng=None,
   second_start_position: Optional[Tuple[int, int]] = None,
   extra_start_position_center: Optional[Tuple[int, int]] = None,
   nearby_goal: bool = True,
   goal_idx: Optional[int] = None,
+  ax = None,
 ):
   #########################################
   # Create params
@@ -677,20 +679,40 @@ def train_test_paths(
   key = jax.random.PRNGKey(0)
   obs, state = jax_env.reset(key, params)
 
-  fig, ax = plt.subplots(1, figsize=(8, 8))
+  if ax is None:
+    fig, ax = plt.subplots(1, figsize=(8, 8))
   with jax.disable_jit():
-    image = render_fn(state,
-      show_agent=False,
-      block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG)
+    image = render_fn(
+      state, show_agent=False, block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG
+    )
     ax.imshow(image)
     ax.axis("off")  # This removes the axes and grid
 
   # Draw paths for each object
   if train_distractor_object is not None:
-    draw_object_path(state, train_distractor_object, start_position, TRAIN_COLOR, ax, image, world_seed)
-  draw_object_path(state, test_object, start_position, TEST_COLOR, ax, image, world_seed, goal_idx=goal_idx)
-  draw_object_path(state, train_object, start_position, TRAIN_COLOR, ax, image, world_seed, nearby_goal=nearby_goal)
-
+    draw_object_path(
+      state, train_distractor_object, start_position, TRAIN_COLOR, ax, image, world_seed
+    )
+  draw_object_path(
+    state,
+    test_object,
+    start_position,
+    TEST_COLOR,
+    ax,
+    image,
+    world_seed,
+    goal_idx=goal_idx,
+  )
+  draw_object_path(
+    state,
+    train_object,
+    start_position,
+    TRAIN_COLOR,
+    ax,
+    image,
+    world_seed,
+    nearby_goal=nearby_goal,
+  )
 
   # Place start marker for the first position
   place_start_marker(ax, start_position, state, image)
@@ -721,7 +743,16 @@ def train_test_paths(
       place_start_marker(ax, pos, state, image, start_color="green")
 
   if second_start_position is not None:
-    draw_object_path(state, test_object, second_start_position, TEST_COLOR2, ax, image, world_seed, goal_idx=goal_idx)
+    draw_object_path(
+      state,
+      test_object,
+      second_start_position,
+      TEST_COLOR2,
+      ax,
+      image,
+      world_seed,
+      goal_idx=goal_idx,
+    )
 
   cache_dir = os.path.join(CACHE_DIR)
   if prefix:
