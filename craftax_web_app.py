@@ -34,14 +34,14 @@ _user_locks = {}
 craftax_module = None
 craftax_loaded = asyncio.Event()
 
+
 async def load_craftax_module():
-    global craftax_module
-    loop = asyncio.get_event_loop()
-    craftax_module = await loop.run_in_executor(
-        None, 
-        lambda: __import__('craftax_experiment_structure')
-    )
-    craftax_loaded.set()
+  global craftax_module
+  loop = asyncio.get_event_loop()
+  craftax_module = await loop.run_in_executor(
+    None, lambda: __import__("craftax_experiment_structure")
+  )
+  craftax_loaded.set()
 
 
 #####################################
@@ -130,9 +130,6 @@ async def global_handle_key_press(e, container):
 
 
 async def save_data(final_save=True, feedback=None, **kwargs):
-  # if DELAY_EXPERIMENT_LOADING:
-  # experiment = await experiment_structure()
-  # else:
   experiment = craftax_module
   user_data_file = experiment.get_user_save_file_fn()
 
@@ -147,11 +144,8 @@ async def save_data(final_save=True, feedback=None, **kwargs):
       user_storage=user_storage,
       **kwargs,
     )
-    async with aiofiles.open(user_data_file, "ab") as f:  # Changed to binary mode
-      # Use msgpack to serialize the data
-      packed_data = msgpack.packb(last_line)
-      await f.write(packed_data)
-      await f.write(b"\n")  # Add newline in binary mode
+    async with aiofiles.open(user_data_file, "ab") as f:
+      await nicewebrl.write_msgpack_record(f, last_line)
 
   if not DEBUG:
     files_to_save = [
@@ -164,6 +158,7 @@ async def save_data(final_save=True, feedback=None, **kwargs):
     await save_to_gcs_with_retries(
       files_to_save,
       max_retries=5 if final_save else 1,
+      bucket_name="craftax-human-dyna",
     )
 
 
@@ -191,8 +186,8 @@ async def close_db() -> None:
 # Modify startup handler
 @app.on_startup
 async def startup():
-    asyncio.create_task(load_craftax_module())
-    await init_db()
+  asyncio.create_task(load_craftax_module())
+  await init_db()
 
 
 #####################################
@@ -472,7 +467,7 @@ async def index(request: Request):
     with ui.card().classes("fixed-center") as card:
       card.style("width: 80vw; max-height: 90vh;")
       ui.label("Loading experiment, please wait...").classes("text-h4")
-      ui.add_body_html('''
+      ui.add_body_html("""
           <script>
               function checkStatus() {
                   fetch('/status')
@@ -487,7 +482,7 @@ async def index(request: Request):
               }
               checkStatus();
           </script>
-      ''')
+      """)
     return
 
   ################
@@ -590,16 +585,19 @@ async def footer(footer_container):
 
 # Add status endpoint
 router = APIRouter()
+
+
 @router.get("/status")
 async def get_status():
-    return {"loaded": craftax_loaded.is_set()}
+  return {"loaded": craftax_loaded.is_set()}
+
+
 app.include_router(router)
 
 
 ui.run(
   storage_secret="private key to secure the browser session cookie",
-  # reload='FLY_ALLOC_ID' not in os.environ,
-  reload=DEBUG > 0,
+  reload='FLY_ALLOC_ID' not in os.environ,
   title="Crafter Web App",
   port=8081,
 )

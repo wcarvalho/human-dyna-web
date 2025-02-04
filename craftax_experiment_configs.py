@@ -11,6 +11,7 @@ from craftax.craftax.constants import BLOCK_PIXEL_SIZE_IMG, BLOCK_PIXEL_SIZE_HUM
 import jax
 import craftax_utils
 
+
 class ManipulationConfig(struct.PyTreeNode):
   """Configuration for a single experimental block"""
 
@@ -346,19 +347,23 @@ def visualize_block_config(config: BlockConfig, jax_env):
   ax2 = plt.subplot(1, 2, 2)
   # Call train_test_paths to get the visualization
   craftax_utils.train_test_paths(
-      jax_env=jax_env,
-      params=env_params,
-      world_seed=config.world_seed,
-      start_position=config.start_eval_positions[0],
-      train_object=BlockType(config.train_objects[0]),
-      test_object=BlockType(config.test_objects[0]),
-      train_object_location=config.train_object_location,
-      test_object_location=config.test_object_location,
-      train_distractor_object=BlockType(config.train_objects[1]) if len(config.train_objects) > 1 else None,
-      train_distractor_object_location=config.train_distractor_object_location,
-      extra_positions=config.start_train_positions,
-      second_start_position=config.start_eval2_positions[0] if config.start_eval2_positions else None,
-      ax=ax2  # Pass the specific subplot axis
+    jax_env=jax_env,
+    params=env_params,
+    world_seed=config.world_seed,
+    start_position=config.start_eval_positions[0],
+    train_object=BlockType(config.train_objects[0]),
+    test_object=BlockType(config.test_objects[0]),
+    train_object_location=config.train_object_location,
+    test_object_location=config.test_object_location,
+    train_distractor_object=BlockType(config.train_objects[1])
+    if len(config.train_objects) > 1
+    else None,
+    train_distractor_object_location=config.train_distractor_object_location,
+    extra_positions=config.start_train_positions,
+    second_start_position=config.start_eval2_positions[0]
+    if config.start_eval2_positions
+    else None,
+    ax=ax2,  # Pass the specific subplot axis
   )
   ax2.set_title(f"Path Visualization (World Seed: {config.world_seed})")
   ax2.axis("off")

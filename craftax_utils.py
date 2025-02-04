@@ -651,7 +651,7 @@ def train_test_paths(
   extra_start_position_center: Optional[Tuple[int, int]] = None,
   nearby_goal: bool = True,
   goal_idx: Optional[int] = None,
-  ax = None,
+  ax=None,
 ):
   #########################################
   # Create params

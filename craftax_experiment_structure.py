@@ -61,7 +61,7 @@ NAME = os.environ.get("NAME", "exp")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
 MAX_STAGE_EPISODES = 100 if DEBUG == 0 else 8
-MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 2
+MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 1
 MAX_START_POSITIONS = 10
 
 
@@ -301,64 +301,68 @@ if PRECOMPILE:
 ########################################
 # Preload images for displaying
 ########################################
-def get_fullmap_image(world_seed):
-  # Use same cache directory as defined in craftax_utils
-  if not DUMMY_ENV:
-    params = dummy_params.replace(world_seeds=(world_seed,))
-    timestep = jax_env.reset(jax.random.PRNGKey(0), params)
-    with jax.disable_jit():
-      return render_craftax_pixels(
-        timestep.state, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
-      ).astype(jnp.uint8)
-
-  if DEBUG:
-    subdir = "single" if MANIPULATION == "paths" else "juncture"
-    cache_dir = os.path.join("craftax_cache", subdir)
-    image_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
-  else:
-    cache_dir = os.path.join("craftax_cache", "maps")
-    image_path = os.path.join(cache_dir, f"world_{world_seed}.png")
-
-  if not os.path.exists(image_path):
-    raise FileNotFoundError(
-      f"No cached map found for world seed {world_seed} at {image_path}"
-    )
-
-  # Read image using matplotlib to maintain consistency with how images were saved
-  image = plt.imread(image_path)
-
-  # Convert to uint8 if needed
-  if image.dtype == np.float32:
-    image = (image * 255).astype(np.uint8)
-
-  # Ensure image has exactly 3 channels (RGB)
-  if image.ndim == 3 and image.shape[2] == 4:  # RGBA image
-    image = image[:, :, :3]  # Keep only RGB channels
-  elif image.ndim == 2:  # Grayscale image
-    image = np.stack([image] * 3, axis=-1)  # Convert to RGB
-
-  assert image.ndim == 3 and image.shape[2] == 3, "Image must have exactly 3 channels"
-  return image
+def fullmap_render(timestep):
+  with jax.disable_jit():
+    return render_fullmap_pixels(
+      timestep.state, show_agent=False, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+    ).astype(jnp.uint8)
 
 
-if MANIPULATION == "paths":
-  FULLMAP_IMAGES = {
-    # paths manipulation
-    3: get_fullmap_image(3),
-    15: get_fullmap_image(15),
-    20: get_fullmap_image(20),
-    95: get_fullmap_image(95),
-  }
-elif MANIPULATION == "juncture":
-  FULLMAP_IMAGES = {
-    # juncture manipulation
-    1: get_fullmap_image(1),
-    2: get_fullmap_image(2),
-    16: get_fullmap_image(16),
-    21: get_fullmap_image(21),
-  }
-else:
-  raise RuntimeError
+#def get_fullmap_image(world_seed):
+#  # Use same cache directory as defined in craftax_utils
+#  if not DUMMY_ENV:
+#    params = dummy_params.replace(world_seeds=(world_seed,))
+#    timestep = jax_env.reset(jax.random.PRNGKey(0), params)
+#    return fullmap_render(timestep)
+
+#  if DEBUG:
+#    subdir = "single" if MANIPULATION == "paths" else "juncture"
+#    cache_dir = os.path.join("craftax_cache", subdir)
+#    image_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
+#  else:
+#    cache_dir = os.path.join("craftax_cache", "maps")
+#    image_path = os.path.join(cache_dir, f"world_{world_seed}.png")
+
+#  if not os.path.exists(image_path):
+#    raise FileNotFoundError(
+#      f"No cached map found for world seed {world_seed} at {image_path}"
+#    )
+
+#  # Read image using matplotlib to maintain consistency with how images were saved
+#  image = plt.imread(image_path)
+
+#  # Convert to uint8 if needed
+#  if image.dtype == np.float32:
+#    image = (image * 255).astype(np.uint8)
+
+#  # Ensure image has exactly 3 channels (RGB)
+#  if image.ndim == 3 and image.shape[2] == 4:  # RGBA image
+#    image = image[:, :, :3]  # Keep only RGB channels
+#  elif image.ndim == 2:  # Grayscale image
+#    image = np.stack([image] * 3, axis=-1)  # Convert to RGB
+
+#  assert image.ndim == 3 and image.shape[2] == 3, "Image must have exactly 3 channels"
+#  return image
+
+
+#if MANIPULATION == "paths":
+#  FULLMAP_IMAGES = {
+#    # paths manipulation
+#    3: get_fullmap_image(3),
+#    15: get_fullmap_image(15),
+#    20: get_fullmap_image(20),
+#    95: get_fullmap_image(95),
+#  }
+#elif MANIPULATION == "juncture":
+#  FULLMAP_IMAGES = {
+#    # juncture manipulation
+#    1: get_fullmap_image(1),
+#    2: get_fullmap_image(2),
+#    16: get_fullmap_image(16),
+#    21: get_fullmap_image(21),
+#  }
+#else:
+#  raise RuntimeError
 
 
 def evaluate_success_fn(timestep: nicewebrl.TimeStep, params: EnvParams):
@@ -569,6 +573,7 @@ async def env_reset_juncture_display_fn(
     current_name = stage.name  # e.g. "juncture_0_eval1"
     training_name = current_name.replace("_eval1", "_training")
     # first get stages that match name (index should be covered)
+    logger.info(f"Loading data from {training_name}")
     training_stage_states = await nicewebrl.StageStateModel.filter(
       session_id=app.storage.browser["id"],
       name=training_name,
@@ -592,20 +597,24 @@ async def env_reset_juncture_display_fn(
     relevant_timesteps = jax.tree_map(lambda t: t[match], all_timesteps)
 
     # for each timestep, compute distance to goal
-    goal_location = jnp.asarray(current_stage_state.timestep.state.goal_location)
+    current_goal = current_stage_state.timestep.state.current_goal
+    placed_blocks = stage.env_params.placed_goals
+    placed_goals = jnp.array([BLOCK_TO_GOAL[b] for b in placed_blocks], dtype=jnp.int32)
+    goal_idx = (current_goal == placed_goals).argmax()
+    goal_location = stage.env_params.goal_locations[goal_idx]
+
     distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
-      goal_location, relevant_timesteps.state.player_position
+      jnp.asarray(goal_location), relevant_timesteps.state.player_position
     )
     # pick closest timestep as starting point
     sorted_indices = jnp.argsort(distances)
     closest_idx = sorted_indices[0]
-    relevant_timestep = jax.tree_map(lambda t: t[closest_idx], relevant_timesteps)
-    relevant_timestep_agent_pos = relevant_timestep.state.player_position
+    relevant_timestep_agent_pos = relevant_timesteps.state.player_position[closest_idx]
 
     # set the initial params for the stage to have this as a start position
     # reset env with this position and update stage accordingly
     stage.env_params = stage.env_params.replace(
-      start_positions=make_start_position(relevant_timestep_agent_pos)
+      start_positions=make_start_position(relevant_timestep_agent_pos[None])
     )
     rng = nicewebrl.new_rng()
     new_timestep = stage.web_env.reset(rng, stage.env_params)
@@ -642,8 +651,8 @@ async def env_stage_display_fn(
   partial_obs_image = base64_npimage(partial_obs_image)
 
   # Get full map image from metadata
-  world_seed = stage.env_params.world_seeds[0]
-  full_map_image = FULLMAP_IMAGES[world_seed]
+  #world_seed = stage.env_params.world_seeds[0]
+  full_map_image = fullmap_render(timestep)
   full_map_image = base64_npimage(full_map_image)
 
   # Get goal object image
@@ -789,12 +798,14 @@ instruct_text = """
   In this experiment, you will play a game where you are a traveling miner in a crafting world. In different episodes, you will need to obtain different stones. 
 
   There will be different worlds you can mine in. In each world, there will be two phases where you try to retrive different objects.
+
+  Be weary of monsters.
 """
 
 
 def train_phase_text():
   phase_1_text = f"""
-    Please learn obtain the specified stone. You need to succeed {MIN_SUCCESS_TASK} times per specified stone.
+    Please learn to obtain the specified stone. You need to succeed {MIN_SUCCESS_TASK} times per specified stone.
 
     If you retrieve the wrong stone, the episode ends early.
     """
@@ -811,7 +822,6 @@ def eval_phase_text(time=30):
 
 def make_block(
   block_config: BlockConfig,
-  map: jax.Array,
   train_text: str,
   eval_text: str,
   train_config: BlockStageConfig,
@@ -879,7 +889,7 @@ def make_block(
   randomize = []
   if eval2_config is not None:
     # If have 2 evals, randomize them
-    randomize = [False, False, False, True, True]
+    #randomize = [False, False, False, True, True]
     eval2_stage = make_env_stage(
       name=f"{name}_eval2",
       title="Phase 2",
@@ -922,7 +932,7 @@ def make_practice_block():
     goals=[BlockType.STONE.value],
   )
   return make_block(
-    map=FULLMAP_IMAGES[world_seed],
+    #map=FULLMAP_IMAGES[world_seed],
     train_config=train_config,
     eval_config=eval_config,
     train_text=train_phase_text(),
@@ -995,7 +1005,7 @@ def make_manipulation_block(
 
   return make_block(
     block_config=config,
-    map=FULLMAP_IMAGES[config.world_seed],
+    #map=FULLMAP_IMAGES[config.world_seed],
     train_config=train_config,
     eval_config=eval_config,
     eval2_config=eval2_config,

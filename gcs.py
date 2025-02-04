@@ -14,11 +14,11 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def initialize_storage_client():
+def initialize_storage_client(bucket_name="human-dyna"):
   storage_client = storage.Client.from_service_account_json(
     os.environ["GOOGLE_CREDENTIALS"]
   )
-  bucket_name = "human-dyna"
+  
   bucket = storage_client.bucket(bucket_name)
   return bucket
 
@@ -42,9 +42,9 @@ def download_files(bucket, destination_folder):
     print(f"Downloaded {blob.name} to {file_path}")
 
 
-async def save_data_to_gcs(data, blob_filename):
+async def save_data_to_gcs(data, blob_filename, bucket_name="human-dyna"):
   try:
-    bucket = initialize_storage_client()
+    bucket = initialize_storage_client(bucket_name)
     blob = bucket.blob(blob_filename)
     blob.upload_from_string(data=json.dumps(data), content_type="application/json")
     logger.info(f"Saved {blob_filename} in bucket {bucket.name}")
@@ -58,9 +58,9 @@ async def save_data_to_gcs(data, blob_filename):
   return False  # Failed to save
 
 
-async def save_file_to_gcs(local_filename, blob_filename):
+async def save_file_to_gcs(local_filename, blob_filename, bucket_name="human-dyna"):
   try:
-    bucket = initialize_storage_client()
+    bucket = initialize_storage_client(bucket_name)
     blob = bucket.blob(blob_filename)
     blob.upload_from_filename(local_filename)
     logger.info(f"Saved {blob_filename} in bucket {bucket.name}")
@@ -74,7 +74,7 @@ async def save_file_to_gcs(local_filename, blob_filename):
   return False  # Failed to save
 
 
-async def save_to_gcs_with_retries(files_to_save, max_retries=5, retry_delay=5):
+async def save_to_gcs_with_retries(files_to_save, max_retries=5, retry_delay=5, bucket_name="human-dyna"):
   """Save multiple files to Google Cloud Storage with retry logic.
 
   Args:
@@ -90,7 +90,7 @@ async def save_to_gcs_with_retries(files_to_save, max_retries=5, retry_delay=5):
       # Try to save all files
       for local_file, blob_file in files_to_save:
         saved = await save_file_to_gcs(
-          local_filename=local_file, blob_filename=blob_file
+          local_filename=local_file, blob_filename=blob_file, bucket_name=bucket_name
         )
         if not saved:
           raise Exception(f"Failed to save {local_file}")
@@ -108,7 +108,7 @@ async def save_to_gcs_with_retries(files_to_save, max_retries=5, retry_delay=5):
 
 
 def main():
-  bucket = initialize_storage_client()
+  bucket = initialize_storage_client(bucket_name="human-dyna")
 
   # List files in the bucket
   list_files(bucket)
