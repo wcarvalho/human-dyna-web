@@ -20,6 +20,7 @@ from nicewebrl import Stage, EnvStage
 from nicewebrl import get_logger
 from craftax.craftax.constants import BlockType
 from craftax.craftax.renderer import render_craftax_pixels
+from simulations.craftax_web_env import EnvParams as OriginalEnvParams
 from craftax.craftax.constants import (
   Action,
   # BLOCK_PIXEL_SIZE_HUMAN,
@@ -29,6 +30,7 @@ from craftax.craftax.constants import (
 
 # import craftax_experiment_configs
 from craftax_experiment_configs import (
+  PRACTICE_BLOCK_CONFIG,
   PATHS_CONFIGS,
   JUNCTURE_CONFIGS,
   BlockConfig,
@@ -39,6 +41,8 @@ from craftax_experiment_configs import (
   BLOCK_TO_IDX,
   get_goal_image,
 )
+
+
 
 load_dotenv()
 
@@ -55,7 +59,7 @@ GIVE_INSTRUCTIONS = int(os.environ.get("GIVE_INSTRUCTIONS", 0))
 
 PRECOMPILE = int(os.environ.get("PRECOMPILE", 1))
 
-DUMMY_ENV = int(os.environ.get("DUMMY_ENV", 1))
+DUMMY_ENV = int(os.environ.get("DUMMY_ENV", 0))
 MONSTERS = int(os.environ.get("MONSTERS", 1))
 NAME = os.environ.get("NAME", "exp")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
@@ -64,12 +68,10 @@ MAX_STAGE_EPISODES = 100 if DEBUG == 0 else 8
 MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 1
 MAX_START_POSITIONS = 10
 
-
 class BlockStageConfig(struct.PyTreeNode):
   world_seed: int
   start_positions: List[Tuple[int, int]]
   goals: List[int]
-  goal_location: Tuple[int, int] = (-1, -1)
 
 
 if DUMMY_ENV:
@@ -77,9 +79,43 @@ if DUMMY_ENV:
   from simulations.craftax_web_env import (
     CraftaxSymbolicWebEnvNoAutoResetDummy as CraftaxSymbolicWebEnvNoAutoReset,
   )
+  def fullmap_render(timestep, world_seed):
+
+    if DEBUG:
+      subdir = "single" if MANIPULATION == "paths" else "juncture"
+      cache_dir = os.path.join("craftax_cache", subdir)
+      image_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
+    else:
+      cache_dir = os.path.join("craftax_cache", "maps")
+      image_path = os.path.join(cache_dir, f"world_{world_seed}.png")
+
+    if not os.path.exists(image_path):
+      return np.zeros((48, 48, 3), dtype=np.uint8)
+
+    # Read image using matplotlib to maintain consistency with how images were saved
+    image = plt.imread(image_path)
+
+    # Convert to uint8 if needed
+    if image.dtype == np.float32:
+      image = (image * 255).astype(np.uint8)
+
+    # Ensure image has exactly 3 channels (RGB)
+    if image.ndim == 3 and image.shape[2] == 4:  # RGBA image
+      image = image[:, :, :3]  # Keep only RGB channels
+    elif image.ndim == 2:  # Grayscale image
+      image = np.stack([image] * 3, axis=-1)  # Convert to RGB
+
+    assert image.ndim == 3 and image.shape[2] == 3, "Image must have exactly 3 channels"
+    return image
+
 else:
   from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
   from craftax_fullmap_renderer import render_craftax_pixels as render_fullmap_pixels
+  def fullmap_render(timestep, world_seed):
+    with jax.disable_jit():
+      return render_fullmap_pixels(
+        timestep.state, show_agent=False, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+      ).astype(jnp.uint8)
 
 
 def get_user_save_file_fn():
@@ -111,8 +147,9 @@ def get_remaining(possible_goals, num_success):
 
   # maintain order of goals
   output = jnp.array(
-    [remaining.get(g, n) for g, n in zip(possible_goals, num_success)], dtype=jnp.int32
+    [remaining.get(str(g), n) for g, n in zip(possible_goals, num_success)], dtype=jnp.int32
   )
+  logger.info(f"get_remaining output={output}")
   return output
 
 
@@ -143,13 +180,11 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
   def __init__(
     self,
     env,
-    num_success: int = 5,
     possible_goals: jnp.ndarray = None,
     autoreset: bool = False,
     **kwargs,
   ):
     super().__init__(env, autoreset=autoreset, **kwargs)
-    self.num_success = num_success
     self.possible_goals = possible_goals
 
   # provide proxy access to regular attributes of wrapped object
@@ -166,7 +201,7 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
       get_remaining,
       jax.ShapeDtypeStruct(shape=(len(self.possible_goals),), dtype=jnp.int32),
       self.possible_goals,
-      self.num_success * params.active_goals,
+      params.num_success * params.active_goals,
     )
 
     #########################################
@@ -175,7 +210,9 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
     #########################################
     # e.g. [5, 0, 5, 0] --> [0.5, 0, 0.5, 0]
     # e.g. [1, 5, 0, 0] --> [0.2, 0.8, 0, 0]
+    jax.debug.print("remaining: {remaining}", remaining=remaining)
     goal_probs = remaining / (remaining.sum())
+    jax.debug.print("goal_probs: {goal_probs}", goal_probs=goal_probs)
     goal_sampler = distrax.Categorical(probs=goal_probs)
     key, key_ = jax.random.split(key)
     goal_idx = goal_sampler.sample(seed=key_)
@@ -198,6 +235,12 @@ action_to_name = [a.name for a in actions]
 ########################################
 possible_goals = jnp.array(POSSIBLE_GOALS)
 
+
+def blocks_to_goals(blocks: BlockType) -> int:
+  """get all possible goals from a list of blocks"""
+  goals = [BLOCK_TO_GOAL.get(b, None) for b in blocks]
+  goals = [g for g in goals if g is not None]
+  return goals
 
 def blocks_to_active_goals(blocks: List[BlockType]) -> jnp.ndarray:
   """Creates a binary vector indicating which goals are active based on the provided Achievements."""
@@ -248,7 +291,7 @@ dummy_start_position = make_start_position((24, 24))
 
 default_params = jax_env.default_params.replace(
   day_length=100000,
-  max_timesteps=500 if DEBUG == 0 else 2,
+  max_timesteps=200 if DEBUG == 0 else 2,
   mob_despawn_distance=100000,
   # possible_goals=possible_goals,
   active_goals=all_goals_active,
@@ -262,7 +305,6 @@ dummy_params = make_block_env_params(dummy_block_config, default_params).replace
 
 jax_env = GoalSettingSuccessTrackingEnvWrapper(
   env=jax_env,
-  num_success=MIN_SUCCESS_TASK,
   possible_goals=possible_goals,
   autoreset=False,
 )
@@ -298,75 +340,11 @@ if PRECOMPILE:
   )
 
 
-########################################
-# Preload images for displaying
-########################################
-def fullmap_render(timestep):
-  with jax.disable_jit():
-    return render_fullmap_pixels(
-      timestep.state, show_agent=False, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
-    ).astype(jnp.uint8)
 
-
-#def get_fullmap_image(world_seed):
-#  # Use same cache directory as defined in craftax_utils
-#  if not DUMMY_ENV:
-#    params = dummy_params.replace(world_seeds=(world_seed,))
-#    timestep = jax_env.reset(jax.random.PRNGKey(0), params)
-#    return fullmap_render(timestep)
-
-#  if DEBUG:
-#    subdir = "single" if MANIPULATION == "paths" else "juncture"
-#    cache_dir = os.path.join("craftax_cache", subdir)
-#    image_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
-#  else:
-#    cache_dir = os.path.join("craftax_cache", "maps")
-#    image_path = os.path.join(cache_dir, f"world_{world_seed}.png")
-
-#  if not os.path.exists(image_path):
-#    raise FileNotFoundError(
-#      f"No cached map found for world seed {world_seed} at {image_path}"
-#    )
-
-#  # Read image using matplotlib to maintain consistency with how images were saved
-#  image = plt.imread(image_path)
-
-#  # Convert to uint8 if needed
-#  if image.dtype == np.float32:
-#    image = (image * 255).astype(np.uint8)
-
-#  # Ensure image has exactly 3 channels (RGB)
-#  if image.ndim == 3 and image.shape[2] == 4:  # RGBA image
-#    image = image[:, :, :3]  # Keep only RGB channels
-#  elif image.ndim == 2:  # Grayscale image
-#    image = np.stack([image] * 3, axis=-1)  # Convert to RGB
-
-#  assert image.ndim == 3 and image.shape[2] == 3, "Image must have exactly 3 channels"
-#  return image
-
-
-#if MANIPULATION == "paths":
-#  FULLMAP_IMAGES = {
-#    # paths manipulation
-#    3: get_fullmap_image(3),
-#    15: get_fullmap_image(15),
-#    20: get_fullmap_image(20),
-#    95: get_fullmap_image(95),
-#  }
-#elif MANIPULATION == "juncture":
-#  FULLMAP_IMAGES = {
-#    # juncture manipulation
-#    1: get_fullmap_image(1),
-#    2: get_fullmap_image(2),
-#    16: get_fullmap_image(16),
-#    21: get_fullmap_image(21),
-#  }
-#else:
-#  raise RuntimeError
 
 
 def evaluate_success_fn(timestep: nicewebrl.TimeStep, params: EnvParams):
-  success = timestep.reward > 0.5
+  success = timestep.reward > 0.5 and timestep.last() > 0
   update_successes(timestep.state.current_goal, success)
   return success
 
@@ -390,6 +368,13 @@ def make_image_html(src, id="stateImage", percent=50):
   """
   return html
 
+def get_remaining_goals():
+  stage_idx = app.storage.user.get("stage_idx", 0)
+  key = f"{stage_idx}_remaining"
+  remaining = app.storage.user.get(key, {})
+  name = lambda i: Achievement(int(i)).name.replace("_", " ").title()
+  remaining = {name(i): r for i, r in remaining.items()}
+  return remaining
 
 def debug_info(stage):
   stage_state = stage.get_user_data("stage_state")
@@ -415,12 +400,7 @@ def debug_info(stage):
     # ------------
     # remaining goals information
     # ------------
-    stage_idx = app.storage.user.get("stage_idx", 0)
-    key = f"{stage_idx}_remaining"
-    remaining = app.storage.user.get(key, {})
-    name = lambda i: Achievement(int(i)).name.replace("_", " ").title()
-    remaining = {name(i): r for i, r in remaining.items()}
-    debug_info = f"**remaining**: {remaining}. "
+    debug_info = f"**remaining**: {get_remaining_goals()}. "
     ui.markdown(debug_info)
 
   return debug_info
@@ -435,6 +415,7 @@ async def experiment_instructions_display_fn(stage, container):
 
     ui.markdown(f"## {stage.title}")
     ui.markdown(f"{remove_extra_spaces(stage.body)}", extras=["cuddled-lists"])
+    ui.markdown("**You can control the agent using the arrow keys. Press the space bar to 'interact', i.e. to collect objects**.")
     ui.markdown("Below are the stones you will need to mine.")
 
     # Get all possible goals and create images for each
@@ -496,7 +477,7 @@ async def stage_instructions_display_fn(stage, container, new_world=False):
     order = jax.random.permutation(key, jnp.arange(len(goals)))
 
     test_objects = stage.metadata["block_metadata"]["test_objects"]
-    test_objects = [BLOCK_TO_GOAL[t] for t in test_objects]
+    test_objects = blocks_to_goals(test_objects)
 
     width = 1.5
     figsize = (len(goals) * width, width)
@@ -544,9 +525,13 @@ async def env_reset_display_fn(
   image = base64_npimage(image)
 
   category = Achievement(goal_object_idx).name.replace("_", " ").title()
+  
+  remaining = get_remaining_goals()
+  logger.info(f"remaining: {remaining}")
 
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
+    ui.markdown(f"## {stage.title}")
     ui.markdown(f"#### Goal task: {category}")
     ui.html(make_image_html(src=image))
     button = ui.button("click to start")
@@ -599,7 +584,7 @@ async def env_reset_juncture_display_fn(
     # for each timestep, compute distance to goal
     current_goal = current_stage_state.timestep.state.current_goal
     placed_blocks = stage.env_params.placed_goals
-    placed_goals = jnp.array([BLOCK_TO_GOAL[b] for b in placed_blocks], dtype=jnp.int32)
+    placed_goals = jnp.array(blocks_to_goals(placed_blocks), dtype=jnp.int32)
     goal_idx = (current_goal == placed_goals).argmax()
     goal_location = stage.env_params.goal_locations[goal_idx]
 
@@ -634,6 +619,7 @@ async def env_reset_juncture_display_fn(
 
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
+    ui.markdown(f"## {stage.title}")
     ui.markdown(f"#### Goal task: {category}")
     ui.html(make_image_html(src=image))
     button = ui.button("click to start")
@@ -651,8 +637,8 @@ async def env_stage_display_fn(
   partial_obs_image = base64_npimage(partial_obs_image)
 
   # Get full map image from metadata
-  #world_seed = stage.env_params.world_seeds[0]
-  full_map_image = fullmap_render(timestep)
+  world_seed = stage.env_params.world_seeds[0]
+  full_map_image = fullmap_render(timestep, world_seed)
   full_map_image = base64_npimage(full_map_image)
 
   # Get goal object image
@@ -665,7 +651,7 @@ async def env_stage_display_fn(
 
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
-
+    ui.markdown(f"## {stage.title}")
     # ui.markdown(f"#### Goal task: {current_goal_name}")
     # Display goal object using matplotlib
     with ui.matplotlib(figsize=(1, 1)).figure as fig:
@@ -714,6 +700,7 @@ async def env_stage_display_fn(
             <div style="text-align: center; margin-bottom: 5px;">Current View</div>
             <img src="{partial_obs_image}" id="stateImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
         </div>
+      </div>
       """)
 
 
@@ -728,12 +715,13 @@ def make_env_stage(
   eval_stage = metadata.get("eval", False)
   active_goals = blocks_to_active_goals(stage_config.goals)
   env_params = make_block_env_params(block_config, default_params)
+  min_success = min_success or MIN_SUCCESS_TASK
 
   env_params = env_params.replace(
     active_goals=active_goals.astype(jnp.float32),
     start_positions=make_start_position(stage_config.start_positions),
+    num_success=min_success,
   )
-  min_success = min_success or MIN_SUCCESS_TASK
 
   if eval_stage:
     display_fn = partial(
@@ -752,6 +740,9 @@ def make_env_stage(
   else:
     reset_display_fn = env_reset_display_fn
 
+  print("="*30)
+  print("Made stage with config")
+  print(stage_config)
   return EnvStage(
     name=name,
     title=title,
@@ -779,20 +770,6 @@ def make_env_stage(
 # Define stages of experiment
 #########################################################################
 
-
-# if SAY_REUSE:
-#  instruct_text = """
-#    This experiment tests how effectively people can learn about goals before direct experience on them.
-
-#    It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects that you could have learned about previously.
-#  """
-
-# else:
-#  instruct_text = """
-#    This experiment tests how people learn to navigate maps.
-
-#    It will consist of blocks with two phases each: **one** where you navigate to objects, and **another** where you navigate to other objects.
-#  """
 
 instruct_text = """
   In this experiment, you will play a game where you are a traveling miner in a crafting world. In different episodes, you will need to obtain different stones. 
@@ -839,17 +816,24 @@ def make_block(
   4. evaluation stage environment
   5. (optional) second evaluation stage environment
   """
+  is_practice = "practice" in name
+
+  def make_title(t):
+    if is_practice:
+      return f"(Practice) {t}"
+    else:
+      return t
 
   train_stage_instructions = Stage(
     name=f"{name}_train_instructions",
-    title="Phase 1 instructions",
+    title=make_title("Phase 1 instructions"),
     body=train_text,
     display_fn=partial(stage_instructions_display_fn, new_world=True),
   )
 
   train_stage_env = make_env_stage(
     name=f"{name}_training",
-    title="Phase 1",
+    title=make_title("Phase 1"),
     block_config=block_config,
     stage_config=train_config,
     min_success=min_success,
@@ -862,14 +846,14 @@ def make_block(
 
   eval_stage_instructions = Stage(
     name=f"{name}_eval_instructions",
-    title="Phase 2 instructions",
+    title=make_title("Phase 2 instructions"),
     body=eval_text,
     display_fn=stage_instructions_display_fn,
   )
 
   eval_stage_env = make_env_stage(
     name=f"{name}_eval1",
-    title="Phase 2",
+    title=make_title("Phase 2"),
     block_config=block_config,
     stage_config=eval_config,
     min_success=min_success,
@@ -889,10 +873,10 @@ def make_block(
   randomize = []
   if eval2_config is not None:
     # If have 2 evals, randomize them
-    #randomize = [False, False, False, True, True]
+    # randomize = [False, False, False, True, True]
     eval2_stage = make_env_stage(
       name=f"{name}_eval2",
-      title="Phase 2",
+      title=make_title("Phase 2"),
       block_config=block_config,
       stage_config=eval2_config,
       min_success=min_success,
@@ -912,37 +896,49 @@ def make_block(
   return block
 
 
+def metadata_from_config(config: BlockConfig):
+  keys = [
+    "world_seed",
+    "start_train_positions",
+    "start_eval_positions",
+    "train_objects",
+    "test_objects",
+    "start_eval2_positions",
+    "train_object_location",
+    "test_object_location",
+    "train_distractor_object_location",
+  ]
+  return {k: getattr(config, k) for k in keys}
+
 ####################
 # practice block
 ####################
 def make_practice_block():
-  world_seed = 1
+  config = PRACTICE_BLOCK_CONFIG
   train_config = BlockStageConfig(
-    world_seed=world_seed,
-    start_positions=[(24, 24)],
-    goals=[
-      BlockType.DIAMOND.value,
-      BlockType.CRAFTING_TABLE.value,
-      # BlockType.STONE.value
-    ],
+    world_seed=config.world_seed,
+    start_positions=config.start_eval_positions,
+    goals=config.train_objects,
   )
+
   eval_config = BlockStageConfig(
-    world_seed=world_seed,
-    start_positions=[(24, 24)],
-    goals=[BlockType.STONE.value],
+    world_seed=config.world_seed,
+    start_positions=config.start_eval_positions,
+    goals=config.test_objects,
   )
   return make_block(
-    #map=FULLMAP_IMAGES[world_seed],
+    block_config=config,
     train_config=train_config,
     eval_config=eval_config,
     train_text=train_phase_text(),
     eval_text=eval_phase_text(10),
     min_success=1,
+    name="practice",
     metadata=dict(
       manipulation="practice",
-      world_seed=world_seed,
       desc="practice",
       long="practice",
+      **metadata_from_config(config),
     ),
   )
 
@@ -995,17 +991,14 @@ def make_manipulation_block(
 
   metadata = dict(
     manipulation=manipulation,
-    world_seed=config.world_seed,
-    train_objects=config.train_objects,
-    test_objects=config.test_objects,
     desc=desc,
     long=long,
     name=name,
+    **metadata_from_config(config),
   )
 
   return make_block(
     block_config=config,
-    #map=FULLMAP_IMAGES[config.world_seed],
     train_config=train_config,
     eval_config=eval_config,
     eval2_config=eval2_config,
@@ -1048,6 +1041,7 @@ instruct_block = nicewebrl.Block(
   [
     Stage(
       name="Experiment instructions",
+      title="Experiment instructions",
       body=instruct_text,
       display_fn=experiment_instructions_display_fn,
     ),

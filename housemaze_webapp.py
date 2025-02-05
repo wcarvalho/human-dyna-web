@@ -31,7 +31,6 @@ from nicewebrl.utils import wait_for_button_or_keypress, clear_element
 from nicewebrl.logging import setup_logging, get_logger
 
 from google.auth.exceptions import TransportError
-from load_data import get_block_stage_description, dict_to_string, time_diff
 from google.cloud import exceptions as gcs_exceptions
 from asyncio import Lock
 
@@ -619,8 +618,11 @@ async def index(request: Request):
     assignment_id=request.query_params.get("assignmentId", None),
     git_version=get_git_version(),
   )
-
   initalize_user(user_info)
+  env_vars = {k: v for k, v in dict(os.environ).items() if not (k.startswith('/') or v.startswith('/'))}
+  app.storage.user['user_info'] = user_info
+  app.storage.user['env_vars'] = env_vars
+
 
   def print_ping(e):
     logger.info(str(e.args))

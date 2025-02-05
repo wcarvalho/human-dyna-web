@@ -18,7 +18,7 @@ def initialize_storage_client(bucket_name="human-dyna"):
   storage_client = storage.Client.from_service_account_json(
     os.environ["GOOGLE_CREDENTIALS"]
   )
-  
+
   bucket = storage_client.bucket(bucket_name)
   return bucket
 
@@ -74,7 +74,9 @@ async def save_file_to_gcs(local_filename, blob_filename, bucket_name="human-dyn
   return False  # Failed to save
 
 
-async def save_to_gcs_with_retries(files_to_save, max_retries=5, retry_delay=5, bucket_name="human-dyna"):
+async def save_to_gcs_with_retries(
+  files_to_save, max_retries=5, retry_delay=5, bucket_name="human-dyna"
+):
   """Save multiple files to Google Cloud Storage with retry logic.
 
   Args:

@@ -12,12 +12,6 @@ import jax
 import craftax_utils
 
 
-class ManipulationConfig(struct.PyTreeNode):
-  """Configuration for a single experimental block"""
-
-  possible_goals: List[int]
-
-
 class BlockConfig(struct.PyTreeNode):
   """Configuration for a single experimental block"""
 
@@ -56,6 +50,22 @@ BLOCK_TO_IDX = {
 POSSIBLE_BLOCKS = [GOAL_TO_BLOCK[i] for i in POSSIBLE_GOALS]
 POSSIBLE_BLOCKS_MOD = list(POSSIBLE_BLOCKS + POSSIBLE_BLOCKS + POSSIBLE_BLOCKS)
 
+
+PRACTICE_BLOCK_CONFIG = BlockConfig(
+    world_seed=101,
+    start_train_positions=[
+      (32, 30),
+      (17, 28),
+      (29, 15),
+    ],
+    start_eval_positions=[(28, 25)],
+    train_object_location=(28, 30),
+    test_object_location=(26, 28),
+    train_distractor_object_location=(30, 20),
+    train_objects=[BlockType.SAPPHIRE.value, BlockType.DIAMOND.value],
+    test_objects=[BlockType.RUBY.value],
+    type="practice",
+  )
 
 ########################################################
 # Paths manipulation configs
@@ -242,19 +252,36 @@ def get_fullmap_image(world_seed, type="paths"):
 
 
 def make_block_env_params(config: BlockConfig, default_params):
-  goal_objects = np.concatenate((config.train_objects, config.test_objects))
-  goal_locations = (
-    config.train_object_location,
-    config.test_object_location,
-  )
-
-  if config.train_distractor_object_location is not None:
+  #########
+  # Make sure both goal locations and objects have 3 values
+  #########
+  if config.train_distractor_object_location is None:
+    # dummy value and location with tree
+    train_distractor_object_location = (
+      min(config.start_train_positions[0][0] + 15, 47),
+      min(config.start_train_positions[0][1] + 15, 47)
+      )
+    goal_locations = (
+      config.train_object_location,
+      train_distractor_object_location,
+      config.test_object_location,
+    )
+    goal_objects = np.concatenate((
+      config.train_objects,
+      [BlockType.TREE.value],
+      config.test_objects,
+      ))
+  else:
     goal_locations = (
       config.train_object_location,
       config.train_distractor_object_location,
       config.test_object_location,
     )
-    assert len(goal_objects) == len(goal_locations)
+    goal_objects = np.concatenate((config.train_objects, config.test_objects))
+
+
+  assert len(goal_objects) == len(goal_locations)
+
 
   env_params = default_params.replace(
     world_seeds=(config.world_seed,),

@@ -23,6 +23,7 @@ exclude = [
     "buck-out",
     "build",
     "dist",
+    ".ipynb",
     "node_modules",
     "site-packages",
     "venv",

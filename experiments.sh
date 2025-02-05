@@ -1,4 +1,31 @@
 ########################################################
+# Experiment 10 - CRAFTAX
+##########################################
+
+# full experiment
+rm -r craftax_data .nicegui; DEBUG=1 \
+  JAX_COMPILATION_CACHE_DIR="/tmp/craftax_jax_cache" \
+  DATA_DIR='craftax_data' \
+  NAME='craftax_exp' \
+  GIVE_INSTRUCTIONS=1 \
+  DEBUG=0 \
+  DUMMY_ENV=0 \
+  EVAL_SHOW_MAP=0 \
+  python craftax_web_app.py
+
+# parameters of interest
+# MANIPULATION: {"paths", "juncture"}
+# SAY_REUSE: {1, 0}
+# EVAL_SHOW_MAP: {1, 0}
+
+# (paths) tell reuse + no map
+python launch.py crafting-v1-paths-r1-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
+
+# https://crafting-v1-paths-r1-m0.fly.dev
+flyctl deploy --config configs/crafting-v1-paths-r1-m0.toml
+
+
+########################################################
 # Experiment 9 - CRAFTAX
 ##########################################
 

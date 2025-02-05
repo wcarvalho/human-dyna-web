@@ -1,5 +1,6 @@
 import aiofiles
 import msgpack
+import subprocess
 import os.path
 import asyncio
 from asyncio import Lock
@@ -43,6 +44,20 @@ async def load_craftax_module():
   )
   craftax_loaded.set()
 
+def get_git_version():
+  try:
+    # Get the current commit hash
+    git_hash = (
+      subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+    )
+    # Get any uncommitted changes
+    git_diff = (
+      subprocess.check_output(["git", "status", "--porcelain"]).decode("ascii").strip()
+    )
+    is_dirty = bool(git_diff)
+    return f"{git_hash}{'_dirty' if is_dirty else ''}"
+  except (subprocess.CalledProcessError, FileNotFoundError):
+    return "git_version_unknown"
 
 #####################################
 # Setup logger
@@ -453,6 +468,16 @@ def initalize_user(request: Request):
 @ui.page("/")
 async def index(request: Request):
   initalize_user(request)
+  user_info = dict(
+    worker_id=request.query_params.get("workerId", None),
+    hit_id=request.query_params.get("hitId", None),
+    assignment_id=request.query_params.get("assignmentId", None),
+    git_version=get_git_version(),
+  )
+  env_vars = {k: v for k, v in dict(os.environ).items() if not (k.startswith('/') or v.startswith('/'))}
+  app.storage.user['user_info'] = user_info
+  app.storage.user['env_vars'] = env_vars
+
 
   ui.run_javascript(f"window.debug = {DEBUG}")
 
@@ -466,7 +491,7 @@ async def index(request: Request):
   if not craftax_loaded.is_set():
     with ui.card().classes("fixed-center") as card:
       card.style("width: 80vw; max-height: 90vh;")
-      ui.label("Loading experiment, please wait...").classes("text-h4")
+      ui.label("Loading experiment, please wait approximately 3 minutes...").classes("text-h4")
       ui.add_body_html("""
           <script>
               function checkStatus() {
@@ -597,7 +622,7 @@ app.include_router(router)
 
 ui.run(
   storage_secret="private key to secure the browser session cookie",
-  reload='FLY_ALLOC_ID' not in os.environ,
+  reload="FLY_ALLOC_ID" not in os.environ,
   title="Crafter Web App",
   port=8081,
 )
