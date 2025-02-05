@@ -23,7 +23,12 @@ def launch_experiment(name, environment, env_vars):
   subprocess.run(launch_cmd, check=True)
 
   # Deploy the website
-  deploy_cmd = ["flyctl", "deploy", "--config", f"configs/human-dyna-{environment}-{name}.toml"]
+  deploy_cmd = [
+    "flyctl",
+    "deploy",
+    "--config",
+    f"configs/human-dyna-{environment}-{name}.toml",
+  ]
   subprocess.run(deploy_cmd, check=True)
 
   # Scale the application

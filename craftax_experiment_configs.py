@@ -52,20 +52,20 @@ POSSIBLE_BLOCKS_MOD = list(POSSIBLE_BLOCKS + POSSIBLE_BLOCKS + POSSIBLE_BLOCKS)
 
 
 PRACTICE_BLOCK_CONFIG = BlockConfig(
-    world_seed=101,
-    start_train_positions=[
-      (32, 30),
-      (17, 28),
-      (29, 15),
-    ],
-    start_eval_positions=[(28, 25)],
-    train_object_location=(28, 30),
-    test_object_location=(26, 28),
-    train_distractor_object_location=(30, 20),
-    train_objects=[BlockType.SAPPHIRE.value, BlockType.DIAMOND.value],
-    test_objects=[BlockType.RUBY.value],
-    type="practice",
-  )
+  world_seed=101,
+  start_train_positions=[
+    (32, 30),
+    (17, 28),
+    (29, 15),
+  ],
+  start_eval_positions=[(28, 25)],
+  train_object_location=(28, 30),
+  test_object_location=(26, 28),
+  train_distractor_object_location=(30, 20),
+  train_objects=[BlockType.SAPPHIRE.value, BlockType.DIAMOND.value],
+  test_objects=[BlockType.RUBY.value],
+  type="practice",
+)
 
 ########################################################
 # Paths manipulation configs
@@ -155,7 +155,7 @@ JUNCTURE_CONFIGS = [
   BlockConfig(
     world_seed=1,
     start_train_positions=[
-      (31, 32),
+      (11, 32),
       (25, 46),
       (14, 46),
     ],
@@ -259,18 +259,20 @@ def make_block_env_params(config: BlockConfig, default_params):
     # dummy value and location with tree
     train_distractor_object_location = (
       min(config.start_train_positions[0][0] + 15, 47),
-      min(config.start_train_positions[0][1] + 15, 47)
-      )
+      min(config.start_train_positions[0][1] + 15, 47),
+    )
     goal_locations = (
       config.train_object_location,
       train_distractor_object_location,
       config.test_object_location,
     )
-    goal_objects = np.concatenate((
-      config.train_objects,
-      [BlockType.TREE.value],
-      config.test_objects,
-      ))
+    goal_objects = np.concatenate(
+      (
+        config.train_objects,
+        [BlockType.TREE.value],
+        config.test_objects,
+      )
+    )
   else:
     goal_locations = (
       config.train_object_location,
@@ -279,9 +281,7 @@ def make_block_env_params(config: BlockConfig, default_params):
     )
     goal_objects = np.concatenate((config.train_objects, config.test_objects))
 
-
   assert len(goal_objects) == len(goal_locations)
-
 
   env_params = default_params.replace(
     world_seeds=(config.world_seed,),

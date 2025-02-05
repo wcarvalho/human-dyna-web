@@ -43,7 +43,6 @@ from craftax_experiment_configs import (
 )
 
 
-
 load_dotenv()
 
 logger = get_logger(__name__)
@@ -52,6 +51,7 @@ DEBUG = int(os.environ.get("DEBUG", 1))
 DEBUG_DISPLAY = int(os.environ.get("DEBUG_DISPLAY", 1))
 MANIPULATION = os.environ.get("MANIPULATION", "juncture")
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 0))
+NUM_BLOCKS = int(os.environ.get("NUM_BLOCKS", 100))
 EVAL_SHOW_MAP = int(os.environ.get("EVAL_SHOW_MAP", 1))
 
 
@@ -64,9 +64,16 @@ MONSTERS = int(os.environ.get("MONSTERS", 1))
 NAME = os.environ.get("NAME", "exp")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
-MAX_STAGE_EPISODES = 100 if DEBUG == 0 else 8
+MAX_STAGE_EPISODES = 50 if DEBUG == 0 else 8
 MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 1
 MAX_START_POSITIONS = 10
+
+
+@struct.dataclass
+class EnvParams(OriginalEnvParams):
+  active_goals: Tuple[int, ...] = tuple()
+  num_success: int = 5
+
 
 class BlockStageConfig(struct.PyTreeNode):
   world_seed: int
@@ -79,8 +86,8 @@ if DUMMY_ENV:
   from simulations.craftax_web_env import (
     CraftaxSymbolicWebEnvNoAutoResetDummy as CraftaxSymbolicWebEnvNoAutoReset,
   )
-  def fullmap_render(timestep, world_seed):
 
+  def fullmap_render(timestep, world_seed):
     if DEBUG:
       subdir = "single" if MANIPULATION == "paths" else "juncture"
       cache_dir = os.path.join("craftax_cache", subdir)
@@ -111,6 +118,7 @@ if DUMMY_ENV:
 else:
   from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
   from craftax_fullmap_renderer import render_craftax_pixels as render_fullmap_pixels
+
   def fullmap_render(timestep, world_seed):
     with jax.disable_jit():
       return render_fullmap_pixels(
@@ -127,7 +135,6 @@ def get_user_save_file_fn():
 ########################################
 # Utility functions
 ########################################
-EnvParams = struct.PyTreeNode
 EvaluateSuccessFn = Callable[[nicewebrl.TimeStep, EnvParams], jnp.bool_]
 
 
@@ -147,7 +154,8 @@ def get_remaining(possible_goals, num_success):
 
   # maintain order of goals
   output = jnp.array(
-    [remaining.get(str(g), n) for g, n in zip(possible_goals, num_success)], dtype=jnp.int32
+    [remaining.get(str(g), n) for g, n in zip(possible_goals, num_success)],
+    dtype=jnp.int32,
   )
   logger.info(f"get_remaining output={output}")
   return output
@@ -175,16 +183,17 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
   This is in tracker because goals are sampled until enough successful episodes are completed.
 
   NOTE: this intercepts step in TimestepWrapper and replaces its reset with this reset. This is how you get goal-control automatically while you step and automatically reset.
+
+  NOTE: can't autoreset because no longer jittable. reset in stage.
   """
 
   def __init__(
     self,
     env,
     possible_goals: jnp.ndarray = None,
-    autoreset: bool = False,
     **kwargs,
   ):
-    super().__init__(env, autoreset=autoreset, **kwargs)
+    super().__init__(env, autoreset=False, **kwargs)
     self.possible_goals = possible_goals
 
   # provide proxy access to regular attributes of wrapped object
@@ -210,9 +219,7 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
     #########################################
     # e.g. [5, 0, 5, 0] --> [0.5, 0, 0.5, 0]
     # e.g. [1, 5, 0, 0] --> [0.2, 0.8, 0, 0]
-    jax.debug.print("remaining: {remaining}", remaining=remaining)
     goal_probs = remaining / (remaining.sum())
-    jax.debug.print("goal_probs: {goal_probs}", goal_probs=goal_probs)
     goal_sampler = distrax.Categorical(probs=goal_probs)
     key, key_ = jax.random.split(key)
     goal_idx = goal_sampler.sample(seed=key_)
@@ -236,11 +243,15 @@ action_to_name = [a.name for a in actions]
 possible_goals = jnp.array(POSSIBLE_GOALS)
 
 
-def blocks_to_goals(blocks: BlockType) -> int:
-  """get all possible goals from a list of blocks"""
-  goals = [BLOCK_TO_GOAL.get(b, None) for b in blocks]
+def blocks_to_goals(blocks: BlockType, default: int = None) -> int:
+  """get all possible goals from a list of blocks.
+  
+  if don't provide default, will remove unknown blocks.
+  """
+  goals = [BLOCK_TO_GOAL.get(b, default) for b in blocks]
   goals = [g for g in goals if g is not None]
   return goals
+
 
 def blocks_to_active_goals(blocks: List[BlockType]) -> jnp.ndarray:
   """Creates a binary vector indicating which goals are active based on the provided Achievements."""
@@ -289,7 +300,7 @@ def make_start_position(start_positions):
 dummy_start_position = make_start_position((24, 24))
 
 
-default_params = jax_env.default_params.replace(
+default_params = EnvParams(
   day_length=100000,
   max_timesteps=200 if DEBUG == 0 else 2,
   mob_despawn_distance=100000,
@@ -306,7 +317,6 @@ dummy_params = make_block_env_params(dummy_block_config, default_params).replace
 jax_env = GoalSettingSuccessTrackingEnvWrapper(
   env=jax_env,
   possible_goals=possible_goals,
-  autoreset=False,
 )
 
 # create web environment wrapper
@@ -340,9 +350,6 @@ if PRECOMPILE:
   )
 
 
-
-
-
 def evaluate_success_fn(timestep: nicewebrl.TimeStep, params: EnvParams):
   success = timestep.reward > 0.5 and timestep.last() > 0
   update_successes(timestep.state.current_goal, success)
@@ -360,13 +367,14 @@ def remove_extra_spaces(text):
 # ------------------
 # Environment stage
 # ------------------
-def make_image_html(src, id="stateImage", percent=50):
+def make_image_html(src, id="stateImage", percent=100):
   html = f"""
   <div id="{id}Container" style="display: flex; justify-content: center; align-items: center;">
       <img id="{id}" src="{src}" style="width: {percent}%; height: {percent}%; object-fit: contain;">
   </div>
   """
   return html
+
 
 def get_remaining_goals():
   stage_idx = app.storage.user.get("stage_idx", 0)
@@ -375,6 +383,7 @@ def get_remaining_goals():
   name = lambda i: Achievement(int(i)).name.replace("_", " ").title()
   remaining = {name(i): r for i, r in remaining.items()}
   return remaining
+
 
 def debug_info(stage):
   stage_state = stage.get_user_data("stage_state")
@@ -415,7 +424,11 @@ async def experiment_instructions_display_fn(stage, container):
 
     ui.markdown(f"## {stage.title}")
     ui.markdown(f"{remove_extra_spaces(stage.body)}", extras=["cuddled-lists"])
-    ui.markdown("**You can control the agent using the arrow keys. Press the space bar to 'interact', i.e. to collect objects**.")
+    ui.markdown(
+      "**You can control the agent using the arrow keys. Press the space bar to 'interact', i.e. to collect objects**."
+    )
+    if EVAL_SHOW_MAP == 0:
+      ui.markdown("**You will only get the full map in phase 1.**")
     ui.markdown("Below are the stones you will need to mine.")
 
     # Get all possible goals and create images for each
@@ -525,7 +538,7 @@ async def env_reset_display_fn(
   image = base64_npimage(image)
 
   category = Achievement(goal_object_idx).name.replace("_", " ").title()
-  
+
   remaining = get_remaining_goals()
   logger.info(f"remaining: {remaining}")
 
@@ -543,6 +556,84 @@ def distance(x1, x2):
   return jnp.sqrt(jnp.sum((x1 - x2) ** 2, axis=0))
 
 
+async def set_initial_timestep_from_training(stage: EnvStage) -> Optional[nicewebrl.TimeStep]:
+    """Sets the initial timestep for an evaluation stage based on training data.
+    
+    This function:
+    1. Loads training stage states
+    2. Finds timesteps where agent started in target position
+    3. Picks the timestep closest to the goal
+    4. Updates stage params and state with this position
+    
+    Args:
+        stage: The evaluation stage to set initial timestep for
+        
+    Returns:
+        Optional[TimeStep]: The new timestep if successful, None if no training data found
+    """
+    current_name = stage.name  # e.g. "juncture_0_eval1"
+    training_name = current_name.replace("_eval1", "_training")
+    
+    # Load training stage states
+    logger.info(f"Loading data from {training_name}")
+    training_stage_states = await nicewebrl.StageStateModel.filter(
+        session_id=app.storage.browser["id"],
+        name=training_name,
+    ).all()
+    logger.info(f"num training_stage_states: {len(training_stage_states)}")
+    
+    if len(training_stage_states) == 0:
+        return None
+
+    # Deserialize training stage states
+    current_stage_state = stage.get_user_data("stage_state")
+    training_stage_states = [
+        serialization.from_bytes(current_stage_state, s.data)
+        for s in training_stage_states
+    ]
+    timesteps = [s.timestep for s in training_stage_states]
+
+    # Combine all timesteps from all stages
+    all_timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+
+    # Get timesteps where agent started in position we care about
+    goal_start_position = stage.env_params.start_positions[0]  # [2]
+    timestep_start_position = all_timesteps.state.start_position  # [N, 2]
+    match = (timestep_start_position == goal_start_position[None]).sum(axis=-1) == 2
+    relevant_timesteps = jax.tree_map(lambda t: t[match], all_timesteps)
+
+    # For each timestep, compute distance to goal
+    current_goal = current_stage_state.timestep.state.current_goal
+    placed_blocks = stage.env_params.placed_goals
+    placed_goals = jnp.array(blocks_to_goals(placed_blocks, default=-1), dtype=jnp.int32)
+    goal_idx = (current_goal == placed_goals).argmax()
+    goal_location = stage.env_params.goal_locations[goal_idx]
+
+    distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
+        jnp.asarray(goal_location), relevant_timesteps.state.player_position
+    )
+    logger.info(f"current_goal: {current_goal}")
+    logger.info(f"goal_location: {goal_location}")
+    logger.info(f"player_locations: {relevant_timesteps.state.player_position}")
+    logger.info(f"distances: {distances}")
+
+    # Pick closest timestep as starting point
+    sorted_indices = jnp.argsort(distances)
+    closest_idx = sorted_indices[0]
+    relevant_timestep_agent_pos = relevant_timesteps.state.player_position[closest_idx]
+    logger.info(f"will spawn at position: {relevant_timestep_agent_pos}")
+
+    # Set the initial params for the stage to have this as a start position
+    stage.env_params = stage.env_params.replace(
+        start_positions=make_start_position(relevant_timestep_agent_pos[None])
+    )
+    rng = nicewebrl.new_rng()
+    new_timestep = stage.web_env.reset(rng, stage.env_params)
+    await stage.set_user_data(stage_state=stage.state_cls(timestep=new_timestep))
+    
+    return new_timestep
+
+
 async def env_reset_juncture_display_fn(
   stage: EnvStage,
   container: ui.element,
@@ -551,59 +642,10 @@ async def env_reset_juncture_display_fn(
   juncture_stage = "juncture" in stage.name
   eval1 = stage.metadata["condition"] == 1
   if juncture_stage and eval1:
-    ############################
-    # Set initial timestep
-    ############################
     ui.markdown("# Loading task. One moment please")
-    current_name = stage.name  # e.g. "juncture_0_eval1"
-    training_name = current_name.replace("_eval1", "_training")
-    # first get stages that match name (index should be covered)
-    logger.info(f"Loading data from {training_name}")
-    training_stage_states = await nicewebrl.StageStateModel.filter(
-      session_id=app.storage.browser["id"],
-      name=training_name,
-    ).all()
-
-    # deserialize training stage states
-    current_stage_state = stage.get_user_data("stage_state")
-    training_stage_states = [
-      serialization.from_bytes(current_stage_state, s.data)
-      for s in training_stage_states
-    ]
-    timesteps = [s.timestep for s in training_stage_states]
-
-    # combine all timesteps from all stages
-    all_timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
-
-    # get timesteps where agent started in position we care about
-    goal_start_position = stage.env_params.start_positions[0]  # [2]
-    timestep_start_position = all_timesteps.state.start_position  # [N, 2]
-    match = (timestep_start_position == goal_start_position[None]).sum(axis=-1) == 2
-    relevant_timesteps = jax.tree_map(lambda t: t[match], all_timesteps)
-
-    # for each timestep, compute distance to goal
-    current_goal = current_stage_state.timestep.state.current_goal
-    placed_blocks = stage.env_params.placed_goals
-    placed_goals = jnp.array(blocks_to_goals(placed_blocks), dtype=jnp.int32)
-    goal_idx = (current_goal == placed_goals).argmax()
-    goal_location = stage.env_params.goal_locations[goal_idx]
-
-    distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
-      jnp.asarray(goal_location), relevant_timesteps.state.player_position
-    )
-    # pick closest timestep as starting point
-    sorted_indices = jnp.argsort(distances)
-    closest_idx = sorted_indices[0]
-    relevant_timestep_agent_pos = relevant_timesteps.state.player_position[closest_idx]
-
-    # set the initial params for the stage to have this as a start position
-    # reset env with this position and update stage accordingly
-    stage.env_params = stage.env_params.replace(
-      start_positions=make_start_position(relevant_timestep_agent_pos[None])
-    )
-    rng = nicewebrl.new_rng()
-    new_timestep = stage.web_env.reset(rng, stage.env_params)
-    await stage.set_user_data(stage_state=stage.state_cls(timestep=new_timestep))
+    new_timestep = await set_initial_timestep_from_training(stage)
+    if new_timestep is not None:
+      timestep = new_timestep
 
   ############################
   # Display goal object image
@@ -651,7 +693,7 @@ async def env_stage_display_fn(
 
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
-    ui.markdown(f"## {stage.title}")
+    #ui.markdown(f"## {stage.title}")
     # ui.markdown(f"#### Goal task: {current_goal_name}")
     # Display goal object using matplotlib
     with ui.matplotlib(figsize=(1, 1)).figure as fig:
@@ -695,11 +737,8 @@ async def env_stage_display_fn(
       """)
     else:
       ui.html(f"""
-      <div id="stateImageContainer" style="display: flex; width: 100%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
-        <div style="flex: 2; max-width: 100%;">
-            <div style="text-align: center; margin-bottom: 5px;">Current View</div>
-            <img src="{partial_obs_image}" id="stateImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
-        </div>
+      <div id="stateImageContainer" style="display: flex; width: 150%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
+          <img src="{partial_obs_image}" id="stateImage" style="width: 150%; height: auto; max-height: 90vh; object-fit: contain;">
       </div>
       """)
 
@@ -711,12 +750,13 @@ def make_env_stage(
   stage_config: BlockStageConfig,
   metadata: dict,
   min_success: Optional[int] = None,
+  max_episodes: Optional[int] = None,
 ):
   eval_stage = metadata.get("eval", False)
   active_goals = blocks_to_active_goals(stage_config.goals)
   env_params = make_block_env_params(block_config, default_params)
   min_success = min_success or MIN_SUCCESS_TASK
-
+  max_episodes = max_episodes or MAX_STAGE_EPISODES
   env_params = env_params.replace(
     active_goals=active_goals.astype(jnp.float32),
     start_positions=make_start_position(stage_config.start_positions),
@@ -740,7 +780,7 @@ def make_env_stage(
   else:
     reset_display_fn = env_reset_display_fn
 
-  print("="*30)
+  print("=" * 30)
   print("Made stage with config")
   print(stage_config)
   return EnvStage(
@@ -756,7 +796,7 @@ def make_env_stage(
     display_fn=display_fn,
     evaluate_success_fn=evaluate_success_fn,
     min_success=min_success * sum(active_goals),
-    max_episodes=MAX_STAGE_EPISODES,
+    max_episodes=max_episodes,
     verbosity=VERBOSITY,
     user_save_file_fn=get_user_save_file_fn,
     autoreset_on_done=True,
@@ -856,7 +896,8 @@ def make_block(
     title=make_title("Phase 2"),
     block_config=block_config,
     stage_config=eval_config,
-    min_success=min_success,
+    min_success=1,
+    max_episodes=1,
     metadata=dict(
       world_seed=eval_config.world_seed,
       condition=1,
@@ -879,7 +920,8 @@ def make_block(
       title=make_title("Phase 2"),
       block_config=block_config,
       stage_config=eval2_config,
-      min_success=min_success,
+      min_success=1,
+      max_episodes=1,
       metadata=dict(
         world_seed=eval2_config.world_seed,
         condition=2,
@@ -909,6 +951,7 @@ def metadata_from_config(config: BlockConfig):
     "train_distractor_object_location",
   ]
   return {k: getattr(config, k) for k in keys}
+
 
 ####################
 # practice block
@@ -1036,6 +1079,9 @@ elif MANIPULATION == "juncture":
     )
     for idx, config in enumerate(JUNCTURE_CONFIGS)
   ]
+
+NUM_BLOCKS = min(NUM_BLOCKS, len(experiment_blocks))
+experiment_blocks = experiment_blocks[:NUM_BLOCKS]
 
 instruct_block = nicewebrl.Block(
   [

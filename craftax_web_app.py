@@ -44,6 +44,7 @@ async def load_craftax_module():
   )
   craftax_loaded.set()
 
+
 def get_git_version():
   try:
     # Get the current commit hash
@@ -58,6 +59,7 @@ def get_git_version():
     return f"{git_hash}{'_dirty' if is_dirty else ''}"
   except (subprocess.CalledProcessError, FileNotFoundError):
     return "git_version_unknown"
+
 
 #####################################
 # Setup logger
@@ -170,6 +172,7 @@ async def save_data(final_save=True, feedback=None, **kwargs):
         f"logs/{blob_user_filename()}.log",
       ),
     ]
+    logger.info("Saving to bucket: craftax-human-dyna")
     await save_to_gcs_with_retries(
       files_to_save,
       max_retries=5 if final_save else 1,
@@ -286,9 +289,6 @@ async def start_experiment(meta_container, stage_container, button_container):
   # Run experiment
   # ========================================
   logger.info("Starting experiment")
-  # if DELAY_EXPERIMENT_LOADING:
-  # experiment = await experiment_structure()
-  # else:
   experiment = craftax_module
   while True and await experiment_not_finished():
     # get current stage
@@ -325,9 +325,8 @@ async def finish_experiment(meta_container, stage_container, button_container):
   nicewebrl.clear_element(stage_container)
   nicewebrl.clear_element(button_container)
   logger.info("Finishing experiment")
-  experiment_finished = app.storage.user.get("experiment_finished", False)
 
-  if experiment_finished and not DEBUG:
+  if DEBUG > 0:
     # in case called multiple times
     return
 
@@ -343,8 +342,10 @@ async def finish_experiment(meta_container, stage_container, button_container):
         "**Once the data is uploaded, this app will automatically move to the next screen**"
       )
 
-    # when over, delete user data.
-    await save_data(final_save=True, feedback=feedback)
+    # Create a task for the save operation
+    save_task = asyncio.create_task(save_data(final_save=True, feedback=feedback))
+    # Wait for the task to complete but allow other async operations to run
+    await save_task
     app.storage.user["data_saved"] = True
 
   app.storage.user["data_saved"] = app.storage.user.get("data_saved", False)
@@ -474,10 +475,13 @@ async def index(request: Request):
     assignment_id=request.query_params.get("assignmentId", None),
     git_version=get_git_version(),
   )
-  env_vars = {k: v for k, v in dict(os.environ).items() if not (k.startswith('/') or v.startswith('/'))}
-  app.storage.user['user_info'] = user_info
-  app.storage.user['env_vars'] = env_vars
-
+  env_vars = {
+    k: v
+    for k, v in dict(os.environ).items()
+    if not (k.startswith("/") or v.startswith("/"))
+  }
+  app.storage.user["user_info"] = user_info
+  app.storage.user["env_vars"] = env_vars
 
   ui.run_javascript(f"window.debug = {DEBUG}")
 
@@ -491,7 +495,20 @@ async def index(request: Request):
   if not craftax_loaded.is_set():
     with ui.card().classes("fixed-center") as card:
       card.style("width: 80vw; max-height: 90vh;")
-      ui.label("Loading experiment, please wait approximately 3 minutes...").classes("text-h4")
+      ui.label("Loading experiment, please wait approximately 3 minutes...").classes(
+        "text-h4"
+      )
+
+      # Add elapsed time counter
+      elapsed_time = ui.label('Time elapsed: 0 seconds')
+      start_time = time.time()
+
+      def update_elapsed_time():
+          seconds = int(time.time() - start_time)
+          elapsed_time.text = f'Time elapsed: {seconds} seconds'
+      
+      ui.timer(1.0, update_elapsed_time)
+      
       ui.add_body_html("""
           <script>
               function checkStatus() {
@@ -560,18 +577,13 @@ async def check_if_over(*args, episode_limit=60, **kwargs):
   minutes_passed = app.storage.user["session_duration"]
   if minutes_passed > episode_limit:
     logger.info(f"experiment timed out after {minutes_passed} minutes")
-    # if DELAY_EXPERIMENT_LOADING:
-    # experiment = await experiment_structure()
-    # else:
     experiment = craftax_module
     app.storage.user["stage_idx"] = len(experiment.all_stages)
     await finish_experiment(*args, **kwargs)
 
 
 async def footer(footer_container):
-  # if DELAY_EXPERIMENT_LOADING:
-  # experiment = await experiment_structure()
-  # else:
+
   experiment = craftax_module
   """Add user information and progress bar to the footer"""
   with footer_container:

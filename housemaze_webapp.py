@@ -619,10 +619,13 @@ async def index(request: Request):
     git_version=get_git_version(),
   )
   initalize_user(user_info)
-  env_vars = {k: v for k, v in dict(os.environ).items() if not (k.startswith('/') or v.startswith('/'))}
-  app.storage.user['user_info'] = user_info
-  app.storage.user['env_vars'] = env_vars
-
+  env_vars = {
+    k: v
+    for k, v in dict(os.environ).items()
+    if not (k.startswith("/") or v.startswith("/"))
+  }
+  app.storage.user["user_info"] = user_info
+  app.storage.user["env_vars"] = env_vars
 
   def print_ping(e):
     logger.info(str(e.args))
