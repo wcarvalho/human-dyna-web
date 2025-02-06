@@ -61,14 +61,17 @@ loader_logger = get_logger("craftax_loader")
 load_start_time = None
 load_error = None
 
+
 def restore_texture_cache_if_needed():
   """Restore texture cache files from local cache if they don't exist in the package directory."""
   # Get paths for texture cache files
   original_constants_directory = os.path.join(
-    os.path.dirname(find_spec("craftax.craftax.constants").origin),
-    "assets")
+    os.path.dirname(find_spec("craftax.craftax.constants").origin), "assets"
+  )
   TEXTURE_CACHE_FILE = os.path.join(original_constants_directory, "texture_cache.pbz2")
-  FULLMAP_TEXTURE_CACHE_FILE = os.path.join(original_constants_directory, "fullmap_texture_cache_48.pbz2")
+  FULLMAP_TEXTURE_CACHE_FILE = os.path.join(
+    original_constants_directory, "fullmap_texture_cache_48.pbz2"
+  )
 
   # Local cache paths
   cache_dir = "craftax_cache"
@@ -81,18 +84,25 @@ def restore_texture_cache_if_needed():
 
   # Copy texture cache files if needed
   if not os.path.exists(TEXTURE_CACHE_FILE) and os.path.exists(source_cache):
-    loader_logger.info(f"Restoring texture cache from {source_cache} to {TEXTURE_CACHE_FILE}")
+    loader_logger.info(
+      f"Restoring texture cache from {source_cache} to {TEXTURE_CACHE_FILE}"
+    )
     shutil.copy2(source_cache, TEXTURE_CACHE_FILE)
     loader_logger.info("Regular cache file restored successfully!")
   else:
     loader_logger.info(f"{TEXTURE_CACHE_FILE} already exists.")
 
-  if not os.path.exists(FULLMAP_TEXTURE_CACHE_FILE) and os.path.exists(source_fullmap_cache):
-    loader_logger.info(f"Restoring fullmap texture cache from {source_fullmap_cache} to {FULLMAP_TEXTURE_CACHE_FILE}")
+  if not os.path.exists(FULLMAP_TEXTURE_CACHE_FILE) and os.path.exists(
+    source_fullmap_cache
+  ):
+    loader_logger.info(
+      f"Restoring fullmap texture cache from {source_fullmap_cache} to {FULLMAP_TEXTURE_CACHE_FILE}"
+    )
     shutil.copy2(source_fullmap_cache, FULLMAP_TEXTURE_CACHE_FILE)
     loader_logger.info("Fullmap cache file restored successfully!")
   else:
     loader_logger.info(f"{FULLMAP_TEXTURE_CACHE_FILE} already exists.")
+
 
 async def load_craftax_module():
   global craftax_module, load_start_time, load_error
@@ -131,6 +141,7 @@ async def load_craftax_module():
   finally:
     craftax_loaded.set()
 
+
 def get_git_version():
   try:
     # Get the current commit hash
@@ -145,6 +156,7 @@ def get_git_version():
     return f"{git_hash}{'_dirty' if is_dirty else ''}"
   except (subprocess.CalledProcessError, FileNotFoundError):
     return "git_version_unknown"
+
 
 #####################################
 # Helper functions
@@ -767,19 +779,3 @@ ui.run(
   title="Crafter Web App",
   port=8080,
 )
-
-
-def get_git_version():
-  try:
-    # Get the current commit hash
-    git_hash = (
-      subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
-    )
-    # Get any uncommitted changes
-    git_diff = (
-      subprocess.check_output(["git", "status", "--porcelain"]).decode("ascii").strip()
-    )
-    is_dirty = bool(git_diff)
-    return f"{git_hash}{'_dirty' if is_dirty else ''}"
-  except (subprocess.CalledProcessError, FileNotFoundError):
-    return "git_version_unknown"
