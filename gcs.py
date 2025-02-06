@@ -65,7 +65,7 @@ async def save_file_to_gcs(local_filename, blob_filename, bucket_name="human-dyn
     blob.upload_from_filename(local_filename)
     logger.info(f"Saved {blob_filename} in bucket {bucket.name}")
     return True  # Successfully saved
-  #except (TransportError, gcs_exceptions.GoogleCloudError) as e:
+  # except (TransportError, gcs_exceptions.GoogleCloudError) as e:
   #  logger.info(f"Error saving to GCS: {e}")
   except Exception as e:
     logger.info(f"Unexpected error: {e}")

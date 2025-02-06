@@ -245,7 +245,7 @@ possible_goals = jnp.array(POSSIBLE_GOALS)
 
 def blocks_to_goals(blocks: BlockType, default: int = None) -> int:
   """get all possible goals from a list of blocks.
-  
+
   if don't provide default, will remove unknown blocks.
   """
   goals = [BLOCK_TO_GOAL.get(b, default) for b in blocks]
@@ -556,82 +556,83 @@ def distance(x1, x2):
   return jnp.sqrt(jnp.sum((x1 - x2) ** 2, axis=0))
 
 
-async def set_initial_timestep_from_training(stage: EnvStage) -> Optional[nicewebrl.TimeStep]:
-    """Sets the initial timestep for an evaluation stage based on training data.
-    
-    This function:
-    1. Loads training stage states
-    2. Finds timesteps where agent started in target position
-    3. Picks the timestep closest to the goal
-    4. Updates stage params and state with this position
-    
-    Args:
-        stage: The evaluation stage to set initial timestep for
-        
-    Returns:
-        Optional[TimeStep]: The new timestep if successful, None if no training data found
-    """
-    current_name = stage.name  # e.g. "juncture_0_eval1"
-    training_name = current_name.replace("_eval1", "_training")
-    
-    # Load training stage states
-    logger.info(f"Loading data from {training_name}")
-    training_stage_states = await nicewebrl.StageStateModel.filter(
-        session_id=app.storage.browser["id"],
-        name=training_name,
-    ).all()
-    logger.info(f"num training_stage_states: {len(training_stage_states)}")
-    
-    if len(training_stage_states) == 0:
-        return None
+async def set_initial_timestep_from_training(
+  stage: EnvStage,
+) -> Optional[nicewebrl.TimeStep]:
+  """Sets the initial timestep for an evaluation stage based on training data.
 
-    # Deserialize training stage states
-    current_stage_state = stage.get_user_data("stage_state")
-    training_stage_states = [
-        serialization.from_bytes(current_stage_state, s.data)
-        for s in training_stage_states
-    ]
-    timesteps = [s.timestep for s in training_stage_states]
+  This function:
+  1. Loads training stage states
+  2. Finds timesteps where agent started in target position
+  3. Picks the timestep closest to the goal
+  4. Updates stage params and state with this position
 
-    # Combine all timesteps from all stages
-    all_timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+  Args:
+      stage: The evaluation stage to set initial timestep for
 
-    # Get timesteps where agent started in position we care about
-    goal_start_position = stage.env_params.start_positions[0]  # [2]
-    timestep_start_position = all_timesteps.state.start_position  # [N, 2]
-    match = (timestep_start_position == goal_start_position[None]).sum(axis=-1) == 2
-    relevant_timesteps = jax.tree_map(lambda t: t[match], all_timesteps)
+  Returns:
+      Optional[TimeStep]: The new timestep if successful, None if no training data found
+  """
+  current_name = stage.name  # e.g. "juncture_0_eval1"
+  training_name = current_name.replace("_eval1", "_training")
 
-    # For each timestep, compute distance to goal
-    current_goal = current_stage_state.timestep.state.current_goal
-    placed_blocks = stage.env_params.placed_goals
-    placed_goals = jnp.array(blocks_to_goals(placed_blocks, default=-1), dtype=jnp.int32)
-    goal_idx = (current_goal == placed_goals).argmax()
-    goal_location = stage.env_params.goal_locations[goal_idx]
+  # Load training stage states
+  logger.info(f"Loading data from {training_name}")
+  training_stage_states = await nicewebrl.StageStateModel.filter(
+    session_id=app.storage.browser["id"],
+    name=training_name,
+  ).all()
+  logger.info(f"num training_stage_states: {len(training_stage_states)}")
 
-    distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
-        jnp.asarray(goal_location), relevant_timesteps.state.player_position
-    )
-    logger.info(f"current_goal: {current_goal}")
-    logger.info(f"goal_location: {goal_location}")
-    logger.info(f"player_locations: {relevant_timesteps.state.player_position}")
-    logger.info(f"distances: {distances}")
+  if len(training_stage_states) == 0:
+    return None
 
-    # Pick closest timestep as starting point
-    sorted_indices = jnp.argsort(distances)
-    closest_idx = sorted_indices[0]
-    relevant_timestep_agent_pos = relevant_timesteps.state.player_position[closest_idx]
-    logger.info(f"will spawn at position: {relevant_timestep_agent_pos}")
+  # Deserialize training stage states
+  current_stage_state = stage.get_user_data("stage_state")
+  training_stage_states = [
+    serialization.from_bytes(current_stage_state, s.data) for s in training_stage_states
+  ]
+  timesteps = [s.timestep for s in training_stage_states]
 
-    # Set the initial params for the stage to have this as a start position
-    stage.env_params = stage.env_params.replace(
-        start_positions=make_start_position(relevant_timestep_agent_pos[None])
-    )
-    rng = nicewebrl.new_rng()
-    new_timestep = stage.web_env.reset(rng, stage.env_params)
-    await stage.set_user_data(stage_state=stage.state_cls(timestep=new_timestep))
-    
-    return new_timestep
+  # Combine all timesteps from all stages
+  all_timesteps = jtu.tree_map(lambda *v: jnp.stack(v), *timesteps)
+
+  # Get timesteps where agent started in position we care about
+  goal_start_position = stage.env_params.start_positions[0]  # [2]
+  timestep_start_position = all_timesteps.state.start_position  # [N, 2]
+  match = (timestep_start_position == goal_start_position[None]).sum(axis=-1) == 2
+  relevant_timesteps = jax.tree_map(lambda t: t[match], all_timesteps)
+
+  # For each timestep, compute distance to goal
+  current_goal = current_stage_state.timestep.state.current_goal
+  placed_blocks = stage.env_params.placed_goals
+  placed_goals = jnp.array(blocks_to_goals(placed_blocks, default=-1), dtype=jnp.int32)
+  goal_idx = (current_goal == placed_goals).argmax()
+  goal_location = stage.env_params.goal_locations[goal_idx]
+
+  distances = jax.vmap(distance, in_axes=(None, 0), out_axes=(0))(
+    jnp.asarray(goal_location), relevant_timesteps.state.player_position
+  )
+  logger.info(f"current_goal: {current_goal}")
+  logger.info(f"goal_location: {goal_location}")
+  logger.info(f"player_locations: {relevant_timesteps.state.player_position}")
+  logger.info(f"distances: {distances}")
+
+  # Pick closest timestep as starting point
+  sorted_indices = jnp.argsort(distances)
+  closest_idx = sorted_indices[0]
+  relevant_timestep_agent_pos = relevant_timesteps.state.player_position[closest_idx]
+  logger.info(f"will spawn at position: {relevant_timestep_agent_pos}")
+
+  # Set the initial params for the stage to have this as a start position
+  stage.env_params = stage.env_params.replace(
+    start_positions=make_start_position(relevant_timestep_agent_pos[None])
+  )
+  rng = nicewebrl.new_rng()
+  new_timestep = stage.web_env.reset(rng, stage.env_params)
+  await stage.set_user_data(stage_state=stage.state_cls(timestep=new_timestep))
+
+  return new_timestep
 
 
 async def env_reset_juncture_display_fn(
@@ -693,7 +694,7 @@ async def env_stage_display_fn(
 
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
-    #ui.markdown(f"## {stage.title}")
+    # ui.markdown(f"## {stage.title}")
     # ui.markdown(f"#### Goal task: {current_goal_name}")
     # Display goal object using matplotlib
     with ui.matplotlib(figsize=(1, 1)).figure as fig:

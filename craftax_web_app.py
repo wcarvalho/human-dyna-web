@@ -8,19 +8,22 @@ from nicegui import app, ui
 from fastapi import Request, APIRouter
 from tortoise import Tortoise
 import time
+import traceback
+from datetime import datetime
 
 from gcs import save_to_gcs_with_retries
 import nicewebrl
 from nicewebrl.logging import setup_logging, get_logger
 from nicewebrl.utils import wait_for_button_or_keypress
 from nicewebrl import stages
-
+from importlib.util import find_spec
+import shutil
 
 DATABASE_FILE = os.environ.get("DB_FILE", "db.sqlite")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
 DELAY_EXPERIMENT_LOADING = int(os.environ.get("DELAY_EXPERIMENT_LOADING", 0))
-DEBUG = int(os.environ.get("DEBUG", 1))
+DEBUG = int(os.environ.get("DEBUG", 0))
 DEBUG_SEED = int(os.environ.get("SEED", 0))
 DISPLAY_FULL_MAP = int(os.environ.get("DISPLAY_FULL_MAP", 0))
 NAME = os.environ.get("NAME", "exp")
@@ -36,31 +39,7 @@ craftax_module = None
 craftax_loaded = asyncio.Event()
 
 
-async def load_craftax_module():
-  global craftax_module
-  loop = asyncio.get_event_loop()
-  craftax_module = await loop.run_in_executor(
-    None, lambda: __import__("craftax_experiment_structure")
-  )
-  craftax_loaded.set()
-
-
-def get_git_version():
-  try:
-    # Get the current commit hash
-    git_hash = (
-      subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
-    )
-    # Get any uncommitted changes
-    git_diff = (
-      subprocess.check_output(["git", "status", "--porcelain"]).decode("ascii").strip()
-    )
-    is_dirty = bool(git_diff)
-    return f"{git_hash}{'_dirty' if is_dirty else ''}"
-  except (subprocess.CalledProcessError, FileNotFoundError):
-    return "git_version_unknown"
-
-
+# Enhanced logging setup for craftax loader
 #####################################
 # Setup logger
 #####################################
@@ -76,7 +55,96 @@ setup_logging(
   nicegui_storage_user_key="seed",
 )
 logger = get_logger("main")
+loader_logger = get_logger("craftax_loader")
 
+# Global variables for tracking load state
+load_start_time = None
+load_error = None
+
+def restore_texture_cache_if_needed():
+  """Restore texture cache files from local cache if they don't exist in the package directory."""
+  # Get paths for texture cache files
+  original_constants_directory = os.path.join(
+    os.path.dirname(find_spec("craftax.craftax.constants").origin),
+    "assets")
+  TEXTURE_CACHE_FILE = os.path.join(original_constants_directory, "texture_cache.pbz2")
+  FULLMAP_TEXTURE_CACHE_FILE = os.path.join(original_constants_directory, "fullmap_texture_cache_48.pbz2")
+
+  # Local cache paths
+  cache_dir = "craftax_cache"
+  source_cache = os.path.join(cache_dir, "texture_cache.pbz2")
+  source_fullmap_cache = os.path.join(cache_dir, "fullmap_texture_cache_48.pbz2")
+
+  # Create the destination directories if they don't exist
+  os.makedirs(os.path.dirname(TEXTURE_CACHE_FILE), exist_ok=True)
+  os.makedirs(os.path.dirname(FULLMAP_TEXTURE_CACHE_FILE), exist_ok=True)
+
+  # Copy texture cache files if needed
+  if not os.path.exists(TEXTURE_CACHE_FILE) and os.path.exists(source_cache):
+    loader_logger.info(f"Restoring texture cache from {source_cache} to {TEXTURE_CACHE_FILE}")
+    shutil.copy2(source_cache, TEXTURE_CACHE_FILE)
+    loader_logger.info("Regular cache file restored successfully!")
+  else:
+    loader_logger.info(f"{TEXTURE_CACHE_FILE} already exists.")
+
+  if not os.path.exists(FULLMAP_TEXTURE_CACHE_FILE) and os.path.exists(source_fullmap_cache):
+    loader_logger.info(f"Restoring fullmap texture cache from {source_fullmap_cache} to {FULLMAP_TEXTURE_CACHE_FILE}")
+    shutil.copy2(source_fullmap_cache, FULLMAP_TEXTURE_CACHE_FILE)
+    loader_logger.info("Fullmap cache file restored successfully!")
+  else:
+    loader_logger.info(f"{FULLMAP_TEXTURE_CACHE_FILE} already exists.")
+
+async def load_craftax_module():
+  global craftax_module, load_start_time, load_error
+  load_start_time = datetime.now()
+  loop = asyncio.get_event_loop()
+  loader_logger.info("Starting craftax module load attempt")
+
+  # Restore texture cache if needed
+  restore_texture_cache_if_needed()
+
+  try:
+    loader_logger.info("Attempting to import craftax_experiment_structure")
+
+    def import_with_logging():
+      try:
+        import craftax_experiment_structure
+
+        loader_logger.info("Import successful")
+        return craftax_experiment_structure
+      except Exception as e:
+        error_msg = f"Import failed: {str(e)}\n{traceback.format_exc()}"
+        loader_logger.error(error_msg)
+        raise
+
+    craftax_module = await loop.run_in_executor(None, import_with_logging)
+
+    loader_logger.info("Craftax module loaded successfully")
+    load_duration = (datetime.now() - load_start_time).total_seconds()
+    loader_logger.info(f"Total load time: {load_duration} seconds")
+
+  except Exception as e:
+    load_error = str(e)
+    error_msg = f"Failed to load craftax module: {str(e)}\n{traceback.format_exc()}"
+    loader_logger.error(error_msg)
+    raise
+  finally:
+    craftax_loaded.set()
+
+def get_git_version():
+  try:
+    # Get the current commit hash
+    git_hash = (
+      subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+    )
+    # Get any uncommitted changes
+    git_diff = (
+      subprocess.check_output(["git", "status", "--porcelain"]).decode("ascii").strip()
+    )
+    is_dirty = bool(git_diff)
+    return f"{git_hash}{'_dirty' if is_dirty else ''}"
+  except (subprocess.CalledProcessError, FileNotFoundError):
+    return "git_version_unknown"
 
 #####################################
 # Helper functions
@@ -487,42 +555,91 @@ async def index(request: Request):
 
   # set up callback to log all pings
   def print_ping(e):
-    logger.info(str(e.args))
+    print(str(e.args))
 
   ui.on("ping", print_ping)
+
+  #########################################
+  # Add javascript file (responsible for pinging)
+  #########################################
+  with open(nicewebrl.basic_javascript_file()) as f:
+    ui.add_body_html("<script>" + f.read() + "</script>")
 
   # Show loading screen if module not ready
   if not craftax_loaded.is_set():
     with ui.card().classes("fixed-center") as card:
       card.style("width: 80vw; max-height: 90vh;")
-      ui.label("Loading experiment, please wait approximately 3 minutes...").classes(
-        "text-h4"
-      )
 
-      # Add elapsed time counter
-      elapsed_time = ui.label('Time elapsed: 0 seconds')
+      # Main loading message
+      ui.label("Loading experiment...").classes("text-h4")
+
+      # Progress information
+      elapsed_time = ui.label("Time elapsed: 0 seconds")
+      load_status = ui.label("Current status: Initializing...")
+      error_display = ui.label().classes("text-red")
+
       start_time = time.time()
 
-      def update_elapsed_time():
+      async def update_loading_info():
+        if not craftax_loaded.is_set():
           seconds = int(time.time() - start_time)
-          elapsed_time.text = f'Time elapsed: {seconds} seconds'
-      
-      ui.timer(1.0, update_elapsed_time)
-      
+          elapsed_time.text = f"Time elapsed: {seconds} seconds"
+          if load_error:
+            error_display.text = f"Error: {load_error}"
+            load_status.text = "Status: Failed to load"
+          else:
+            load_status.text = "Status: Loading..."
+
+          # Log periodic updates
+          if seconds % 10 == 0:  # Log every 10 seconds
+            ui.run_javascript(f"console.log('loading for {seconds} seconds')")
+            loader_logger.info(f"Still loading after {seconds} seconds")
+
+          return not craftax_loaded.is_set()  # Continue until loaded
+
+      ui.timer(1.0, update_loading_info)
+
+      # Add detailed JavaScript monitoring
       ui.add_body_html("""
           <script>
-              function checkStatus() {
-                  fetch('/status')
-                      .then(response => response.json())
-                      .then(data => {
-                          if (data.loaded) {
-                              window.location.reload();
-                          } else {
-                              setTimeout(checkStatus, 1000);
-                          }
-                      });
+          let lastPingTime = Date.now();
+          
+          async function checkStatus() {
+              try {
+                  const response = await fetch('/status');
+                  const data = await response.json();
+                  console.log('Status check:', data);
+                  
+                  if (data.loaded) {
+                      console.log('Module loaded, reloading page');
+                      window.location.reload();
+                  } else if (data.load_error) {
+                      console.error('Loading error:', data.load_error);
+                  }
+                  
+                  // Calculate time since last ping
+                  const currentTime = Date.now();
+                  const timeSinceLastPing = currentTime - lastPingTime;
+                  console.log('Time since last ping:', timeSinceLastPing, 'ms');
+                  lastPingTime = currentTime;
+                  
+                  if (!data.loaded) {
+                      setTimeout(checkStatus, 1000);
+                  }
+              } catch (error) {
+                  console.error('Status check failed:', error);
+                  setTimeout(checkStatus, 1000);
               }
-              checkStatus();
+          }
+          
+          // Start checking status
+          checkStatus();
+          
+          // Monitor for any JavaScript errors
+          window.onerror = function(msg, url, line) {
+              console.error('JavaScript error:', msg, 'at', url, 'line', line);
+              return false;
+          };
           </script>
       """)
     return
@@ -530,8 +647,6 @@ async def index(request: Request):
   ################
   # Start experiment
   ################
-  with open(nicewebrl.basic_javascript_file()) as f:
-    ui.add_body_html("<script>" + f.read() + "</script>")
 
   card = (
     ui.card(align_items=["center"])
@@ -583,7 +698,6 @@ async def check_if_over(*args, episode_limit=60, **kwargs):
 
 
 async def footer(footer_container):
-
   experiment = craftax_module
   """Add user information and progress bar to the footer"""
   with footer_container:
@@ -626,7 +740,22 @@ router = APIRouter()
 
 @router.get("/status")
 async def get_status():
-  return {"loaded": craftax_loaded.is_set()}
+  """Enhanced status endpoint with detailed loading information"""
+  global load_start_time, load_error
+
+  current_time = datetime.now()
+  load_duration = (
+    None
+    if load_start_time is None
+    else (current_time - load_start_time).total_seconds()
+  )
+
+  return {
+    "loaded": craftax_loaded.is_set(),
+    "load_duration": load_duration,
+    "load_error": load_error,
+    "load_start_time": load_start_time.isoformat() if load_start_time else None,
+  }
 
 
 app.include_router(router)
@@ -636,5 +765,21 @@ ui.run(
   storage_secret="private key to secure the browser session cookie",
   reload="FLY_ALLOC_ID" not in os.environ,
   title="Crafter Web App",
-  port=8081,
+  port=8080,
 )
+
+
+def get_git_version():
+  try:
+    # Get the current commit hash
+    git_hash = (
+      subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+    )
+    # Get any uncommitted changes
+    git_diff = (
+      subprocess.check_output(["git", "status", "--porcelain"]).decode("ascii").strip()
+    )
+    is_dirty = bool(git_diff)
+    return f"{git_hash}{'_dirty' if is_dirty else ''}"
+  except (subprocess.CalledProcessError, FileNotFoundError):
+    return "git_version_unknown"

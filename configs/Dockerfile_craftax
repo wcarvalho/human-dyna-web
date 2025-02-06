@@ -1,0 +1,16 @@
+FROM python:3.10-slim
+
+RUN apt update && apt install -y curl procps
+
+RUN pip install --upgrade pip
+
+WORKDIR /app
+
+COPY . /app
+
+RUN pip install -e libraries/housemaze -e "libraries/nicewebrl[craftax]" -e libraries/jaxneurorl -r requirements.txt
+
+ENV PYTHONUNBUFFERED=1
+ENV LOG_LEVEL=DEBUG
+
+CMD ["python", "craftax_web_app.py"]
