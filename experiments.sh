@@ -3,7 +3,7 @@
 ##########################################
 
 # LOCAL DEBUGGING: RUN
-rm -r craftax_data .nicegui; DEBUG=1 \
+rm -r craftax_data .nicegui; pkill -9 -f craftax; DEBUG=1 \
   DATA_DIR='craftax_data' \
   GIVE_INSTRUCTIONS=1 \
   MANIPULATION="paths" \
@@ -20,28 +20,23 @@ rm -r craftax_data .nicegui; DEBUG=1 \
 # EVAL_SHOW_MAP: {1, 0}
 
 # (paths) tell reuse + no map
-python launch_craftax.py crafting-v1-paths-r1-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
-
-# https://crafting-v1-paths-r1-m0.fly.dev
-flyctl scale count 4 --config -a human-dyna-crafting-v1-paths-r1-m0.toml --region iad,sea,lax,den --yes
-flyctl scale memory 32768 --config configs/human-dyna-craftax-crafting-v1-paths-r1-m0.toml
-
-flyctl deploy --config configs/human-dyna-craftax-crafting-v1-paths-r1-m0.toml
-flyctl logs --config configs/human-dyna-craftax-crafting-v1-paths-r1-m0.toml
+python launch_craftax.py v1-paths-r1-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
+# https://human-dyna-craftax-v1-paths-r1-m0.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v1-paths-r1-m0.toml
+flyctl logs --config configs/human-dyna-craftax-v1-paths-r1-m0.toml
 
 
+python launch_craftax.py v1-paths-r0-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
+# https://human-dyna-craftax-v1-paths-r0-m0.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v1-paths-r0-m0.toml
 
-python launch_craftax.py crafting-v1-paths-r0-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
-# https://crafting-v1-paths-r0-m0.fly.dev
-flyctl deploy --config configs/crafting-v1-paths-r0-m0.toml
+python launch_craftax.py v1-juncture-r1-m0 --environment='craftax' --env MANIPULATION="juncture" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
+# https://human-dyna-craftax-v1-juncture-r1-m0.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v1-juncture-r1-m0.toml
 
-python launch_craftax.py crafting-v1-juncture-r1-m0 --environment='craftax' --env MANIPULATION="juncture" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
-# https://crafting-v1-juncture-r1-m0.fly.dev
-flyctl deploy --config configs/crafting-v1-juncture-r1-m0.toml
-
-python launch_craftax.py crafting-v1-juncture-r0-m0 --environment='craftax' --env MANIPULATION="juncture" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
-# https://crafting-v1-juncture-r0-m0.fly.dev
-flyctl deploy --config configs/crafting-v1-juncture-r0-m0.toml
+python launch_craftax.py v1-juncture-r0-m0 --environment='craftax' --env MANIPULATION="juncture" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
+# https://human-dyna-craftax-v1-juncture-r0-m0.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v1-juncture-r0-m0.toml
 
 ########################################################
 # Experiment 9 - CRAFTAX

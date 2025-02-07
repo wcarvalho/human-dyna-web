@@ -1,6 +1,8 @@
 import aiofiles
 import msgpack
 import subprocess
+import jax
+import jax.numpy as jnp
 import os.path
 import asyncio
 from asyncio import Lock
@@ -22,10 +24,9 @@ import shutil
 DATABASE_FILE = os.environ.get("DB_FILE", "db.sqlite")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
-DELAY_EXPERIMENT_LOADING = int(os.environ.get("DELAY_EXPERIMENT_LOADING", 0))
+LOGGER_DISPLAY_TIME = int(os.environ.get("LOGGER_DISPLAY_TIME", 0))
 DEBUG = int(os.environ.get("DEBUG", 0))
 DEBUG_SEED = int(os.environ.get("SEED", 0))
-DISPLAY_FULL_MAP = int(os.environ.get("DISPLAY_FULL_MAP", 0))
 NAME = os.environ.get("NAME", "exp")
 DATABASE_FILE = f"{DATABASE_FILE}_name={NAME}_debug={DEBUG}"
 DUMMY_ENV = int(os.environ.get("DUMMY_ENV", 1))
@@ -51,6 +52,7 @@ setup_logging(
   DATA_DIR,
   # each user has a unique seed
   # can use this to identify users
+  display_time=LOGGER_DISPLAY_TIME,
   log_filename_fn=log_filename_fn,
   nicegui_storage_user_key="seed",
 )
@@ -90,7 +92,7 @@ def restore_texture_cache_if_needed():
     shutil.copy2(source_cache, TEXTURE_CACHE_FILE)
     loader_logger.info("Regular cache file restored successfully!")
   else:
-    loader_logger.info(f"{TEXTURE_CACHE_FILE} already exists.")
+    loader_logger.info("texture_cache.pbz2 already exists.")
 
   if not os.path.exists(FULLMAP_TEXTURE_CACHE_FILE) and os.path.exists(
     source_fullmap_cache
@@ -101,7 +103,7 @@ def restore_texture_cache_if_needed():
     shutil.copy2(source_fullmap_cache, FULLMAP_TEXTURE_CACHE_FILE)
     loader_logger.info("Fullmap cache file restored successfully!")
   else:
-    loader_logger.info(f"{FULLMAP_TEXTURE_CACHE_FILE} already exists.")
+    loader_logger.info("fullmap_texture_cache_48.pbz2 already exists.")
 
 
 async def load_craftax_module():
@@ -176,13 +178,10 @@ def get_user_lock():
 
 async def experiment_not_finished():
   """Check if the experiment is not finished"""
-  # if DELAY_EXPERIMENT_LOADING:
-  # experiment = await experiment_structure()
-  # else:
   experiment = craftax_module
   async with get_user_lock():
     not_finished = not app.storage.user.get("experiment_finished", False)
-    not_finished &= app.storage.user["stage_idx"] < len(experiment.all_stages)
+    not_finished &= app.storage.user["block_idx"] < len(experiment.all_blocks)
   return not_finished
 
 
@@ -206,16 +205,14 @@ async def global_handle_key_press(e, container):
   if not craftax_loaded.is_set():
     return
   logger.info(f"global_handle_key_press key: {e.args}")
-  # if DELAY_EXPERIMENT_LOADING:
-  # experiment = await experiment_structure()
-  # else:
   experiment = craftax_module
-  stage_idx = app.storage.user["stage_idx"]
-  if stage_idx >= len(experiment.all_stages):
-    logger.info("global_handle_key_press key: stage idx out of bounds")
+  block_idx = app.storage.user["block_idx"]
+  if block_idx >= len(experiment.all_blocks):
+    logger.info("global_handle_key_press key: block idx out of bounds")
     return
+  block = experiment.all_blocks[block_idx]
+  stage = await block.get_stage()
 
-  stage = experiment.all_stages[stage_idx]
   if stage.get_user_data("finished", False):
     logger.info("global_handle_key_press key: stage finished")
     return
@@ -366,35 +363,57 @@ async def start_experiment(meta_container, stage_container, button_container):
   ui.on("key_pressed", lambda e: global_handle_key_press(e, stage_container))
 
   # ========================================
+  # Get order of blocks
+  # ========================================
+  experiment = craftax_module
+  block_order = app.storage.user.get("block_order")
+  if block_order is None:
+    block_order = experiment.generate_block_order(nicewebrl.new_rng())
+    app.storage.user["block_order"] = block_order
+
+  # ========================================
   # Run experiment
   # ========================================
   logger.info("Starting experiment")
-  experiment = craftax_module
+  block_names_in_order = [experiment.all_blocks[i].name for i in block_order]
+  logger.info(f"Block order: {block_names_in_order}")
   while True and await experiment_not_finished():
-    # get current stage
-    stage_idx = app.storage.user["stage_idx"]
-    stage = experiment.all_stages[stage_idx]
+    # get current block
+    block_idx = app.storage.user["block_idx"]
+    ordered_block_idx = block_order[block_idx]
 
-    logger.info("=" * 30)
-    logger.info("=" * 30)
-    logger.info("=" * 30)
-    logger.info(f"Began stage '{stage.name}'")
-    # activate stage
-    await run_stage(stage, stage_container, button_container)
-    logger.info(f"Finished stage '{stage.name}'")
+    block: nicewebrl.Block = experiment.all_blocks[ordered_block_idx]
+    logger.info("=" * 50)
+    blocks = len(experiment.all_blocks)
+    logger.info(f"Began block {block_idx + 1}/{blocks} '{block.name}'")
+    logger.info("=" * 50)
 
-    # wait for any saves to finish before updating stage
-    # very important, otherwise may lose data
-    if isinstance(stage, stages.EnvStage):
-      await stage.finish_saving_user_data()
-      logger.info(f"Saved data for stage '{stage.name}'")
+    while await block.not_finished():
+      stage = await block.get_stage()
+      logger.info("=" * 20)
+      block_stage_idx = await block.get_user_stage_idx()
+      logger.info(f"Began stage {block_stage_idx + 1}/{len(block)} '{stage.name}'")
+      logger.info("=" * 20)
+      # activate stage
+      await run_stage(stage, stage_container, button_container)
 
-    # update stage index
+      # wait for any saves to finish before updating stage
+      # very important, otherwise may lose data
+      if isinstance(stage, stages.EnvStage):
+        await stage.finish_saving_user_data()
+        logger.info(f"Saved data for stage '{stage.name}'")
+
+      await block.advance_stage()
+      # update stage index
+      async with get_user_lock():
+        app.storage.user["stage_idx"] = app.storage.user["stage_idx"] + 1
+
+    block_idx += 1
     async with get_user_lock():
-      app.storage.user["stage_idx"] = stage_idx + 1
+      app.storage.user["block_idx"] = block_idx
 
-    # check if we've finished all stages
-    if app.storage.user["stage_idx"] >= len(experiment.all_stages):
+    # check if we've finished all blocks
+    if app.storage.user["block_idx"] >= len(experiment.all_blocks):
       break
 
   await finish_experiment(meta_container, stage_container, button_container)
@@ -462,15 +481,30 @@ async def run_stage(stage, stage_container, button_container):
   stage_over_event = asyncio.Event()
 
   async def local_handle_key_press():
+    if not await try_to_make_fullscreen():
+      logger.info("Key pressed but not fullscreen")
+      return
     async with get_user_lock():
       if stage.get_user_data("finished", False):
         # Signal that the stage is over
         logger.info(f"Finished {stage_name(stage)} via key press")
         stage_over_event.set()
 
+  async def try_to_make_fullscreen():
+    if DEBUG > 0:
+      return True
+    if not await nicewebrl.utils.check_fullscreen():
+      ui.run_javascript("document.documentElement.requestFullscreen()")
+      await asyncio.sleep(1)
+      ui.notify(
+        "Please enter fullscreen mode to continue experiment",
+        position="lower",
+        type="negative",
+      )
+    return await nicewebrl.utils.check_fullscreen()
+
   async def handle_button_press():
-    if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
-      ui.notify("Please enter fullscreen mode to continue experiment", type="negative")
+    if not await try_to_make_fullscreen():
       logger.info("Button press but not fullscreen")
       return
     if stage.get_user_data("finished", False):
@@ -528,7 +562,6 @@ async def run_stage(stage, stage_container, button_container):
   await stage_over_event.wait()
   nicewebrl.clear_element(stage_container)
   nicewebrl.clear_element(button_container)
-  logger.info(f"Ending {stage_name(stage)} run function")
 
 
 #####################################
@@ -544,6 +577,7 @@ def initalize_user(request: Request):
     app.storage.user["worker_id"] or app.storage.user["seed"]
   )
   app.storage.user["stage_idx"] = app.storage.user.get("stage_idx", 0)
+  app.storage.user["block_idx"] = app.storage.user.get("block_idx", 0)
 
 
 @ui.page("/")
@@ -583,7 +617,9 @@ async def index(request: Request):
       card.style("width: 80vw; max-height: 90vh;")
 
       # Main loading message
-      ui.label("Loading experiment...").classes("text-h4")
+      ui.label("Loading experiment... This will take about 2 minutes.").classes(
+        "text-h4"
+      )
 
       # Progress information
       elapsed_time = ui.label("Time elapsed: 0 seconds")
@@ -706,6 +742,7 @@ async def check_if_over(*args, episode_limit=60, **kwargs):
     logger.info(f"experiment timed out after {minutes_passed} minutes")
     experiment = craftax_module
     app.storage.user["stage_idx"] = len(experiment.all_stages)
+    app.storage.user["block_idx"] = len(experiment.all_blocks)
     await finish_experiment(*args, **kwargs)
 
 

@@ -22,6 +22,14 @@ def launch_experiment(name, environment, env_vars, memory=32, scale: bool = Fals
     "--yes",
   ]
   launch_cmd.extend(env_vars)
+  launch_cmd.extend(
+    [
+      "--env",
+      "GIVE_INSTRUCTIONS=1",
+      "--env",
+      "LOGGER_DISPLAY_TIME=0",
+    ]
+  )
 
   # Run the flyctl launch command
   subprocess.run(launch_cmd, check=True)

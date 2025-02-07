@@ -47,14 +47,11 @@ load_dotenv()
 
 logger = get_logger(__name__)
 VERBOSITY = int(os.environ.get("VERBOSITY", 2))
-DEBUG = int(os.environ.get("DEBUG", 1))
-DEBUG_DISPLAY = int(os.environ.get("DEBUG_DISPLAY", 1))
+DEBUG = int(os.environ.get("DEBUG", 0))
 MANIPULATION = os.environ.get("MANIPULATION", "juncture")
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 0))
 NUM_BLOCKS = int(os.environ.get("NUM_BLOCKS", 100))
 EVAL_SHOW_MAP = int(os.environ.get("EVAL_SHOW_MAP", 1))
-
-
 GIVE_INSTRUCTIONS = int(os.environ.get("GIVE_INSTRUCTIONS", 0))
 
 PRECOMPILE = int(os.environ.get("PRECOMPILE", 1))
@@ -462,8 +459,7 @@ async def stage_instructions_display_fn(stage, container, new_world=False):
     with container.style("align-items: center;"):
       nicewebrl.clear_element(container)
       ui.markdown("# You are entering a new mining world.")
-      ui.markdown("Please wait 3 seconds before continuing.")
-      await asyncio.sleep(3)
+      await asyncio.sleep(1)
       button = ui.button("click to start")
       await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
 
@@ -782,8 +778,9 @@ def make_env_stage(
     reset_display_fn = env_reset_display_fn
 
   print("=" * 30)
-  print("Made stage with config")
+  print(f"Made stage {name} with config")
   print(stage_config)
+  print("=" * 30)
   return EnvStage(
     name=name,
     title=title,
@@ -857,6 +854,9 @@ def make_block(
   4. evaluation stage environment
   5. (optional) second evaluation stage environment
   """
+  print("=" * 50)
+  print(f"Block: {name}")
+  print("=" * 50)
   is_practice = "practice" in name
 
   def make_title(t):
@@ -915,7 +915,7 @@ def make_block(
   randomize = []
   if eval2_config is not None:
     # If have 2 evals, randomize them
-    # randomize = [False, False, False, True, True]
+    randomize = [False, False, False, True, True]
     eval2_stage = make_env_stage(
       name=f"{name}_eval2",
       title=make_title("Phase 2"),
@@ -932,6 +932,7 @@ def make_block(
     stages.append(eval2_stage)
 
   block = nicewebrl.Block(
+    name=name,
     metadata=metadata,
     stages=stages,
     randomize=randomize,
@@ -1085,7 +1086,8 @@ NUM_BLOCKS = min(NUM_BLOCKS, len(experiment_blocks))
 experiment_blocks = experiment_blocks[:NUM_BLOCKS]
 
 instruct_block = nicewebrl.Block(
-  [
+  name="instructions",
+  stages=[
     Stage(
       name="Experiment instructions",
       title="Experiment instructions",
@@ -1101,15 +1103,15 @@ if GIVE_INSTRUCTIONS:
   all_blocks.extend([instruct_block, make_practice_block()])
 
 all_blocks.extend(experiment_blocks)
-all_stages = nicewebrl.prepare_blocks(all_blocks)
+all_stages = [stage for block in all_blocks for stage in block.stages]
 
 ##########################
-# generating stage order
+# generating block order
 ##########################
 
 
-def generate_block_stage_order(rng_key):
-  """Take blocks defined above, flatten all their stages, and generate an order where the (1) blocks are randomized, and (2) stages within blocks are randomized if they're consecutive eval stages."""
+def generate_block_order(rng_key):
+  """Take blocks defined above and generate a random order"""
   fixed_blocks = []
   offset = 0
   if GIVE_INSTRUCTIONS:
@@ -1129,6 +1131,4 @@ def generate_block_stage_order(rng_key):
     ]
   ).astype(jnp.int32)
   block_order = block_order.tolist()
-  stage_order = nicewebrl.generate_stage_order(all_blocks, block_order, rng_key)
-  stage_order = [int(i) for i in stage_order]
-  return block_order, stage_order
+  return [int(i) for i in block_order]
