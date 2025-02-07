@@ -195,6 +195,14 @@ def blob_user_filename():
     return f"user={seed}_name={NAME}_debug={DEBUG}"
 
 
+def get_current_block() -> nicewebrl.Block:
+  experiment = craftax_module
+  block_order = app.storage.user.get("block_order")
+  block_idx = app.storage.user["block_idx"]
+  ordered_block_idx = block_order[block_idx]
+  block: nicewebrl.Block = experiment.all_blocks[ordered_block_idx]
+  return block
+
 async def global_handle_key_press(e, container):
   """Define global key press handler
 
@@ -202,15 +210,17 @@ async def global_handle_key_press(e, container):
   call the stage-specific key handler. When the experiment begins, we'll register
   a key listener to call this function
   """
+
   if not craftax_loaded.is_set():
     return
+
+  block_idx = app.storage.user["block_idx"]
   logger.info(f"global_handle_key_press key: {e.args}")
   experiment = craftax_module
-  block_idx = app.storage.user["block_idx"]
   if block_idx >= len(experiment.all_blocks):
     logger.info("global_handle_key_press key: block idx out of bounds")
     return
-  block = experiment.all_blocks[block_idx]
+  block = get_current_block()
   stage = await block.get_stage()
 
   if stage.get_user_data("finished", False):
@@ -377,12 +387,10 @@ async def start_experiment(meta_container, stage_container, button_container):
   logger.info("Starting experiment")
   block_names_in_order = [experiment.all_blocks[i].name for i in block_order]
   logger.info(f"Block order: {block_names_in_order}")
-  while True and await experiment_not_finished():
+  while await experiment_not_finished():
     # get current block
     block_idx = app.storage.user["block_idx"]
-    ordered_block_idx = block_order[block_idx]
-
-    block: nicewebrl.Block = experiment.all_blocks[ordered_block_idx]
+    block = get_current_block()
     logger.info("=" * 50)
     blocks = len(experiment.all_blocks)
     logger.info(f"Began block {block_idx + 1}/{blocks} '{block.name}'")
@@ -473,6 +481,19 @@ async def finish_experiment(meta_container, stage_container, button_container):
     ui.markdown("#### You may close the browser")
 
 
+async def try_to_make_fullscreen():
+  if DEBUG > 0:
+    return True
+  if not await nicewebrl.utils.check_fullscreen():
+    ui.run_javascript("document.documentElement.requestFullscreen()")
+    await asyncio.sleep(1)
+    ui.notify(
+      "Please enter fullscreen mode to continue experiment",
+      position="lower",
+      type="negative",
+    )
+  return await nicewebrl.utils.check_fullscreen()
+
 async def run_stage(stage, stage_container, button_container):
   #########
   # create functions for handling key and button presses
@@ -481,27 +502,11 @@ async def run_stage(stage, stage_container, button_container):
   stage_over_event = asyncio.Event()
 
   async def local_handle_key_press():
-    if not await try_to_make_fullscreen():
-      logger.info("Key pressed but not fullscreen")
-      return
     async with get_user_lock():
       if stage.get_user_data("finished", False):
         # Signal that the stage is over
         logger.info(f"Finished {stage_name(stage)} via key press")
         stage_over_event.set()
-
-  async def try_to_make_fullscreen():
-    if DEBUG > 0:
-      return True
-    if not await nicewebrl.utils.check_fullscreen():
-      ui.run_javascript("document.documentElement.requestFullscreen()")
-      await asyncio.sleep(1)
-      ui.notify(
-        "Please enter fullscreen mode to continue experiment",
-        position="lower",
-        type="negative",
-      )
-    return await nicewebrl.utils.check_fullscreen()
 
   async def handle_button_press():
     if not await try_to_make_fullscreen():

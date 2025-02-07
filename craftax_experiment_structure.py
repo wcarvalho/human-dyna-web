@@ -147,14 +147,12 @@ def get_remaining(possible_goals, num_success):
   default = {str(g): n for g, n in zip(possible_goals, num_success)}
   remaining = app.storage.user.get(key, default)
   app.storage.user[key] = remaining
-  logger.info(f"remaining={remaining}")
 
   # maintain order of goals
   output = jnp.array(
     [remaining.get(str(g), n) for g, n in zip(possible_goals, num_success)],
     dtype=jnp.int32,
   )
-  logger.info(f"get_remaining output={output}")
   return output
 
 
@@ -722,11 +720,11 @@ async def env_stage_display_fn(
     if display_full_map:
       ui.html(f"""
       <div id="stateImageContainer" style="display: flex; width: 100%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
-        <div style="flex: 3; max-width: 60%;">
+        <div style="flex: 3; max-width: 58%;">
             <div style="text-align: center; margin-bottom: 5px;">Full Map</div>
             <img src="{full_map_image}" id="fullMapImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
         </div>
-        <div style="flex: 2; max-width: 35%;">
+        <div style="flex: 2; max-width: 38%;">
             <div style="text-align: center; margin-bottom: 5px;">Current View</div>
             <img src="{partial_obs_image}" id="stateImage" style="width: 100%; height: auto; max-height: 60vh; object-fit: contain;">
         </div>
@@ -734,8 +732,8 @@ async def env_stage_display_fn(
       """)
     else:
       ui.html(f"""
-      <div id="stateImageContainer" style="display: flex; width: 150%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
-          <img src="{partial_obs_image}" id="stateImage" style="width: 150%; height: auto; max-height: 90vh; object-fit: contain;">
+      <div id="stateImageContainer" style="display: flex; width: 200%; gap: 10px; justify-content: center; align-items: center; margin-top: 10px;">
+          <img src="{partial_obs_image}" id="stateImage" style="width: 200%; height: auto; max-height: 90vh; object-fit: contain;">
       </div>
       """)
 
@@ -812,7 +810,7 @@ def make_env_stage(
 instruct_text = """
   In this experiment, you will play a game where you are a traveling miner in a crafting world. In different episodes, you will need to obtain different stones. 
 
-  There will be different worlds you can mine in. In each world, there will be two phases where you try to retrive different objects.
+  There will be different worlds you can mine in. In each world, there will be two phases where you try to retrieve different objects.
 
   Be weary of monsters.
 """
