@@ -203,6 +203,7 @@ def get_current_block() -> nicewebrl.Block:
   block: nicewebrl.Block = experiment.all_blocks[ordered_block_idx]
   return block
 
+
 async def global_handle_key_press(e, container):
   """Define global key press handler
 
@@ -349,6 +350,15 @@ async def collect_demographic_info(container):
 ########################
 
 
+def get_experiment_progress():
+  experiment = craftax_module
+  stage_progress = float(
+    f"{(app.storage.user['stage_idx'] + 1) / len(experiment.all_stages):.2f}"
+  )
+  app.storage.user["stage_progress"] = stage_progress
+  return stage_progress
+
+
 async def start_experiment(meta_container, stage_container, button_container):
   # ========================================
   # Consent form and demographic info
@@ -412,6 +422,7 @@ async def start_experiment(meta_container, stage_container, button_container):
         logger.info(f"Saved data for stage '{stage.name}'")
 
       await block.advance_stage()
+      get_experiment_progress()
       # update stage index
       async with get_user_lock():
         app.storage.user["stage_idx"] = app.storage.user["stage_idx"] + 1
@@ -442,19 +453,45 @@ async def finish_experiment(meta_container, stage_container, button_container):
   #########################
   async def submit(feedback):
     app.storage.user["experiment_finished"] = True
+    status_container = None
     with meta_container:
       nicewebrl.clear_element(meta_container)
-      ui.markdown("## Saving data. Please wait")
-      ui.markdown(
-        "**Once the data is uploaded, this app will automatically move to the next screen**"
-      )
+      ui.markdown("## Your data is being saved. Please do not close or refresh the page.")
+      status_container = ui.markdown("Saving local files...")
 
-    # Create a task for the save operation
-    save_task = asyncio.create_task(save_data(final_save=True, feedback=feedback))
-    # Wait for the task to complete but allow other async operations to run
-    await save_task
-    app.storage.user["data_saved"] = True
+    try:
+      # Create a task for the save operation with a timeout
+      save_task = asyncio.create_task(save_data(final_save=True, feedback=feedback))
+      start_time = time.time()
 
+      # Update status every 2 seconds while waiting for save
+      while not save_task.done():
+        elapsed_seconds = int(time.time() - start_time)
+        status_container.content = f"Still saving... ({elapsed_seconds}s elapsed). This may take 5-10 minutes."
+        try:
+          # Wait for either task completion or timeout
+          await asyncio.wait_for(asyncio.shield(save_task), timeout=2.0)
+        except asyncio.TimeoutError:
+          # This is expected - we use timeout to update status
+          continue
+        except Exception as e:
+          logger.error(f"Error during save: {e}")
+          status_container.content = (
+            "⚠️ Error saving data. Please contact the experimenter."
+          )
+          raise
+
+      # If we get here, save was successful
+      elapsed_seconds = int(time.time() - start_time)
+      status_container.content = f"✅ Save complete in {elapsed_seconds}s! Moving to next screen..."
+      app.storage.user["data_saved"] = True
+
+    except Exception as e:
+      logger.error(f"Save failed: {e}")
+      status_container.content = "⚠️ Error saving data. Please contact the experimenter."
+      raise
+  
+  app.storage.user["data_saved"] = False
   app.storage.user["data_saved"] = app.storage.user.get("data_saved", False)
   if not app.storage.user["data_saved"]:
     with meta_container:
@@ -494,6 +531,7 @@ async def try_to_make_fullscreen():
     )
   return await nicewebrl.utils.check_fullscreen()
 
+
 async def run_stage(stage, stage_container, button_container):
   #########
   # create functions for handling key and button presses
@@ -502,6 +540,13 @@ async def run_stage(stage, stage_container, button_container):
   stage_over_event = asyncio.Event()
 
   async def local_handle_key_press():
+    if DEBUG == 0 and await nicewebrl.utils.check_fullscreen():
+      ui.notify(
+        "Please enter fullscreen mode to continue experiment",
+        position="lower",
+        type="negative",
+      )
+      return
     async with get_user_lock():
       if stage.get_user_data("finished", False):
         # Signal that the stage is over
@@ -640,8 +685,6 @@ async def index(request: Request):
           if load_error:
             error_display.text = f"Error: {load_error}"
             load_status.text = "Status: Failed to load"
-          else:
-            load_status.text = "Status: Loading..."
 
           # Log periodic updates
           if seconds % 10 == 0:  # Log every 10 seconds
@@ -772,12 +815,7 @@ async def footer(footer_container):
         app.storage.user, "session_duration", lambda v: f"minutes passed: {int(v)}."
       )
 
-    def get_stage_progress():
-      return float(
-        f"{(app.storage.user['stage_idx'] + 1) / len(experiment.all_stages):.2f}"
-      )
-
-    ui.linear_progress(value=get_stage_progress()).bind_value_from(
+    ui.linear_progress(value=get_experiment_progress()).bind_value_from(
       app.storage.user, "stage_progress"
     )
 
