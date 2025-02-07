@@ -119,7 +119,7 @@ else:
   def fullmap_render(timestep, world_seed):
     with jax.disable_jit():
       return render_fullmap_pixels(
-        timestep.state, show_agent=False, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+        timestep.state, show_agent=True, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
       ).astype(jnp.uint8)
 
 
@@ -448,6 +448,75 @@ async def experiment_instructions_display_fn(stage, container):
       # Adjust layout
       fig.tight_layout()
 
+async def wait_period():
+  await asyncio.sleep(1)
+  button = ui.button("next")
+  await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
+  button.delete()
+
+async def practice_stage_instructions_display_fn(stage, container, eval=False, **kwargs):
+  with container.style("align-items: center;"):
+    nicewebrl.clear_element(container)
+
+    ui.markdown(f"## {stage.title}")
+    if DEBUG:
+      debug_info(stage)
+    ui.markdown(f"{remove_extra_spaces(stage.body)}", extras=["cuddled-lists"])
+
+    ui.markdown("Below are the stones you will need to mine.")
+    if SAY_REUSE and not eval:
+      await wait_period()
+      ui.markdown("**We note the stone relevant to phase 2 in <span style='color: green'>GREEN</span> below**")
+      await wait_period()
+
+    # Get all possible goals
+    goals = [int(g) for g in possible_goals]
+
+    # Create random display order
+    key = nicewebrl.new_rng()
+    order = jax.random.permutation(key, jnp.arange(len(goals)))
+
+    test_objects = stage.metadata["block_metadata"]["test_objects"]
+    test_objects = blocks_to_goals(test_objects)
+
+    width = 1.5
+    figsize = (len(goals) * width, width)
+    with ui.matplotlib(figsize=figsize).figure as fig:
+      axs = fig.subplots(1, len(goals))
+      for i, idx in enumerate(order):
+        goal_idx = goals[idx]
+        image = get_goal_image(goal_idx)
+        block_idx = GOAL_TO_BLOCK[goal_idx]
+        category = BlockType(block_idx).name.title()
+
+        axs[i].imshow(image)
+        if SAY_REUSE:
+          is_test_object = goal_idx in test_objects
+          reward = 1 if is_test_object else 0
+          axs[i].set_title(
+            f"{category}: {reward}",
+            fontsize=10,
+            color="green" if is_test_object else "black",
+            weight="bold" if is_test_object else "normal",
+          )
+        else:
+          axs[i].set_title(f"{category}")
+
+        axs[i].set_xticks([])
+        axs[i].set_yticks([])
+        axs[i].axis("off")
+
+      fig.tight_layout()
+
+    if eval:
+      if EVAL_SHOW_MAP == 0:
+        await wait_period()
+        ui.markdown("**Note that you will NOT get the full map phase 2.**")
+    else:
+      await wait_period()
+      ui.markdown("**Note that the agent is located at the black box in the full map**")
+    await asyncio.sleep(1)
+
 
 async def stage_instructions_display_fn(stage, container, new_world=False):
   if new_world:
@@ -747,7 +816,6 @@ def make_env_stage(
   min_success: Optional[int] = None,
   max_episodes: Optional[int] = None,
 ):
-  eval_stage = metadata.get("eval", False)
   active_goals = blocks_to_active_goals(stage_config.goals)
   env_params = make_block_env_params(block_config, default_params)
   min_success = min_success or MIN_SUCCESS_TASK
@@ -758,6 +826,7 @@ def make_env_stage(
     num_success=min_success,
   )
 
+  eval_stage = metadata.get("eval", False)
   if eval_stage:
     display_fn = partial(
       env_stage_display_fn,
@@ -857,17 +926,21 @@ def make_block(
   print("=" * 50)
   is_practice = "practice" in name
 
-  def make_title(t):
-    if is_practice:
+  if is_practice:
+    train_display_fn = practice_stage_instructions_display_fn
+    eval_display_fn = partial(practice_stage_instructions_display_fn, eval=True)
+    def make_title(t):
       return f"(Practice) {t}"
-    else:
+  else:
+    train_display_fn = eval_display_fn = stage_instructions_display_fn
+    def make_title(t):
       return t
 
   train_stage_instructions = Stage(
     name=f"{name}_train_instructions",
     title=make_title("Phase 1 instructions"),
     body=train_text,
-    display_fn=partial(stage_instructions_display_fn, new_world=True),
+    display_fn=partial(train_display_fn, new_world=True),
   )
 
   train_stage_env = make_env_stage(
@@ -887,7 +960,7 @@ def make_block(
     name=f"{name}_eval_instructions",
     title=make_title("Phase 2 instructions"),
     body=eval_text,
-    display_fn=stage_instructions_display_fn,
+    display_fn=eval_display_fn,
   )
 
   eval_stage_env = make_env_stage(

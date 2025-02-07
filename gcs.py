@@ -46,14 +46,12 @@ async def save_data_to_gcs(data, blob_filename, bucket_name="human-dyna"):
   try:
     bucket = initialize_storage_client(bucket_name)
     blob = bucket.blob(blob_filename)
-    
+
     # Run the blocking upload in a thread pool
     await asyncio.to_thread(
-      blob.upload_from_string,
-      data=json.dumps(data),
-      content_type="application/json"
+      blob.upload_from_string, data=json.dumps(data), content_type="application/json"
     )
-    
+
     logger.info(f"Saved {blob_filename} in bucket {bucket.name}")
     return True  # Successfully saved
   except (TransportError, gcs_exceptions.GoogleCloudError) as e:
@@ -69,13 +67,10 @@ async def save_file_to_gcs(local_filename, blob_filename, bucket_name="human-dyn
   try:
     bucket = initialize_storage_client(bucket_name)
     blob = bucket.blob(blob_filename)
-    
+
     # Run the blocking upload in a thread pool
-    await asyncio.to_thread(
-      blob.upload_from_filename,
-      local_filename
-    )
-    
+    await asyncio.to_thread(blob.upload_from_filename, local_filename)
+
     logger.info(f"Saved {blob_filename} in bucket {bucket.name}")
     return True  # Successfully saved
   except Exception as e:

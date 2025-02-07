@@ -1,8 +1,5 @@
 import aiofiles
-import msgpack
 import subprocess
-import jax
-import jax.numpy as jnp
 import os.path
 import asyncio
 from asyncio import Lock
@@ -216,16 +213,16 @@ async def global_handle_key_press(e, container):
     return
 
   block_idx = app.storage.user["block_idx"]
-  logger.info(f"global_handle_key_press key: {e.args}")
+  logger.info(f"args: {e.args}")
   experiment = craftax_module
   if block_idx >= len(experiment.all_blocks):
-    logger.info("global_handle_key_press key: block idx out of bounds")
+    logger.info("block idx out of bounds")
     return
   block = get_current_block()
   stage = await block.get_stage()
 
   if stage.get_user_data("finished", False):
-    logger.info("global_handle_key_press key: stage finished")
+    logger.info("stage finished")
     return
 
   await stage.handle_key_press(e, container)
@@ -456,7 +453,9 @@ async def finish_experiment(meta_container, stage_container, button_container):
     status_container = None
     with meta_container:
       nicewebrl.clear_element(meta_container)
-      ui.markdown("## Your data is being saved. Please do not close or refresh the page.")
+      ui.markdown(
+        "## Your data is being saved. Please do not close or refresh the page."
+      )
       status_container = ui.markdown("Saving local files...")
 
     try:
@@ -467,7 +466,9 @@ async def finish_experiment(meta_container, stage_container, button_container):
       # Update status every 2 seconds while waiting for save
       while not save_task.done():
         elapsed_seconds = int(time.time() - start_time)
-        status_container.content = f"Still saving... ({elapsed_seconds}s elapsed). This may take 5-10 minutes."
+        status_container.content = (
+          f"Still saving... ({elapsed_seconds}s elapsed). This may take 5-10 minutes."
+        )
         try:
           # Wait for either task completion or timeout
           await asyncio.wait_for(asyncio.shield(save_task), timeout=2.0)
@@ -483,15 +484,16 @@ async def finish_experiment(meta_container, stage_container, button_container):
 
       # If we get here, save was successful
       elapsed_seconds = int(time.time() - start_time)
-      status_container.content = f"✅ Save complete in {elapsed_seconds}s! Moving to next screen..."
+      status_container.content = (
+        f"✅ Save complete in {elapsed_seconds}s! Moving to next screen..."
+      )
       app.storage.user["data_saved"] = True
 
     except Exception as e:
       logger.error(f"Save failed: {e}")
       status_container.content = "⚠️ Error saving data. Please contact the experimenter."
       raise
-  
-  app.storage.user["data_saved"] = False
+
   app.storage.user["data_saved"] = app.storage.user.get("data_saved", False)
   if not app.storage.user["data_saved"]:
     with meta_container:
@@ -540,13 +542,17 @@ async def run_stage(stage, stage_container, button_container):
   stage_over_event = asyncio.Event()
 
   async def local_handle_key_press():
-    if DEBUG == 0 and await nicewebrl.utils.check_fullscreen():
-      ui.notify(
-        "Please enter fullscreen mode to continue experiment",
-        position="lower",
-        type="negative",
-      )
-      return
+    if DEBUG == 0:
+      fullscreen = await nicewebrl.utils.check_fullscreen()
+      if not fullscreen:
+        with stage_container:
+          ui.notify(
+            "Please enter fullscreen mode to continue experiment",
+            position="lower",
+            type="negative",
+          )
+        return
+    logger.info("local_handle_key_press")
     async with get_user_lock():
       if stage.get_user_data("finished", False):
         # Signal that the stage is over
@@ -667,10 +673,10 @@ async def index(request: Request):
       card.style("width: 80vw; max-height: 90vh;")
 
       # Main loading message
-      ui.label("Loading experiment... This will take about 2 minutes.").classes(
+      ui.label("Loading experiment... This will take up to 5 minutes.").classes(
         "text-h4"
       )
-
+      elapsed_time = ui.label("Please don't close or refresh the page")
       # Progress information
       elapsed_time = ui.label("Time elapsed: 0 seconds")
       load_status = ui.label("Current status: Initializing...")

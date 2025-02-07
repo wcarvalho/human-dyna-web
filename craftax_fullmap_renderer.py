@@ -126,18 +126,6 @@ def render_craftax_pixels(
     _add_item_type_to_pixels, map_pixels, jnp.arange(1, len(ItemType))
   )
 
-  # Render player
-  if show_agent:
-    player_texture_index = jax.lax.select(
-      state.is_sleeping, 4, state.player_direction - 1
-    )
-    map_pixels = (
-      map_pixels
-      * (1 - textures["full_map_player_textures_alpha"][player_texture_index])
-      + textures["full_map_player_textures"][player_texture_index]
-      * textures["full_map_player_textures_alpha"][player_texture_index]
-    )
-
   # Render mobs
   # Zombies
 
@@ -699,6 +687,26 @@ def render_craftax_pixels(
 
   inv_pixels = _render_icon(inv_pixels, textures["int_texture"], 9, 3)
   inv_pixels = _render_digit(inv_pixels, state.player_intelligence, 9, 3)
+
+  # Render player
+  if show_agent:
+    # Create white square with black border for player
+    n = 1 * block_pixel_size
+    player_square = jnp.ones((n, n, 3))
+    player_square = player_square.at[:, :, 2].set(0)  # Set blue channel to 0 to make it yellow
+    # Calculate player position in pixels, centered on the original block
+    player_pixel_pos = (
+      state.player_position 
+      - tl_corner 
+      + jnp.array([MAX_OBS_DIM + 2, MAX_OBS_DIM + 2])
+    ) * block_pixel_size - block_pixel_size  # Offset to center the larger square
+    
+    # Update the map pixels with the player square
+    map_pixels = map_pixels.at[
+      player_pixel_pos[0]:player_pixel_pos[0] + n,
+      player_pixel_pos[1]:player_pixel_pos[1] + n,
+      :
+    ].set(player_square)
 
   # Combine map and inventory
   if show_inventory:

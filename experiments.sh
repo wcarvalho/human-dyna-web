@@ -3,12 +3,13 @@
 ##########################################
 
 # LOCAL DEBUGGING: RUN
-rm -r craftax_data .nicegui; pkill -9 -f craftax; DEBUG=1 \
+rm -r craftax_data .nicegui; pkill -9 -f craftax; \
+  DEBUG=1 \
   DATA_DIR='craftax_data' \
   GIVE_INSTRUCTIONS=1 \
-  MANIPULATION="paths" \
+  MANIPULATION="juncture" \
   SAY_REUSE=1 \
-  EVAL_SHOW_MAP=0 \
+  EVAL_SHOW_MAP=1 \
   DEBUG=0 \
   DUMMY_ENV=0 \
   python craftax_web_app.py
@@ -29,14 +30,29 @@ flyctl logs --config configs/human-dyna-craftax-v1-paths-r1-m0.toml
 python launch_craftax.py v1-paths-r0-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
 # https://human-dyna-craftax-v1-paths-r0-m0.fly.dev
 flyctl deploy --config configs/human-dyna-craftax-v1-paths-r0-m0.toml
+flyctl logs --config configs/human-dyna-craftax-v1-paths-r0-m0.tom
 
 python launch_craftax.py v1-juncture-r1-m0 --environment='craftax' --env MANIPULATION="juncture" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
 # https://human-dyna-craftax-v1-juncture-r1-m0.fly.dev
 flyctl deploy --config configs/human-dyna-craftax-v1-juncture-r1-m0.toml
+flyctl logs --config configs/human-dyna-craftax-v1-juncture-r1-m0.toml
 
 python launch_craftax.py v1-juncture-r0-m0 --environment='craftax' --env MANIPULATION="juncture" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
 # https://human-dyna-craftax-v1-juncture-r0-m0.fly.dev
 flyctl deploy --config configs/human-dyna-craftax-v1-juncture-r0-m0.toml
+flyctl logs --config configs/human-dyna-craftax-v1-juncture-r0-m0.toml
+
+
+python launch_craftax.py v1-paths-r1-m1 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=1
+# https://human-dyna-craftax-v1-paths-r1-m1.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v1-paths-r1-m1.toml
+flyctl logs --config configs/human-dyna-craftax-v1-paths-r1-m1.toml
+
+
+python launch_craftax.py v1-paths-r0-m1 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=1
+# https://human-dyna-craftax-v1-paths-r0-m1.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v1-paths-r0-m1.toml
+flyctl logs --config configs/human-dyna-craftax-v1-paths-r0-m1.toml
 
 ########################################################
 # Experiment 9 - CRAFTAX
