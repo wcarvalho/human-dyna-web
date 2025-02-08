@@ -12,6 +12,7 @@ from craftax.craftax.util.game_logic_utils import is_boss_vulnerable
     1,
     2,
     3,
+    4,
   ),
 )
 def render_craftax_pixels(

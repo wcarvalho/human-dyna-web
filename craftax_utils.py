@@ -2,13 +2,18 @@ from typing import Union, Tuple, List, Optional
 import jax
 import jax.numpy as jnp
 from collections import deque
-from craftax.craftax.constants import Action, BlockType, Achievement
-from craftax_fullmap_renderer import render_craftax_pixels, TEXTURES
+from craftax.craftax.constants import Action, BlockType, ItemType, BLOCK_PIXEL_SIZE_IMG
+from craftax_fullmap_renderer import TEXTURES
+from craftax_fullmap_renderer import render_craftax_pixels as render_craftax_pixels_full
+from craftax.craftax.renderer import (
+  render_craftax_pixels as render_craftax_pixels_partial,
+)
 import craftax_fullmap_constants as constants
 import matplotlib.pyplot as plt
 import os
 import numpy as np
 from collections import namedtuple
+from matplotlib.animation import FuncAnimation
 
 try:
   from tqdm.notebook import tqdm
@@ -430,7 +435,7 @@ def get_object_positions(state, block_type):
 
 
 def render_fn(state, show_agent=True, block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG):
-  image = render_craftax_pixels(
+  image = render_craftax_pixels_full(
     state, block_pixel_size=block_pixel_size, show_agent=show_agent
   )
   return image.astype(jnp.uint8)
@@ -784,6 +789,82 @@ def render_goal_object(goal_object_idx: int, block_pixel_size: int):
 
   else:
     raise ValueError(f"Unknown goal object index: {goal_object_idx}")
+
+
+def create_reaction_times_video(
+  initial_map, images, reaction_times, output_file, fps=1
+):
+  # Ensure the directory exists
+  output_dir = os.path.dirname(output_file)
+  if output_dir and not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+  n = len(images)
+  width = 4
+  fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(3 * width, width))
+  ax1.imshow(initial_map)
+
+  def update(frame):
+    # Clear previous content
+    ax2.clear()
+    ax3.clear()
+
+    # Left plot: Image
+    if images.size > 0:
+      img = images[frame]
+      ax2.imshow(img, cmap="viridis")
+    else:
+      ax2.text(0.5, 0.5, "No image data", ha="center", va="center")
+    rt = reaction_times[frame]
+
+    ax1.set_title(f"Step: {frame}, Reaction Time: {rt:.2f} s")
+    ax1.axis("off")
+    ax2.axis("off")
+
+    # Right plot: Bar plot of reaction times
+    bars = ax3.bar(range(len(reaction_times)), reaction_times, color="lightblue")
+    bars[frame].set_color("red")  # Highlight current index
+    ax3.set_xlabel("Time Index")
+    ax3.set_title("Reaction Times")
+    ax3.set_ylim(0, max(reaction_times) * 1.1)
+
+    return ax3, ax2
+
+  # Create the animation
+  anim = FuncAnimation(fig, update, frames=n, interval=1000 / fps, blit=False)
+  video = anim.to_html5_video()
+  return video
+
+
+def create_episode_reaction_times_video(
+  episode_data,
+  output_file="/tmp/housemaze_anlaysis_craftax/rt_video.mp4",
+  fps=1,
+  html: bool = True,
+):
+  def partial_render_fn(state):
+    return render_craftax_pixels_partial(
+      state, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+    ).astype(jnp.uint8)
+
+  def full_render_fn(state):
+    return render_craftax_pixels_full(
+      state, show_agent=False, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+    ).astype(jnp.uint8)
+
+  initial_map = full_render_fn(
+    jax.tree_map(lambda x: x[0], episode_data.timesteps.state)
+  )
+  images = jax.vmap(partial_render_fn)(episode_data.timesteps.state)
+  reaction_times = episode_data.reaction_times
+  video = create_reaction_times_video(
+    initial_map, images, reaction_times, output_file, fps
+  )
+  if html:
+    from IPython.display import HTML, display
+
+    return display(HTML(video))
+  return video
 
 
 if __name__ == "__main__":

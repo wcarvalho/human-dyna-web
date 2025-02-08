@@ -46,7 +46,7 @@ from craftax_experiment_configs import (
 load_dotenv()
 
 logger = get_logger(__name__)
-VERBOSITY = int(os.environ.get("VERBOSITY", 2))
+VERBOSITY = int(os.environ.get("VERBOSITY", 0))
 DEBUG = int(os.environ.get("DEBUG", 0))
 MANIPULATION = os.environ.get("MANIPULATION", "juncture")
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 0))
@@ -850,10 +850,11 @@ def make_env_stage(
   else:
     reset_display_fn = env_reset_display_fn
 
-  print("=" * 30)
-  print(f"Made stage {name} with config")
-  print(stage_config)
-  print("=" * 30)
+  if VERBOSITY:
+    print("=" * 30)
+    print(f"Made stage {name} with config")
+    print(stage_config)
+    print("=" * 30)
   return EnvStage(
     name=name,
     title=title,
@@ -927,9 +928,10 @@ def make_block(
   4. evaluation stage environment
   5. (optional) second evaluation stage environment
   """
-  print("=" * 50)
-  print(f"Block: {name}")
-  print("=" * 50)
+  if VERBOSITY:
+    print("=" * 50)
+    print(f"Block: {name}")
+    print("=" * 50)
   is_practice = "practice" in name
 
   if is_practice:

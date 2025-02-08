@@ -47,6 +47,7 @@ try:
 except (ImportError, AttributeError):
   from tqdm import tqdm
 
+
 class EpisodeData(NamedTuple):
   actions: jax.Array
   timesteps: TimeStep
@@ -54,15 +55,19 @@ class EpisodeData(NamedTuple):
   reaction_times: jax.Array = None
   transitions: struct.PyTreeNode = None
 
+
 def get_task_object(timesteps: TimeStep):
   goal = int(timesteps.state.current_goal[0])
   return configs.GOAL_TO_BLOCK[goal]
 
+
 def get_agent_position(timesteps: TimeStep):
   return timesteps.state.player_position
 
+
 def get_step_number(timesteps: TimeStep):
   return timesteps.state.timestep
+
 
 def success(e: EpisodeData):
   rewards = e.timesteps.reward
@@ -71,8 +76,10 @@ def success(e: EpisodeData):
   success = rewards > 0.5
   return success.any().astype(np.float32)
 
+
 def user_id_from_filename(filename: str):
   return int(filename.split("/")[-1].split(".")[0].split("_")[0].split("=")[1])
+
 
 def time_diff(t1, t2) -> float:
   # Convert string timestamps to datetime objects
@@ -113,7 +120,7 @@ def make_row(
   if is_eval:
     room = 0
   else:
-    train_objects = datum["metadata"]['block_metadata']['train_objects']
+    train_objects = datum["metadata"]["block_metadata"]["train_objects"]
     room = train_objects.index(task_object)
 
   row = dict(
@@ -134,8 +141,8 @@ def make_row(
   # get experiment name from file
   ##########
   row.update(
-    exp_name=user_storage['env_vars']['NAME'],
-    tell_reuse=user_storage['env_vars']['SAY_REUSE'],
+    exp_name=user_storage["env_vars"]["NAME"],
+    tell_reuse=user_storage["env_vars"]["SAY_REUSE"],
     timer=0,
   )
   ####################
@@ -164,14 +171,14 @@ def make_row(
   # add optimal path length
   ####################
   from craftax_utils import astar
+
   path = astar(
     state=jax.tree_map(lambda x: x[0], timesteps.state),  # first time-step
-    goal=row['task'],
+    goal=row["task"],
   )
   row["optimal_length"] = len(path) - 1  # includes done
 
   return row
-
 
 
 def dict_to_string(data):
@@ -235,8 +242,6 @@ def separate_data_by_block_stage(data: List[dict]):
     grouped_data[updated_key].append(datum)
     infos[updated_key] = info
   return grouped_data, infos
-
-
 
 
 def compute_overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
@@ -353,7 +358,7 @@ async def make_episode_data(
   overwrite_episode_data: bool = False,
   overwrite_episode_info: bool = False,
   verbose: bool = False,
-)-> Tuple[pl.DataFrame , EpisodeData]:
+) -> Tuple[pl.DataFrame, EpisodeData]:
   """This groups all of the data by block/stage information and prepares
       (1) a list of EpisodeData objects per block/stage
       (2) a dataframe which summarizes all episode information.
@@ -506,7 +511,7 @@ async def make_episode_data(
         episode_info=gd_infos[key],
         timesteps=timesteps,
         file=file,
-        user_storage=file_metadata['user_storage'],
+        user_storage=file_metadata["user_storage"],
       )
 
       reaction_times = [compute_reaction_time(datum) for datum in raw_episode_data]
@@ -602,7 +607,7 @@ async def make_episode_data(
       .alias("optimal_length_deviance")
     )
     _temp_df = DataFrame(episode_info, episode_data)
-    #_temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
+    # _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
     episode_info = _temp_df._df
 
     episode_info.write_csv(episode_info_filename)
@@ -676,11 +681,13 @@ def get_human_data(
   from housemaze.human_dyna import multitask_env
   from housemaze.human_dyna import web_env
   from housemaze.human_dyna import mazes
+
   ################
   # Setup environment
   ################
   # TODO: change to craftax
   dummy_rng = jax.random.PRNGKey(42)
+
   def make_env_params(maze_str):
     return mazes.get_maze_reset_params(
       groups=groups,
@@ -724,7 +731,7 @@ if __name__ == "__main__":
   # Define searches
   data_dir = "/Users/wilka/git/research/results/human_dyna/"
 
-  #searches = {
+  # searches = {
   #  "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
   #  "Path-notell": f"{data_dir}/user_data/*exps*/*v2*r0*paths*.json",
   #  "Start": f"{data_dir}/user_data/*exps*/*v3*start*.json",
@@ -733,9 +740,9 @@ if __name__ == "__main__":
   #  "Plan (Don't Tell)": f"{data_dir}/user_data/*exps*/*v2*r0-t0-plan*.json",
   #  "Shortcut": f"{data_dir}/user_data/*exps*/*v3*shortcut*.json",
   #  #'Shortcut-notell': f'{data_dir}/user_data/*exps*/*v2*r0*shortcut*.json',
-  #}
+  # }
 
-  #valid_files = get_valid_files(searches, verbose=True, plot=False)
+  # valid_files = get_valid_files(searches, verbose=True, plot=False)
   user_df = get_human_data(
     valid_files, overwrite_episode_data=False, overwrite_episode_info=True
   )
