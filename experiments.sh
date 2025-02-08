@@ -20,7 +20,7 @@ rm -r craftax_data .nicegui; pkill -9 -f craftax; \
 # SAY_REUSE: {1, 0}
 # EVAL_SHOW_MAP: {1, 0}
 
-# (paths) tell reuse + no map
+# [INITIAL] (paths) tell reuse + no map
 python launch_craftax.py v1-paths-r1-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
 # https://human-dyna-craftax-v1-paths-r1-m0.fly.dev
 flyctl deploy --config configs/human-dyna-craftax-v1-paths-r1-m0.toml

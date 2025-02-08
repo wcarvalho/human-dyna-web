@@ -11,6 +11,8 @@ from craftax.craftax.constants import BLOCK_PIXEL_SIZE_IMG, BLOCK_PIXEL_SIZE_HUM
 import jax
 import craftax_utils
 
+BUCKET_NAME = "craftax-human-dyna"
+
 
 class BlockConfig(struct.PyTreeNode):
   """Configuration for a single experimental block"""

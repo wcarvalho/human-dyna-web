@@ -693,19 +693,22 @@ def render_craftax_pixels(
     # Create white square with black border for player
     n = 1 * block_pixel_size
     player_square = jnp.ones((n, n, 3))
-    player_square = player_square.at[:, :, 2].set(0)  # Set blue channel to 0 to make it yellow
+    player_square = player_square.at[:, :, 2].set(
+      0
+    )  # Set blue channel to 0 to make it yellow
     # Calculate player position in pixels, centered on the original block
     player_pixel_pos = (
-      state.player_position 
-      - tl_corner 
+      state.player_position
+      + 1
+      - tl_corner
       + jnp.array([MAX_OBS_DIM + 2, MAX_OBS_DIM + 2])
     ) * block_pixel_size - block_pixel_size  # Offset to center the larger square
-    
+
     # Update the map pixels with the player square
     map_pixels = map_pixels.at[
-      player_pixel_pos[0]:player_pixel_pos[0] + n,
-      player_pixel_pos[1]:player_pixel_pos[1] + n,
-      :
+      player_pixel_pos[0] : player_pixel_pos[0] + n,
+      player_pixel_pos[1] : player_pixel_pos[1] + n,
+      :,
     ].set(player_square)
 
   # Combine map and inventory

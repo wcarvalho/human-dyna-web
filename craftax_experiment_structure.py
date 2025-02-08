@@ -448,13 +448,17 @@ async def experiment_instructions_display_fn(stage, container):
       # Adjust layout
       fig.tight_layout()
 
+
 async def wait_period():
   await asyncio.sleep(1)
   button = ui.button("next")
   await nicewebrl.wait_for_button_or_keypress(button, ignore_recent_press=True)
   button.delete()
 
-async def practice_stage_instructions_display_fn(stage, container, eval=False, **kwargs):
+
+async def practice_stage_instructions_display_fn(
+  stage, container, eval=False, **kwargs
+):
   with container.style("align-items: center;"):
     nicewebrl.clear_element(container)
 
@@ -466,7 +470,9 @@ async def practice_stage_instructions_display_fn(stage, container, eval=False, *
     ui.markdown("Below are the stones you will need to mine.")
     if SAY_REUSE and not eval:
       await wait_period()
-      ui.markdown("**We note the stone relevant to phase 2 in <span style='color: green'>GREEN</span> below**")
+      ui.markdown(
+        "**We note the stone relevant to phase 2 in <span style='color: green'>GREEN</span> below**"
+      )
       await wait_period()
 
     # Get all possible goals
@@ -929,10 +935,12 @@ def make_block(
   if is_practice:
     train_display_fn = practice_stage_instructions_display_fn
     eval_display_fn = partial(practice_stage_instructions_display_fn, eval=True)
+
     def make_title(t):
       return f"(Practice) {t}"
   else:
     train_display_fn = eval_display_fn = stage_instructions_display_fn
+
     def make_title(t):
       return t
 

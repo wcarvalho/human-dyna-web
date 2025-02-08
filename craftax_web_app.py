@@ -17,12 +17,15 @@ from nicewebrl.utils import wait_for_button_or_keypress
 from nicewebrl import stages
 from importlib.util import find_spec
 import shutil
+import craftax_experiment_configs as config
+
 
 DATABASE_FILE = os.environ.get("DB_FILE", "db.sqlite")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
 LOGGER_DISPLAY_TIME = int(os.environ.get("LOGGER_DISPLAY_TIME", 0))
 DEBUG = int(os.environ.get("DEBUG", 0))
+CONSENT = int(os.environ.get("CONSENT", 1))
 DEBUG_SEED = int(os.environ.get("SEED", 0))
 NAME = os.environ.get("NAME", "exp")
 DATABASE_FILE = f"{DATABASE_FILE}_name={NAME}_debug={DEBUG}"
@@ -257,11 +260,11 @@ async def save_data(final_save=True, feedback=None, **kwargs):
         f"logs/{blob_user_filename()}.log",
       ),
     ]
-    logger.info("Saving to bucket: craftax-human-dyna")
+    logger.info(f"Saving to bucket: {config.BUCKET_NAME}")
     await save_to_gcs_with_retries(
       files_to_save,
       max_retries=5 if final_save else 1,
-      bucket_name="craftax-human-dyna",
+      bucket_name=config.BUCKET_NAME,
     )
 
 
@@ -360,7 +363,7 @@ async def start_experiment(meta_container, stage_container, button_container):
   # ========================================
   # Consent form and demographic info
   # ========================================
-  if not (app.storage.user.get("experiment_started", False) or DEBUG):
+  if not (app.storage.user.get("experiment_started", False) or DEBUG) and CONSENT:
     await make_consent_form(stage_container)
     await collect_demographic_info(stage_container)
     app.storage.user["experiment_started"] = True

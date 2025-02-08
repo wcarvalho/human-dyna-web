@@ -23,16 +23,15 @@ from absl import logging
 
 from jaxneurorl.agents import value_based_basics as vbb
 from housemaze import utils
-from housemaze.human_dyna import multitask_env
-from housemaze.human_dyna import mazes
 
+import nicewebrl
 from nicewebrl import nicejax
 from nicewebrl.dataframe import DataFrame
 
 
 class EpisodeData(NamedTuple):
   actions: jax.Array
-  timesteps: multitask_env.TimeStep
+  timesteps: nicewebrl.TimeStep
   positions: jax.Array = None
   reaction_times: jax.Array = None
   transitions: struct.PyTreeNode = None
@@ -63,6 +62,24 @@ else:
   from tqdm import tqdm
 
 
+def success(e: EpisodeData):
+  rewards = e.timesteps.reward
+  # return rewards
+  assert rewards.ndim == 1, "this is only defined over vector, e.g. 1 episode"
+  success = rewards > 0.5
+  return success.any().astype(np.float32)
+
+
+def features_achieved(e):
+  features = e.timesteps.state.task_state.features
+  achieved = features.sum(-1) > 0
+  return achieved.any().astype(np.float32)
+
+
+def terminated(e):
+  return features_achieved(e)
+
+
 def reversal_label(reversal):
   if reversal == [False, False]:
     return "F,F"
@@ -74,6 +91,18 @@ def reversal_label(reversal):
     return "T,T"
   else:
     raise ValueError(f"reversal: {reversal}")
+
+
+def get_task_object(timesteps: nicewebrl.TimeStep):
+  return timesteps.state.task_object[0]
+
+
+def get_task_room(timesteps: nicewebrl.TimeStep, task_groups=None):
+  task_object = get_task_object(timesteps)
+  task_groups = task_groups or groups
+  # Find the room (row) that contains the task object
+  task_room = next((i for i, row in enumerate(task_groups) if task_object in row), None)
+  return task_room
 
 
 ############
@@ -107,7 +136,7 @@ def load_params_config(path: str, file: str, config: bool = True):
   return params, config
 
 
-def swap_task(x: multitask_env.TimeStep, w: jax.Array):
+def swap_task(x: nicewebrl.TimeStep, w: jax.Array):
   new_state = x.state.replace(
     step_num=jnp.zeros_like(x.state.step_num),
     task_w=w,
@@ -254,7 +283,7 @@ task_objects = groups.reshape(-1)
 
 def get_timestep(datum, example_timestep):
   timestep = nicejax.deserialize_bytes(
-    cls=multitask_env.TimeStep, encoded_data=datum["data"]["timestep"]
+    cls=nicewebrl.TimeStep, encoded_data=datum["data"]["timestep"]
   )
 
   # `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
@@ -278,18 +307,6 @@ def time_diff(t1, t2) -> float:
 def compute_reaction_time(datum) -> float:
   # Calculate the time difference
   return time_diff(datum["data"]["image_seen_time"], datum["data"]["action_taken_time"])
-
-
-def get_task_object(timesteps: multitask_env.TimeStep):
-  return timesteps.state.task_object[0]
-
-
-def get_task_room(timesteps: multitask_env.TimeStep, task_groups=None):
-  task_object = get_task_object(timesteps)
-  task_groups = task_groups or groups
-  # Find the room (row) that contains the task object
-  task_room = next((i for i, row in enumerate(task_groups) if task_object in row), None)
-  return task_room
 
 
 def dict_to_string(data):
@@ -358,7 +375,7 @@ def separate_data_by_block_stage(data: List[dict]):
 
 def make_row(
   datum: dict,
-  timesteps: multitask_env.TimeStep,
+  timesteps: nicewebrl.TimeStep,
   file: str,
   episode_info: Optional[dict],
 ):
@@ -366,7 +383,7 @@ def make_row(
 
   Args:
       datum (dict): _description_
-      timesteps (multitask_env.TimeStep): _description_
+      timesteps (nicewebrl.TimeStep): _description_
       file (str): _description_
 
   Returns:
@@ -427,7 +444,7 @@ def make_row(
 
 def make_episode_data(
   file: str,
-  example_timestep: multitask_env.TimeStep,
+  example_timestep: nicewebrl.TimeStep,
   debug: bool = False,
   overwrite_episode_data: bool = False,
   overwrite_episode_info: bool = False,
@@ -579,20 +596,6 @@ def make_episode_data(
     # --------------
     # next, augment df with success, termination, first_rt, avg_rt, total_rt
     # --------------
-    def success(e: EpisodeData):
-      rewards = e.timesteps.reward
-      # return rewards
-      assert rewards.ndim == 1, "this is only defined over vector, e.g. 1 episode"
-      success = rewards > 0.5
-      return success.any().astype(np.float32)
-
-    def features_achieved(e):
-      features = e.timesteps.state.task_state.features
-      achieved = features.sum(-1) > 0
-      return achieved.any().astype(np.float32)
-
-    def terminated(e):
-      return features_achieved(e)
 
     def total_rt(e: EpisodeData):
       return np.sum(e.reaction_times[:-1])
