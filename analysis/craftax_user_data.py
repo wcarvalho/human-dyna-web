@@ -9,7 +9,7 @@ Key functions:
 MOST OF THE LOGIC IS IN `make_episode_data`
 """
 
-from cmath import polar
+from glob import glob
 from joblib import Parallel, delayed
 from typing import Optional, Tuple
 import polars as pl
@@ -143,6 +143,7 @@ def make_row(
   row.update(
     exp_name=user_storage["env_vars"]["NAME"],
     tell_reuse=user_storage["env_vars"]["SAY_REUSE"],
+    eval_map=user_storage["env_vars"]["EVAL_SHOW_MAP"],
     timer=0,
   )
   ####################
@@ -677,34 +678,59 @@ def create_maps(episode_data_list: List[EpisodeData]):
 def get_human_data(
   valid_files, overwrite_episode_data=False, overwrite_episode_info=True
 ):
-  from experiment_utils import SuccessTrackingAutoResetWrapper
-  from housemaze.human_dyna import multitask_env
-  from housemaze.human_dyna import web_env
-  from housemaze.human_dyna import mazes
+
+  from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
+  from simulations.craftax_web_env import EnvParams
+  from craftax.craftax.constants import Action
 
   ################
   # Setup environment
   ################
   # TODO: change to craftax
-  dummy_rng = jax.random.PRNGKey(42)
-
-  def make_env_params(maze_str):
-    return mazes.get_maze_reset_params(
-      groups=groups,
-      char2key=char2idx,
-      maze_str=maze_str,
-      randomize_agent=False,
-      make_env_params=True,
-    )
-
-  dummy_env_params = make_env_params(mazes.big_practice_maze)
-  task_runner = multitask_env.TaskRunner(task_objects=task_objects)
-  base_env = web_env.HouseMaze(
-    task_runner=task_runner,
-    num_categories=200,
+  static_env_params = CraftaxSymbolicWebEnvNoAutoReset.default_static_params()
+  MONSTERS = 1
+  MAX_START_POSITIONS = 10
+  static_env_params = static_env_params.replace(
+    max_melee_mobs=MONSTERS,
+    max_ranged_mobs=MONSTERS,
+    max_passive_mobs=10,  # cows
+    initial_crafting_tables=True,
+    initial_strength=20,
+    map_size=(48, 48),
   )
-  end = SuccessTrackingAutoResetWrapper(base_env)
-  example_web_timestep = end.reset(dummy_rng, dummy_env_params)
+  jax_env = CraftaxSymbolicWebEnvNoAutoReset(
+    static_env_params=static_env_params,
+  )
+
+  def make_start_position(start_positions):
+    start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
+    return start_position.at[: len(start_positions)].set(jnp.asarray(start_positions))
+
+  dummy_start_position = make_start_position((24, 24))
+
+  default_params = EnvParams(
+    day_length=100000,
+    max_timesteps=200,
+    mob_despawn_distance=100000,
+    # possible_goals=possible_goals,
+    #active_goals=all_goals_active,
+    world_seeds=(0,),
+    start_positions=dummy_start_position,
+  )
+  dummy_block_config = configs.PATHS_CONFIGS[0]
+  dummy_params = configs.make_block_env_params(dummy_block_config, default_params).replace(
+    # to have compilation use valid current_goal value
+    current_goal=dummy_block_config.train_objects[0],
+  )
+
+  # create web environment wrapper
+  actions = [Action.RIGHT, Action.DOWN, Action.LEFT, Action.UP, Action.DO]
+  action_array = jnp.array([a.value for a in actions])
+
+  jax_web_env = nicewebrl.JaxWebEnv(env=jax_env, actions=action_array)
+  example_web_timestep = jax_web_env.reset(
+    jax.random.PRNGKey(0), dummy_params
+  )
 
   ################
   # Load data
@@ -729,20 +755,17 @@ def get_human_data(
 
 if __name__ == "__main__":
   # Define searches
-  data_dir = "/Users/wilka/git/research/results/human_dyna/"
+  data_dir = "/Users/wilka/git/research/results/human_dyna_craftax/"
 
-  # searches = {
-  #  "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
-  #  "Path-notell": f"{data_dir}/user_data/*exps*/*v2*r0*paths*.json",
-  #  "Start": f"{data_dir}/user_data/*exps*/*v3*start*.json",
-  #  #'Start-notell': f'{data_dir}/user_data/*exps*/*v2*r0*start*.json',
-  #  "Plan (Tell)": f"{data_dir}/user_data/*exps*/*v2*r1-t0-plan*.json",
-  #  "Plan (Don't Tell)": f"{data_dir}/user_data/*exps*/*v2*r0-t0-plan*.json",
-  #  "Shortcut": f"{data_dir}/user_data/*exps*/*v3*shortcut*.json",
-  #  #'Shortcut-notell': f'{data_dir}/user_data/*exps*/*v2*r0*shortcut*.json',
-  # }
+  searches = {
+    "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
+    "Start": f"{data_dir}/user_data/*exps*/*v1*juncture*.json",
+  }
+  files = []
+  for v in searches.values():
+    files.extend(glob(v))
 
   # valid_files = get_valid_files(searches, verbose=True, plot=False)
   user_df = get_human_data(
-    valid_files, overwrite_episode_data=False, overwrite_episode_info=True
+    files, overwrite_episode_data=False, overwrite_episode_info=True
   )

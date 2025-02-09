@@ -31,6 +31,10 @@ def download_user_files(bucket_name, prefix, pattern, destination_folder):
   for blob in blobs:
     if fnmatch.fnmatch(blob.name, pattern):
       destination_file = os.path.join(destination_folder, os.path.basename(blob.name))
+      # Check if file already exists
+      if os.path.exists(destination_file):
+        print(f"File already exists: {destination_file}")
+        continue
       blob.download_to_filename(destination_file)
       print(f"Downloaded: {blob.name} to {destination_file}")
 
