@@ -11,3 +11,5 @@ craftax
 playwright
 jupyterlab
 matplotlib
+seaborn
+tqdm

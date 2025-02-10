@@ -11,8 +11,6 @@ import os.path
 from scipy import stats
 import seaborn as sns
 
-# from analysis.housemaze_analysis_garbarge import plot_rt_condition_differences
-from housemaze.human_dyna import utils
 from math import sqrt, ceil
 from statsmodels.stats.power import TTestPower
 import pandas as pd
@@ -20,9 +18,6 @@ import statsmodels.formula.api as smf
 from multiprocessing import Pool
 from glob import glob
 
-from analysis.housemaze_model_data import get_model_data
-from analysis.housemaze_user_data import get_human_data
-from analysis.housemaze_user_data import get_valid_files
 from nicewebrl.dataframe import DataFrame
 import matplotlib.patches as mpatches
 
@@ -30,7 +25,6 @@ DEFAULT_TITLE_SIZE = 14
 DEFAULT_LABEL_SIZE = 12
 DEFAULT_LEGEND_SIZE = 10
 
-image_dict = utils.load_image_dict()
 
 default_colors = {
   "reddish purple": (204 / 255, 121 / 255, 167 / 255),
@@ -2091,6 +2085,7 @@ if __name__ == "__main__":
   # TODO: implement model and get results
   model_df = None
   if USE_MODEL_DATA:
+    from analysis.craftax_model_data import get_model_data
     model_df = get_model_data(
       qlearning_path=f"{data_dir}/model_data/ql/save_data/ql-big-2/tota=40000000,exp=exp2/seed=*",
       sf_path=f"{data_dir}/model_data/usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2/seed=*",
@@ -2103,6 +2098,7 @@ if __name__ == "__main__":
   ################
   # Load user data
   ################
+  from analysis.craftax_user_data import get_human_data
   searches = {
     "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
     "Start": f"{data_dir}/user_data/*exps*/*v1*juncture*.json",

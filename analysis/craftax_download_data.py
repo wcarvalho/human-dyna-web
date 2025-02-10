@@ -5,14 +5,13 @@ import fnmatch
 from pathlib import Path
 import craftax_experiment_configs as config
 
+GOOGLE_CREDENTIALS = "./keys/datastore-key.json"
 
 ##############################
 # User Data
 ##############################
 def initialize_storage_client(bucket_name="human-dyna"):
-  storage_client = storage.Client.from_service_account_json(
-    os.environ["GOOGLE_CREDENTIALS"]
-  )
+  storage_client = storage.Client.from_service_account_json(GOOGLE_CREDENTIALS)
   bucket = storage_client.bucket(bucket_name)
   return bucket
 
@@ -33,10 +32,10 @@ def download_user_files(bucket_name, prefix, pattern, destination_folder):
       destination_file = os.path.join(destination_folder, os.path.basename(blob.name))
       # Check if file already exists
       if os.path.exists(destination_file):
-        print(f"File already exists: {destination_file}")
+        print(f"File already exists: \n\t {destination_file}")
         continue
       blob.download_to_filename(destination_file)
-      print(f"Downloaded: {blob.name} to {destination_file}")
+      print(f"Downloaded: \n\t from: {blob.name} \n\t to: {destination_file}")
 
 
 ##############################

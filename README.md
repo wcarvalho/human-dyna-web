@@ -18,7 +18,7 @@ git submodule add https://github.com/wcarvalho/nicewebrl libraries/nicewebrl
 ```
 mamba create -n preplay python=3.10 pip wheel -y
 mamba activate preplay
-pip install -e libraries/housemaze -e libraries/nicewebrl -e libraries/jaxneurorl -r requirements.txt
+pip install -e libraries/housemaze -e "libraries/nicewebrl[craftax]" -e libraries/jaxneurorl -r requirements.txt
 
 
 # setting up mamba activation
