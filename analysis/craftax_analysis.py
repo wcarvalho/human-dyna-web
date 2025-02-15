@@ -2111,7 +2111,7 @@ if __name__ == "__main__":
   for v in searches.values():
     files.extend(glob(v))
 
-  #valid_files = get_valid_files(searches, verbose=True, plot=False)
+  # valid_files = get_valid_files(searches, verbose=True, plot=False)
   user_df = get_human_data(
     files, overwrite_episode_data=False, overwrite_episode_info=False
   )

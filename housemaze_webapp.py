@@ -204,7 +204,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
     app.storage.user["experiment_finished"] = True
     with meta_container:
       clear_element(meta_container)
-      ui.markdown(f"## Saving data. Please wait")
+      ui.markdown("## Saving data. Please wait")
       ui.markdown(
         "**Once the data is uploaded, this app will automatically move to the next screen**"
       )
@@ -404,7 +404,6 @@ async def start_experiment(meta_container, stage_container, button_container):
     app.storage.user["experiment_started"] = True
 
   if DEBUG == 0:
-    ui.run_javascript("document.documentElement.requestFullscreen()")
     ui.run_javascript("window.require_fullscreen = true")
   else:
     ui.run_javascript("window.require_fullscreen = false")

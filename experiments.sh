@@ -4,14 +4,14 @@
 
 # LOCAL DEBUGGING: RUN
 rm -r craftax_data .nicegui; pkill -9 -f craftax; \
-  DEBUG=1 \
   DATA_DIR='craftax_data' \
-  GIVE_INSTRUCTIONS=1 \
-  MANIPULATION="juncture" \
+  GIVE_INSTRUCTIONS=0 \
+  CONSENT=0 \
+  MANIPULATION="paths" \
   SAY_REUSE=1 \
   EVAL_SHOW_MAP=1 \
   DEBUG=0 \
-  DUMMY_ENV=0 \
+  DUMMY_ENV=1 \
   python craftax_web_app.py
 
 

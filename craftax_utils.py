@@ -606,6 +606,7 @@ def draw_object_path(
   world_seed,
   goal_idx: Optional[int] = None,
   nearby_goal: bool = False,
+  show_path_length: bool = True,
 ):
   """Draw path to a specific object type from start position."""
   # Get goal position for the object
@@ -630,7 +631,7 @@ def draw_object_path(
     ax=ax,
     display_image=False,
     arrow_color=color,
-    show_path_length=True,
+    show_path_length=show_path_length,
     start_color=color,
   )
   return path
@@ -657,6 +658,7 @@ def train_test_paths(
   nearby_goal: bool = True,
   goal_idx: Optional[int] = None,
   ax=None,
+  show_path_length: bool = True,
 ):
   #########################################
   # Create params
@@ -696,7 +698,14 @@ def train_test_paths(
   # Draw paths for each object
   if train_distractor_object is not None:
     draw_object_path(
-      state, train_distractor_object, start_position, TRAIN_COLOR, ax, image, world_seed
+      state,
+      train_distractor_object,
+      start_position,
+      TRAIN_COLOR,
+      ax,
+      image,
+      world_seed,
+      show_path_length=show_path_length,
     )
   draw_object_path(
     state,
@@ -707,6 +716,7 @@ def train_test_paths(
     image,
     world_seed,
     goal_idx=goal_idx,
+    show_path_length=show_path_length,
   )
   draw_object_path(
     state,
@@ -717,6 +727,7 @@ def train_test_paths(
     image,
     world_seed,
     nearby_goal=nearby_goal,
+    show_path_length=show_path_length,
   )
 
   # Place start marker for the first position

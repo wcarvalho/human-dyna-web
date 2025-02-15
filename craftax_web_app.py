@@ -17,7 +17,6 @@ from nicewebrl.utils import wait_for_button_or_keypress
 from nicewebrl import stages
 from importlib.util import find_spec
 import shutil
-import craftax_experiment_configs as config
 
 
 DATABASE_FILE = os.environ.get("DB_FILE", "db.sqlite")
@@ -36,7 +35,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 _user_locks = {}
 
 # Add module loading management
-craftax_module = None
+experiment_structure = None
+config = None
 craftax_loaded = asyncio.Event()
 
 
@@ -54,7 +54,7 @@ setup_logging(
   # can use this to identify users
   display_time=LOGGER_DISPLAY_TIME,
   log_filename_fn=log_filename_fn,
-  nicegui_storage_user_key="seed",
+  nicegui_storage_user_key="user_id",
 )
 logger = get_logger("main")
 loader_logger = get_logger("craftax_loader")
@@ -107,7 +107,7 @@ def restore_texture_cache_if_needed():
 
 
 async def load_craftax_module():
-  global craftax_module, load_start_time, load_error
+  global experiment_structure, load_start_time, load_error, config
   load_start_time = datetime.now()
   loop = asyncio.get_event_loop()
   loader_logger.info("Starting craftax module load attempt")
@@ -121,15 +121,16 @@ async def load_craftax_module():
     def import_with_logging():
       try:
         import craftax_experiment_structure
+        import craftax_experiment_configs
 
         loader_logger.info("Import successful")
-        return craftax_experiment_structure
+        return craftax_experiment_structure, craftax_experiment_configs
       except Exception as e:
         error_msg = f"Import failed: {str(e)}\n{traceback.format_exc()}"
         loader_logger.error(error_msg)
         raise
 
-    craftax_module = await loop.run_in_executor(None, import_with_logging)
+    experiment_structure, config = await loop.run_in_executor(None, import_with_logging)
 
     loader_logger.info("Craftax module loaded successfully")
     load_duration = (datetime.now() - load_start_time).total_seconds()
@@ -178,10 +179,10 @@ def get_user_lock():
 
 async def experiment_not_finished():
   """Check if the experiment is not finished"""
-  experiment = craftax_module
-  async with get_user_lock():
-    not_finished = not app.storage.user.get("experiment_finished", False)
-    not_finished &= app.storage.user["block_idx"] < len(experiment.all_blocks)
+  # async with get_user_lock():
+  global experiment_structure
+  not_finished = not app.storage.user.get("experiment_finished", False)
+  not_finished &= app.storage.user["block_idx"] < len(experiment_structure.all_blocks)
   return not_finished
 
 
@@ -195,12 +196,12 @@ def blob_user_filename():
     return f"user={seed}_name={NAME}_debug={DEBUG}"
 
 
-def get_current_block() -> nicewebrl.Block:
-  experiment = craftax_module
+def get_current_block(block_idx: int = None) -> nicewebrl.Block:
+  global experiment_structure
+  block_idx = block_idx or app.storage.user["block_idx"]
   block_order = app.storage.user.get("block_order")
-  block_idx = app.storage.user["block_idx"]
   ordered_block_idx = block_order[block_idx]
-  block: nicewebrl.Block = experiment.all_blocks[ordered_block_idx]
+  block: nicewebrl.Block = experiment_structure.all_blocks[ordered_block_idx]
   return block
 
 
@@ -211,17 +212,21 @@ async def global_handle_key_press(e, container):
   call the stage-specific key handler. When the experiment begins, we'll register
   a key listener to call this function
   """
+  global experiment_structure
+  logger.info(f"args: {e.args}")
+  if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
+    ui.notify("Please enter fullscreen mode to continue experiment", type="negative")
+    return
 
   if not craftax_loaded.is_set():
+    logger.info("craftax not loaded")
     return
 
   block_idx = app.storage.user["block_idx"]
-  logger.info(f"args: {e.args}")
-  experiment = craftax_module
-  if block_idx >= len(experiment.all_blocks):
+  if block_idx >= len(experiment_structure.all_blocks):
     logger.info("block idx out of bounds")
     return
-  block = get_current_block()
+  block = get_current_block(block_idx)
   stage = await block.get_stage()
 
   if stage.get_user_data("finished", False):
@@ -235,8 +240,8 @@ async def global_handle_key_press(e, container):
 
 
 async def save_data(final_save=True, feedback=None, **kwargs):
-  experiment = craftax_module
-  user_data_file = experiment.get_user_save_file_fn()
+  global experiment_structure, config
+  user_data_file = experiment_structure.get_user_save_file_fn()
 
   if final_save:
     # --------------------------------
@@ -266,6 +271,22 @@ async def save_data(final_save=True, feedback=None, **kwargs):
       max_retries=5 if final_save else 1,
       bucket_name=config.BUCKET_NAME,
     )
+
+  if not DEBUG and final_save:
+    # Try to delete local files after successful upload
+    from nicewebrl.stages import StageStateModel
+
+    logger.info(f"Deleting data for user {app.storage.browser['id']}")
+    await StageStateModel.filter(session_id=app.storage.browser["id"]).delete()
+    logger.info(
+      f"Successfully deleted stage inforation for user {app.storage.browser['id']}"
+    )
+    for local_file, _ in files_to_save:
+      try:
+        os.remove(local_file)
+        logger.info(f"Successfully deleted local file: {local_file}")
+      except Exception as e:
+        logger.warning(f"Failed to delete local file {local_file}: {str(e)}")
 
 
 #####################################
@@ -351,15 +372,16 @@ async def collect_demographic_info(container):
 
 
 def get_experiment_progress():
-  experiment = craftax_module
+  global experiment_structure
   stage_progress = float(
-    f"{(app.storage.user['stage_idx'] + 1) / len(experiment.all_stages):.2f}"
+    f"{(app.storage.user['stage_idx'] + 1) / len(experiment_structure.all_stages):.2f}"
   )
   app.storage.user["stage_progress"] = stage_progress
   return stage_progress
 
 
 async def start_experiment(meta_container, stage_container, button_container):
+  global experiment_structure
   # ========================================
   # Consent form and demographic info
   # ========================================
@@ -372,7 +394,6 @@ async def start_experiment(meta_container, stage_container, button_container):
   # Force fullscreen
   # ========================================
   if DEBUG == 0:
-    ui.run_javascript("document.documentElement.requestFullscreen()")
     ui.run_javascript("window.require_fullscreen = true")
   else:
     ui.run_javascript("window.require_fullscreen = false")
@@ -385,24 +406,23 @@ async def start_experiment(meta_container, stage_container, button_container):
   # ========================================
   # Get order of blocks
   # ========================================
-  experiment = craftax_module
   block_order = app.storage.user.get("block_order")
   if block_order is None:
-    block_order = experiment.generate_block_order(nicewebrl.new_rng())
+    block_order = experiment_structure.generate_block_order(nicewebrl.new_rng())
     app.storage.user["block_order"] = block_order
 
   # ========================================
   # Run experiment
   # ========================================
   logger.info("Starting experiment")
-  block_names_in_order = [experiment.all_blocks[i].name for i in block_order]
+  block_names_in_order = [experiment_structure.all_blocks[i].name for i in block_order]
   logger.info(f"Block order: {block_names_in_order}")
   while await experiment_not_finished():
     # get current block
     block_idx = app.storage.user["block_idx"]
-    block = get_current_block()
+    block = get_current_block(block_idx)
     logger.info("=" * 50)
-    blocks = len(experiment.all_blocks)
+    blocks = len(experiment_structure.all_blocks)
     logger.info(f"Began block {block_idx + 1}/{blocks} '{block.name}'")
     logger.info("=" * 50)
 
@@ -432,7 +452,7 @@ async def start_experiment(meta_container, stage_container, button_container):
       app.storage.user["block_idx"] = block_idx
 
     # check if we've finished all blocks
-    if app.storage.user["block_idx"] >= len(experiment.all_blocks):
+    if app.storage.user["block_idx"] >= len(experiment_structure.all_blocks):
       break
 
   await finish_experiment(meta_container, stage_container, button_container)
@@ -444,9 +464,9 @@ async def finish_experiment(meta_container, stage_container, button_container):
   nicewebrl.clear_element(button_container)
   logger.info("Finishing experiment")
 
-  if DEBUG > 0:
-    # in case called multiple times
-    return
+  # if DEBUG > 0:
+  #  # in case called multiple times
+  #  return
 
   #########################
   # Save data
@@ -527,11 +547,11 @@ async def try_to_make_fullscreen():
   if DEBUG > 0:
     return True
   if not await nicewebrl.utils.check_fullscreen():
-    ui.run_javascript("document.documentElement.requestFullscreen()")
+    ui.run_javascript("await document.documentElement.requestFullscreen()")
     await asyncio.sleep(1)
     ui.notify(
-      "Please enter fullscreen mode to continue experiment",
-      position="lower",
+      "Please stay in fullscreen mode for the experiment",
+      position="bottom",
       type="negative",
     )
   return await nicewebrl.utils.check_fullscreen()
@@ -545,36 +565,27 @@ async def run_stage(stage, stage_container, button_container):
   stage_over_event = asyncio.Event()
 
   async def local_handle_key_press():
-    if DEBUG == 0:
-      fullscreen = await nicewebrl.utils.check_fullscreen()
-      if not fullscreen:
-        with stage_container:
-          ui.notify(
-            "Please enter fullscreen mode to continue experiment",
-            position="lower",
-            type="negative",
-          )
-        return
     logger.info("local_handle_key_press")
-    async with get_user_lock():
-      if stage.get_user_data("finished", False):
-        # Signal that the stage is over
-        logger.info(f"Finished {stage_name(stage)} via key press")
-        stage_over_event.set()
+    if stage.get_user_data("finished", False):
+      # Signal that the stage is over
+      logger.info(
+        f"Finished {stage_name(stage)} via key press: {stage.get_user_data('finished', False)}"
+      )
+      stage_over_event.set()
 
   async def handle_button_press():
     if not await try_to_make_fullscreen():
       logger.info("Button press but not fullscreen")
+      ui.notify("Please enter fullscreen mode to continue experiment", type="negative")
       return
     if stage.get_user_data("finished", False):
       return
     # nicewebrl.clear_element(button_container)
     await stage.handle_button_press(stage_container)
-    async with get_user_lock():
-      if stage.get_user_data("finished", False):
-        # Signal that the stage is over
-        logger.info(f"Finished {stage_name(stage)} via button press")
-        stage_over_event.set()
+    if stage.get_user_data("finished", False):
+      # Signal that the stage is over
+      logger.info(f"Finished {stage_name(stage)} via button press")
+      stage_over_event.set()
 
   #############################################
   # Activate new stage
@@ -619,7 +630,6 @@ async def run_stage(stage, stage_container, button_container):
         await create_button_and_wait()
 
   await stage_over_event.wait()
-  nicewebrl.clear_element(stage_container)
   nicewebrl.clear_element(button_container)
 
 
@@ -793,19 +803,19 @@ async def index(request: Request):
 
 async def check_if_over(*args, episode_limit=60, **kwargs):
   """If past time limit, finish experiment"""
+  global experiment_structure
   minutes_passed = nicewebrl.get_user_session_minutes()
   minutes_passed = app.storage.user["session_duration"]
   if minutes_passed > episode_limit:
     logger.info(f"experiment timed out after {minutes_passed} minutes")
-    experiment = craftax_module
-    app.storage.user["stage_idx"] = len(experiment.all_stages)
-    app.storage.user["block_idx"] = len(experiment.all_blocks)
+    app.storage.user["stage_idx"] = len(experiment_structure.all_stages)
+    app.storage.user["block_idx"] = len(experiment_structure.all_blocks)
     await finish_experiment(*args, **kwargs)
 
 
 async def footer(footer_container):
-  experiment = craftax_module
   """Add user information and progress bar to the footer"""
+  global experiment_structure
   with footer_container:
     with ui.row():
       user_id = app.storage.user.get("seed", None)
@@ -816,7 +826,7 @@ async def footer(footer_container):
       ui.label()
 
       def get_stage_idx(v):
-        return f"stage: {int(v) + 1}/{len(experiment.all_stages)}."
+        return f"stage: {int(v) + 1}/{len(experiment_structure.all_stages)}."
 
       ui.label().bind_text_from(app.storage.user, "stage_idx", get_stage_idx)
       ui.label()

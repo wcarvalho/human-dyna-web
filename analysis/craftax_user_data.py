@@ -422,6 +422,12 @@ async def make_episode_data(
   #####################
   # Load or create episode_data
   #####################
+  import ipdb
+
+  ipdb.set_trace()
+  example_timestep = example_timestep.replace(
+    state=jax.tree_map(lambda t: t[:1], example_timestep.state)
+  )
   if os.path.exists(episode_data_filename) and not overwrite_episode_data:
     with open(episode_data_filename, "rb") as f:
       serialized_data = f.read()
@@ -678,7 +684,6 @@ def create_maps(episode_data_list: List[EpisodeData]):
 def get_human_data(
   valid_files, overwrite_episode_data=False, overwrite_episode_info=True
 ):
-
   from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
   from simulations.craftax_web_env import EnvParams
   from craftax.craftax.constants import Action
@@ -713,12 +718,14 @@ def get_human_data(
     max_timesteps=200,
     mob_despawn_distance=100000,
     # possible_goals=possible_goals,
-    #active_goals=all_goals_active,
+    # active_goals=all_goals_active,
     world_seeds=(0,),
     start_positions=dummy_start_position,
   )
   dummy_block_config = configs.PATHS_CONFIGS[0]
-  dummy_params = configs.make_block_env_params(dummy_block_config, default_params).replace(
+  dummy_params = configs.make_block_env_params(
+    dummy_block_config, default_params
+  ).replace(
     # to have compilation use valid current_goal value
     current_goal=dummy_block_config.train_objects[0],
   )
@@ -728,9 +735,7 @@ def get_human_data(
   action_array = jnp.array([a.value for a in actions])
 
   jax_web_env = nicewebrl.JaxWebEnv(env=jax_env, actions=action_array)
-  example_web_timestep = jax_web_env.reset(
-    jax.random.PRNGKey(0), dummy_params
-  )
+  example_web_timestep = jax_web_env.reset(jax.random.PRNGKey(0), dummy_params)
 
   ################
   # Load data

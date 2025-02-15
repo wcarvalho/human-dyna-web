@@ -4,10 +4,15 @@ from flax import struct
 import numpy as np
 import os.path
 import matplotlib.pyplot as plt
-from craftax.craftax.constants import BlockType, Achievement, TEXTURES
 from craftax.craftax.renderer import render_craftax_pixels as render_partial
 from craftax_fullmap_renderer import render_craftax_pixels as render_full
-from craftax.craftax.constants import BLOCK_PIXEL_SIZE_IMG, BLOCK_PIXEL_SIZE_HUMAN
+from craftax.craftax.constants import (
+  BlockType,
+  Achievement,
+  TEXTURES,
+  BLOCK_PIXEL_SIZE_IMG,
+  BLOCK_PIXEL_SIZE_HUMAN,
+)
 import jax
 import craftax_utils
 
@@ -253,7 +258,7 @@ def get_fullmap_image(world_seed, type="paths"):
   return image
 
 
-def make_block_env_params(config: BlockConfig, default_params):
+def make_block_env_params(config: BlockConfig, default_params: struct.PyTreeNode):
   #########
   # Make sure both goal locations and objects have 3 values
   #########
@@ -315,7 +320,7 @@ def get_goal_image(
   return texture[:block_pixel_size, :block_pixel_size]
 
 
-def visualize_block_config(config: BlockConfig, jax_env):
+def visualize_block_config(config: BlockConfig, jax_env, **kwargs):
   """Visualizes a block configuration showing the full map and agent views from all starting positions.
 
   Args:
@@ -393,6 +398,7 @@ def visualize_block_config(config: BlockConfig, jax_env):
     if config.start_eval2_positions
     else None,
     ax=ax2,  # Pass the specific subplot axis
+    **kwargs,
   )
   ax2.set_title(f"Path Visualization (World Seed: {config.world_seed})")
   ax2.axis("off")

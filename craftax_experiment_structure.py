@@ -1,6 +1,6 @@
 import asyncio
 from functools import partial
-from typing import Callable, List, Tuple, Optional
+from typing import Callable, List, Tuple, Optional, Union
 from dotenv import load_dotenv
 from flax import struct, serialization
 import jax
@@ -18,11 +18,11 @@ import nicewebrl
 from nicewebrl import JaxWebEnv, base64_npimage, TimestepWrapper
 from nicewebrl import Stage, EnvStage
 from nicewebrl import get_logger
-from craftax.craftax.constants import BlockType
 from craftax.craftax.renderer import render_craftax_pixels
 from simulations.craftax_web_env import EnvParams as OriginalEnvParams
 from craftax.craftax.constants import (
   Action,
+  BlockType,
   # BLOCK_PIXEL_SIZE_HUMAN,
   BLOCK_PIXEL_SIZE_IMG,
   Achievement,
@@ -70,6 +70,8 @@ MAX_START_POSITIONS = 10
 class EnvParams(OriginalEnvParams):
   active_goals: Tuple[int, ...] = tuple()
   num_success: int = 5
+  min_samples_per_location: int = 2
+  num_start_locations: int = 10
 
 
 class BlockStageConfig(struct.PyTreeNode):
@@ -85,32 +87,7 @@ if DUMMY_ENV:
   )
 
   def fullmap_render(timestep, world_seed):
-    if DEBUG:
-      subdir = "single" if MANIPULATION == "paths" else "juncture"
-      cache_dir = os.path.join("craftax_cache", subdir)
-      image_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
-    else:
-      cache_dir = os.path.join("craftax_cache", "maps")
-      image_path = os.path.join(cache_dir, f"world_{world_seed}.png")
-
-    if not os.path.exists(image_path):
-      return np.zeros((48, 48, 3), dtype=np.uint8)
-
-    # Read image using matplotlib to maintain consistency with how images were saved
-    image = plt.imread(image_path)
-
-    # Convert to uint8 if needed
-    if image.dtype == np.float32:
-      image = (image * 255).astype(np.uint8)
-
-    # Ensure image has exactly 3 channels (RGB)
-    if image.ndim == 3 and image.shape[2] == 4:  # RGBA image
-      image = image[:, :, :3]  # Keep only RGB channels
-    elif image.ndim == 2:  # Grayscale image
-      image = np.stack([image] * 3, axis=-1)  # Convert to RGB
-
-    assert image.ndim == 3 and image.shape[2] == 3, "Image must have exactly 3 channels"
-    return image
+    return np.zeros((96, 96, 3), dtype=np.uint8)
 
 else:
   from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
@@ -135,25 +112,110 @@ def get_user_save_file_fn():
 EvaluateSuccessFn = Callable[[nicewebrl.TimeStep, EnvParams], jnp.bool_]
 
 
-def get_remaining(possible_goals, num_success):
-  possible_goals = [int(i) for i in possible_goals]
-  num_success = [int(i) for i in num_success]
+def sample_from_remaining(
+  key: str,
+  possible_values: list,
+  min_samples: Union[list, int],
+  num_dimensions: int = 1e10,
+) -> tuple:
+  """Sample from remaining counts while maintaining storage state.
+
+  Args:
+      storage_key: Key to identify the type of sampling (e.g. 'goal', 'start_position')
+      possible_values: List of possible values to sample from
+      min_samples: List of minimum required samples for each value
+
+  Returns:
+      tuple: (sampled value, dict of remaining counts)
+  """
+  # get subset of dims
+
+  # Convert values to strings for storage
+  possible_values_str = [str(i) for i in possible_values]
+
+  if isinstance(min_samples, list):
+    num_required = [int(i) for i in min_samples]
+  elif isinstance(min_samples, (np.ndarray, jnp.ndarray)):
+    if min_samples.shape == possible_values.shape:
+      num_required = [int(i) for i in min_samples]
+    elif min_samples.shape in ((1,), ()):
+      num_required = [int(min_samples)] * len(possible_values)
+    else:
+      raise RuntimeError(f"{min_samples.shape}, {min_samples.dtype}")
+  else:
+    num_required = [int(min_samples)] * len(possible_values)
+
+  num_dimensions = min(num_dimensions, len(possible_values))
+  num_required = num_required[:num_dimensions]
+
+  # Get or initialize remaining counts
+  default = {g: n for g, n in zip(possible_values_str, num_required)}
+  remaining_counts = app.storage.user.get(key, default)
+
+  # Maintain order of values
+  output_counts = jnp.array(
+    [
+      remaining_counts.get(str(g), n) for g, n in zip(possible_values_str, num_required)
+    ],
+    dtype=jnp.int32,
+  )
+
+
+  # Sample based on remaining counts
+  output_counts = output_counts + 1e-6
+  probs = output_counts / (output_counts.sum())
+  sampler = distrax.Categorical(probs=probs)
+  rng = nicewebrl.new_rng()
+  idx = sampler.sample(seed=rng)
+  sampled_value = possible_values[idx]
+
+  return sampled_value, remaining_counts
+
+
+def sample_goal_and_position(
+  possible_goals,
+  success_per_goal,
+  start_positions,
+  min_samples_per_location: int = 2,
+  num_start_locations: int = 1,
+):
   try:
     stage_idx = app.storage.user.get("stage_idx", 0)
   except Exception:
     # no page setup yet
-    return jnp.ones(len(possible_goals), dtype=jnp.int32)
-  key = f"{stage_idx}_remaining"
-  default = {str(g): n for g, n in zip(possible_goals, num_success)}
-  remaining = app.storage.user.get(key, default)
-  app.storage.user[key] = remaining
+    dummy_goal = jnp.asarray(0, dtype=jnp.int32)
+    dummy_position = jnp.asarray((0, 0), dtype=jnp.int32)
+    return dummy_goal, dummy_position
 
-  # maintain order of goals
-  output = jnp.array(
-    [remaining.get(str(g), n) for g, n in zip(possible_goals, num_success)],
-    dtype=jnp.int32,
+  ###################
+  # sample goal in proportion to remaining successes
+  ####################
+  stage_idx = app.storage.user.get("stage_idx", 0)
+  key = f"{stage_idx}_remaining_goal_success"
+  goal, remaining_counts = sample_from_remaining(
+    key=key,
+    possible_values=possible_goals,
+    min_samples=success_per_goal,
   )
-  return output
+  app.storage.user[key] = remaining_counts
+  logger.info(f"remaining goal counts: {remaining_counts}")
+
+  ###################
+  # sample start position in proportion to how often not sampled
+  ####################
+  key = f"{stage_idx}_remaining_start_positions"
+  start_position, remaining_counts = sample_from_remaining(
+    key=key,
+    possible_values=start_positions,
+    min_samples=min_samples_per_location,
+    num_dimensions=num_start_locations,
+  )
+  start_position_str = str(start_position)
+  remaining_counts[start_position_str] -= 1
+  app.storage.user[key] = remaining_counts
+  logger.info(f"remaining start position counts: {remaining_counts}")
+
+  return goal, start_position
 
 
 def update_successes(current_goal, success):
@@ -162,7 +224,7 @@ def update_successes(current_goal, success):
   except Exception:
     # no page setup yet
     return
-  key = f"{stage_idx}_remaining"
+  key = f"{stage_idx}_remaining_goal_success"
   remaining = app.storage.user.get(key)
 
   current_goal = str(int(current_goal))
@@ -171,7 +233,7 @@ def update_successes(current_goal, success):
   app.storage.user[key] = remaining
 
 
-class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
+class StatefulResetEnvWrapper(TimestepWrapper):
   """
   Wraps an environment to (1) sample new goals and (2) track the number of successful episodes.
 
@@ -191,35 +253,32 @@ class GoalSettingSuccessTrackingEnvWrapper(TimestepWrapper):
     super().__init__(env, autoreset=False, **kwargs)
     self.possible_goals = possible_goals
 
-  # provide proxy access to regular attributes of wrapped object
-  def __getattr__(self, name):
-    return getattr(self._env, name)
-
-  def reset(self, key, params):
+  def reset(self, key, params: EnvParams):
     """Sample goals according to user successes"""
     #########################################
     # Compute how many successful episodes must be completed
     # for each goal
     #########################################
-    remaining = io_callback(
-      get_remaining,
-      jax.ShapeDtypeStruct(shape=(len(self.possible_goals),), dtype=jnp.int32),
+    goal, start_position = io_callback(
+      sample_goal_and_position,
+      (
+        jax.ShapeDtypeStruct(shape=(), dtype=jnp.int32),  # goal
+        jax.ShapeDtypeStruct(shape=(2,), dtype=jnp.int32),  # start_position
+      ),
       self.possible_goals,
       params.num_success * params.active_goals,
+      params.start_positions,
+      params.min_samples_per_location,
+      params.num_start_locations,
     )
 
-    #########################################
-    # Sample goal in proportion to remaining successes
-    # more success = sample less often
-    #########################################
-    # e.g. [5, 0, 5, 0] --> [0.5, 0, 0.5, 0]
-    # e.g. [1, 5, 0, 0] --> [0.2, 0.8, 0, 0]
-    goal_probs = remaining / (remaining.sum())
-    goal_sampler = distrax.Categorical(probs=goal_probs)
-    key, key_ = jax.random.split(key)
-    goal_idx = goal_sampler.sample(seed=key_)
-    goal = jax.lax.dynamic_index_in_dim(self.possible_goals, goal_idx, keepdims=False)
-    params = params.replace(current_goal=goal.astype(jnp.int32))
+    params = params.replace(
+      current_goal=goal.astype(jnp.int32),
+      start_positions=start_position.astype(jnp.int32),
+    )
+    assert params.current_goal.ndim == 0, "multiple goals?"
+    assert params.start_positions.shape == (2,), "should be (y, z)"
+
     timestep = super().reset(key, params)
     return timestep
 
@@ -281,6 +340,7 @@ static_env_params = static_env_params.replace(
   initial_crafting_tables=True,
   initial_strength=20,
   map_size=(48, 48),
+  num_levels=1,
 )
 jax_env = CraftaxSymbolicWebEnvNoAutoReset(
   static_env_params=static_env_params,
@@ -294,7 +354,6 @@ def make_start_position(start_positions):
 
 dummy_start_position = make_start_position((24, 24))
 
-
 default_params = EnvParams(
   day_length=100000,
   max_timesteps=200 if DEBUG == 0 else 2,
@@ -303,13 +362,15 @@ default_params = EnvParams(
   active_goals=all_goals_active,
   world_seeds=(0,),
   start_positions=dummy_start_position,
+  num_start_locations=1,
 )
+
 dummy_params = make_block_env_params(dummy_block_config, default_params).replace(
   # to have compilation use valid current_goal value
   current_goal=dummy_block_config.train_objects[0],
 )
 
-jax_env = GoalSettingSuccessTrackingEnvWrapper(
+jax_env = StatefulResetEnvWrapper(
   env=jax_env,
   possible_goals=possible_goals,
 )
@@ -373,7 +434,7 @@ def make_image_html(src, id="stateImage", percent=100):
 
 def get_remaining_goals():
   stage_idx = app.storage.user.get("stage_idx", 0)
-  key = f"{stage_idx}_remaining"
+  key = f"{stage_idx}_remaining_goal_success"
   remaining = app.storage.user.get(key, {})
   name = lambda i: Achievement(int(i)).name.replace("_", " ").title()
   remaining = {name(i): r for i, r in remaining.items()}
@@ -813,6 +874,26 @@ async def env_stage_display_fn(
       """)
 
 
+def reduce_timestep_size(t: nicewebrl.TimeStep):
+  state = t.state
+
+  def make_uint(x):
+    return x.astype(jnp.uint8)
+    # return x
+
+  new_state = state.replace(
+    # remove all levels after 1st
+    map=jax.tree_map(lambda t: make_uint(t[:1]), state.map),
+    item_map=jax.tree_map(lambda t: make_uint(t[:1]), state.item_map),
+    mob_map=jax.tree_map(lambda t: make_uint(t[:1]), state.mob_map),
+    light_map=jax.tree_map(lambda t: make_uint(t[:1]), state.light_map),
+  )
+  return t.replace(
+    observation=None,  # remove observation
+    state=new_state,
+  )
+
+
 def make_env_stage(
   name: str,
   title: str,
@@ -829,6 +910,7 @@ def make_env_stage(
   env_params = env_params.replace(
     active_goals=active_goals.astype(jnp.float32),
     start_positions=make_start_position(stage_config.start_positions),
+    num_start_locations=len(stage_config.start_positions),
     num_success=min_success,
   )
 
@@ -855,6 +937,7 @@ def make_env_stage(
     print(f"Made stage {name} with config")
     print(stage_config)
     print("=" * 30)
+
   return EnvStage(
     name=name,
     title=title,
@@ -874,6 +957,7 @@ def make_env_stage(
     autoreset_on_done=True,
     msg_display_time=100,
     metadata=metadata,
+    preprocess_timestep=reduce_timestep_size,
     precompile=DEBUG == 0,
   )
 
