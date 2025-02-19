@@ -2,7 +2,7 @@ import subprocess
 import argparse
 
 
-def launch_experiment(name, environment, env_vars, memory=32, scale: bool = False):
+def launch_experiment(name, environment, env_vars, memory=16, scale: bool = True):
   # Construct the flyctl launch command
   launch_cmd = [
     "flyctl",

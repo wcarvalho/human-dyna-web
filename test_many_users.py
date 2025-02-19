@@ -2,6 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright
 import sys
 import argparse
+import random
 
 
 async def control_browser(context_number):
@@ -16,7 +17,7 @@ async def control_browser(context_number):
 
     # Position window in a grid layout
     window_width = 400
-    window_height = 300
+    window_height = 600
     x_position = col * (window_width + 20)
     y_position = row * (window_height + 20)
 
@@ -38,13 +39,23 @@ async def control_browser(context_number):
       await page.goto("http://127.0.0.1:8080")
       print(f"Browser {context_number}: Connected")
 
+      # Add initial random delay to stagger user starts
+      await asyncio.sleep(random.uniform(0.1, 1.0))
+
       # Wait a second for any initial page setup
       await asyncio.sleep(1)
 
       # Keep pressing right arrow key
       while True:
         try:
-          await asyncio.sleep(0.5)
+          # Add random delay between actions (0.8 to 1.2 seconds)
+          await asyncio.sleep(random.uniform(0.8, 1.2))
+
+          # Check for "Experiment over" text
+          if await page.locator("text='Experiment over'").is_visible():
+              print(f"Browser {context_number}: Experiment over detected. Closing browser.")
+              break  # Exit the loop to close the browser
+
           try:
             button = page.locator('button:has-text("START")')
             if await button.is_visible():
@@ -71,7 +82,6 @@ async def control_browser(context_number):
           except:
             pass
 
-          await asyncio.sleep(0.5)
           await page.keyboard.press("ArrowRight")
           print(f"Browser {context_number}: Pressed right arrow")
         except Exception as e:
@@ -91,8 +101,8 @@ async def main():
     "-c",
     "--connections",
     type=int,
-    default=30,
-    help="Number of connections to launch (default: 30)",
+    default=20,
+    help="Number of connections to launch (default: 20)",
   )
   args = parser.parse_args()
 

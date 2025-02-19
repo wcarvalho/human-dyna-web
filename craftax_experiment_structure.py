@@ -61,7 +61,7 @@ MONSTERS = int(os.environ.get("MONSTERS", 1))
 NAME = os.environ.get("NAME", "exp")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
-MAX_STAGE_EPISODES = 50 if DEBUG == 0 else 8
+MAX_STAGE_EPISODES = 50 if DEBUG == 0 else 2
 MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 1
 MAX_START_POSITIONS = 10
 
@@ -129,6 +129,8 @@ def sample_from_remaining(
       tuple: (sampled value, dict of remaining counts)
   """
   # get subset of dims
+  num_dimensions = int(num_dimensions)
+  possible_values = possible_values[:num_dimensions]
 
   # Convert values to strings for storage
   possible_values_str = [str(i) for i in possible_values]
@@ -146,11 +148,13 @@ def sample_from_remaining(
     num_required = [int(min_samples)] * len(possible_values)
 
   num_dimensions = min(num_dimensions, len(possible_values))
+  possible_values_str = possible_values_str[:num_dimensions]  # redundant
   num_required = num_required[:num_dimensions]
 
   # Get or initialize remaining counts
   default = {g: n for g, n in zip(possible_values_str, num_required)}
   remaining_counts = app.storage.user.get(key, default)
+  app.storage.user[key] = remaining_counts
 
   # Maintain order of values
   output_counts = jnp.array(
@@ -159,7 +163,6 @@ def sample_from_remaining(
     ],
     dtype=jnp.int32,
   )
-
 
   # Sample based on remaining counts
   output_counts = output_counts + 1e-6
@@ -198,7 +201,7 @@ def sample_goal_and_position(
     min_samples=success_per_goal,
   )
   app.storage.user[key] = remaining_counts
-  logger.info(f"remaining goal counts: {remaining_counts}")
+  logger.info(f"sampled: {goal}. remaining goal counts: {remaining_counts}")
 
   ###################
   # sample start position in proportion to how often not sampled
@@ -210,27 +213,43 @@ def sample_goal_and_position(
     min_samples=min_samples_per_location,
     num_dimensions=num_start_locations,
   )
-  start_position_str = str(start_position)
-  remaining_counts[start_position_str] -= 1
+  logger.info(f"sampled: {start_position}. prior start position counts: {remaining_counts}")
   app.storage.user[key] = remaining_counts
-  logger.info(f"remaining start position counts: {remaining_counts}")
 
   return goal, start_position
 
 
-def update_successes(current_goal, success):
+def on_episode_finish_updates(current_goal, success, start_position):
   try:
     stage_idx = app.storage.user["stage_idx"]
   except Exception:
     # no page setup yet
     return
+  ################################
+  # Update number of successes
+  ################################
   key = f"{stage_idx}_remaining_goal_success"
   remaining = app.storage.user.get(key)
+  if remaining:
+    current_goal = str(int(current_goal))
+    remaining[current_goal] -= int(success)
+    remaining[current_goal] = max(remaining[current_goal], 0)
+    app.storage.user[key] = remaining
+  else:
+    logger.info(f"{key} not found. storage: {app.storage.user}")
 
-  current_goal = str(int(current_goal))
-  remaining[current_goal] -= int(success)
-  remaining[current_goal] = max(remaining[current_goal], 0)
-  app.storage.user[key] = remaining
+  ################################
+  # Update number of times position seen
+  ################################
+  key = f"{stage_idx}_remaining_start_positions"
+  remaining = app.storage.user.get(key)
+  if remaining:
+    start_position = str(start_position)
+    remaining[start_position] -= 1
+    remaining[start_position] = max(remaining[start_position], 0)
+    app.storage.user[key] = remaining
+  else:
+    logger.info(f"{key} not found. storage: {app.storage.user}")
 
 
 class StatefulResetEnvWrapper(TimestepWrapper):
@@ -356,7 +375,7 @@ dummy_start_position = make_start_position((24, 24))
 
 default_params = EnvParams(
   day_length=100000,
-  max_timesteps=200 if DEBUG == 0 else 2,
+  max_timesteps=300 if DEBUG == 0 else 2,
   mob_despawn_distance=100000,
   # possible_goals=possible_goals,
   active_goals=all_goals_active,
@@ -408,7 +427,7 @@ if PRECOMPILE:
 
 def evaluate_success_fn(timestep: nicewebrl.TimeStep, params: EnvParams):
   success = timestep.reward > 0.5 and timestep.last() > 0
-  update_successes(timestep.state.current_goal, success)
+  on_episode_finish_updates(timestep.state.current_goal, success, timestep.state.start_position)
   return success
 
 
@@ -447,20 +466,21 @@ def debug_info(stage):
     f"**Manipulation**: {stage.metadata['block_metadata'].get('manipulation')}. "
   )
   if stage_state is not None:
+    state = stage_state.timestep.state
     # ------------
     # stage, world information
     # ------------
     debug_info += f"**Eval**: {stage.metadata['eval']}. "
     # debug_info += f"**World**: {stage.metadata['world_seed']}. "
     # debug_info += f"**Episode** idx: {stage_state.nepisodes}. "
-    # debug_info += f"**Step**: {stage_state.nsteps}/{stage.env_params.max_timesteps}. "
+    debug_info += f"**Step**: {state.timestep}/{stage.env_params.max_timesteps}. "
     # ui.markdown(debug_info)
     # ------------
     # position information
     # ------------
     start_positions = stage.env_params.start_positions
     debug_info += f"**start_positions**: {start_positions}. "
-    debug_info += f"**position**: {stage_state.timestep.state.player_position}. "
+    debug_info += f"**position**: {state.player_position}. "
     ui.markdown(debug_info)
     # ------------
     # remaining goals information
@@ -1174,10 +1194,7 @@ def make_manipulation_block(
       eval_text: Text to display during evaluation phase
   """
 
-  if DEBUG:
-    start_positions = config.start_eval_positions
-  else:
-    start_positions = config.start_train_positions + config.start_eval_positions
+  start_positions = config.start_train_positions + config.start_eval_positions
 
   train_config = BlockStageConfig(
     world_seed=config.world_seed,
@@ -1264,36 +1281,46 @@ instruct_block = nicewebrl.Block(
 )
 
 all_blocks = []
+randomize = []
 if GIVE_INSTRUCTIONS:
   all_blocks.extend([instruct_block, make_practice_block()])
+  randomize.extend([False, False])
 
 all_blocks.extend(experiment_blocks)
-all_stages = [stage for block in all_blocks for stage in block.stages]
+randomize.extend([True] * len(experiment_blocks))
 
-##########################
-# generating block order
-##########################
+experiment = nicewebrl.Experiment(
+  blocks=all_blocks,
+  randomize=randomize,
+  name=f'craftax_experiment_{NAME}',
+)
+
+#all_stages = [stage for block in all_blocks for stage in block.stages]
+
+###########################
+## generating block order
+###########################
 
 
-def generate_block_order(rng_key):
-  """Take blocks defined above and generate a random order"""
-  fixed_blocks = []
-  offset = 0
-  if GIVE_INSTRUCTIONS:
-    offset = 2
-  # fix ordering of instruct_block, practice_block
-  fixed_blocks.extend(list(range(offset)))
-  fixed_blocks = jnp.array(fixed_blocks)
+#def generate_block_order(rng_key):
+#  """Take blocks defined above and generate a random order"""
+#  fixed_blocks = []
+#  offset = 0
+#  if GIVE_INSTRUCTIONS:
+#    offset = 2
+#  # fix ordering of instruct_block, practice_block
+#  fixed_blocks.extend(list(range(offset)))
+#  fixed_blocks = jnp.array(fixed_blocks)
 
-  # blocks afterward are randomized
-  randomized_blocks = list(all_blocks[offset:])
-  random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + offset
+#  # blocks afterward are randomized
+#  randomized_blocks = list(all_blocks[offset:])
+#  random_order = jax.random.permutation(rng_key, len(randomized_blocks)) + offset
 
-  block_order = jnp.concatenate(
-    [
-      fixed_blocks,  # instruction blocks
-      random_order,  # experiment blocks
-    ]
-  ).astype(jnp.int32)
-  block_order = block_order.tolist()
-  return [int(i) for i in block_order]
+#  block_order = jnp.concatenate(
+#    [
+#      fixed_blocks,  # instruction blocks
+#      random_order,  # experiment blocks
+#    ]
+#  ).astype(jnp.int32)
+#  block_order = block_order.tolist()
+#  return [int(i) for i in block_order]

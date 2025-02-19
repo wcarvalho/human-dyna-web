@@ -292,7 +292,6 @@ def make_block_env_params(config: BlockConfig, default_params: struct.PyTreeNode
 
   env_params = default_params.replace(
     world_seeds=(config.world_seed,),
-    max_timesteps=100000,
     goal_locations=goal_locations,
     placed_goals=goal_objects,
   )

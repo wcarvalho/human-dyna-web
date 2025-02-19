@@ -1,6 +1,5 @@
 import os
 import shutil
-import pathlib
 from craftax.craftax.constants import TEXTURE_CACHE_FILE
 from craftax_fullmap_constants import TEXTURE_CACHE_FILE as FULLMAP_TEXTURE_CACHE_FILE
 

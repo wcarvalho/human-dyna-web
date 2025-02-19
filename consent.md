@@ -16,7 +16,7 @@ Please carefully read this consent agreement before deciding whether to particip
 
 **Participation and withdrawal:** Your participation in this study is completely voluntary and you may refuse to participate or you may choose to withdraw at any time without penalty or loss of benefits to which you are otherwise entitled.
 
-**How to contact the researcher:** If you have questions or concerns about your participation or payment, please contact sam_hall-mcmaster@fas.harvard.edu or wcarvalho@g.harvard.edu.
+**How to contact the researcher:** If you have questions or concerns about your participation or payment, please contact wcarvalho@g.harvard.edu.
 
 Whom to contact about your rights in this research: For questions, concerns, suggestions, or complaints that have not been or cannot be addressed by the researcher, or to report research-related harm, please contact the Committee on the Use of Human Subjects in Research at Harvard University, 1414 Massachusetts Avenue, Second Floor, Cambridge, MA 02138. Phone: 617-496-2847. Email: cuhs@fas.harvard.edu. Please print or save a copy of this form for your records.
 

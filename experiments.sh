@@ -1,4 +1,43 @@
 ########################################################
+# Experiment 11 - CRAFTAX
+##########################################
+
+# LOCAL DEBUGGING: RUN
+rm -r craftax_data .nicegui; pkill -9 -f craftax; \
+  DATA_DIR='craftax_data' \
+  CONSENT=0 \
+  GIVE_INSTRUCTIONS=1 \
+  MANIPULATION="paths" \
+  SAY_REUSE=0 \
+  EVAL_SHOW_MAP=0 \
+  DEBUG=1 \
+  DUMMY_ENV=0 \
+  python craftax_web_app.py
+
+
+# parameters of interest
+# MANIPULATION: {"paths", "juncture"}
+# SAY_REUSE: {1, 0}
+# EVAL_SHOW_MAP: {1, 0}
+
+##############
+# Paths
+##############
+# [INITIAL] (paths) tell reuse + no map
+python launch_craftax.py v3-paths-r1-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=1 --env EVAL_SHOW_MAP=0
+# https://human-dyna-craftax-v3-paths-r1-m0.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v3-paths-r1-m0.toml
+flyctl logs --config configs/human-dyna-craftax-v3-paths-r1-m0.toml
+flyctl scale count 4 --config configs/human-dyna-craftax-v3-paths-r1-m0.toml --region "iad,sea,lax,den" --yes
+
+
+python launch_craftax.py v3-paths-r0-m0 --environment='craftax' --env MANIPULATION="paths" --env SAY_REUSE=0 --env EVAL_SHOW_MAP=0
+# https://human-dyna-craftax-v3-paths-r0-m0.fly.dev
+flyctl deploy --config configs/human-dyna-craftax-v3-paths-r0-m0.toml
+flyctl logs --config configs/human-dyna-craftax-v3-paths-r0-m0.toml
+flyctl scale count 4 --config configs/human-dyna-craftax-v3-paths-r0-m0.toml --region "iad,sea,lax,den" --yes
+
+########################################################
 # Experiment 10 - CRAFTAX
 ##########################################
 

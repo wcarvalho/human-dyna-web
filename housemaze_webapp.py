@@ -571,7 +571,6 @@ async def run_stage(stage, stage_container, button_container):
         await create_button_and_wait()
 
   await stage_over_event.wait()
-  clear_element(button_container)
 
 
 #####################################
