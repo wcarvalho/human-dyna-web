@@ -11,8 +11,6 @@ import os.path
 from scipy import stats
 import seaborn as sns
 
-# from analysis.housemaze_analysis_garbarge import plot_rt_condition_differences
-from housemaze.human_dyna import utils
 from math import sqrt, ceil
 from statsmodels.stats.power import TTestPower
 import pandas as pd
@@ -20,9 +18,6 @@ import statsmodels.formula.api as smf
 from multiprocessing import Pool
 from glob import glob
 
-from analysis.housemaze_model_data import get_model_data
-from analysis.housemaze_user_data import get_human_data
-from analysis.housemaze_user_data import get_valid_files
 from nicewebrl.dataframe import DataFrame
 import matplotlib.patches as mpatches
 
@@ -30,7 +25,6 @@ DEFAULT_TITLE_SIZE = 14
 DEFAULT_LABEL_SIZE = 12
 DEFAULT_LEGEND_SIZE = 10
 
-image_dict = utils.load_image_dict()
 
 default_colors = {
   "reddish purple": (204 / 255, 121 / 255, 167 / 255),
@@ -359,6 +353,10 @@ def plot_bar_rt_comparison(
   Returns:
       matplotlib axis
   """
+  len_before = len(df)
+  df = df.filter(pl.col("success").is_not_null() & pl.col("reuse").is_not_null())
+  len_after = len(df)
+  print(f"Filtered {len_before - len_after} rows with null success or reuse")
 
   power_results = power_analysis_rt_across_groups(
     df, measure=rt_column, stats_file=stats_file, n_simulations=n_simulations
@@ -545,7 +543,7 @@ def plot_rt_differences(
 
 def plot_success_rate_comparison(
   df: DataFrame,
-  model_df: DataFrame,
+  model_df: DataFrame = None,
   ax=None,
   title="Success Rate Comparison",
   include_raw_data: bool = False,
@@ -555,7 +553,7 @@ def plot_success_rate_comparison(
 
   Args:
       df (DataFrame): DataFrame containing human data
-      model_df (DataFrame): DataFrame containing model data
+      model_df (DataFrame, optional): DataFrame containing model data. If None, only plots human data.
       ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
       title (str, optional): Plot title. Defaults to "Success Rate Comparison"
       include_raw_data (bool, optional): Whether to include individual human data points.
@@ -577,16 +575,18 @@ def plot_success_rate_comparison(
   human_mean = np.mean(human_successes)
   human_se = np.sqrt((human_mean * (1 - human_mean)) / len(human_successes))
 
-  # Calculate model statistics
-  model_stats = model_df.group_by("algo").agg(
-    mean=pl.col("success").mean() * 100,
-    se=(
-      pl.col("success").mean()
-      * (1 - pl.col("success").mean())
-      / pl.col("success").count()
-    ).sqrt()
-    * 100,
-  )
+  # Calculate model statistics if model_df is provided
+  model_stats = None
+  if model_df is not None:
+    model_stats = model_df.group_by("algo").agg(
+      mean=pl.col("success").mean() * 100,
+      se=(
+        pl.col("success").mean()
+        * (1 - pl.col("success").mean())
+        / pl.col("success").count()
+      ).sqrt()
+      * 100,
+    )
 
   # Create figure if needed
   if ax is None:
@@ -604,9 +604,9 @@ def plot_success_rate_comparison(
 
   bar_plot_error(
     human_data=human_data,
-    model_stats=model_stats,
+    model_stats=model_stats,  # Will be None if model_df was None
     ax=ax,
-    legend=True,
+    legend=True,  # Only show legend if we have model data
   )
 
   # Customize plot
@@ -984,9 +984,6 @@ def power_analysis_rt_across_groups(
   data = df._df.select(["user_id", "reuse", measure]).to_pandas()
   data.columns = ["user_id", "reuse", "RT"]
 
-  # Fit linear mixed effects model
-  model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
-  result = model.fit(reml=True)
 
   # Calculate descriptive statistics by group
   user_stats = df.group_by(["user_id", "reuse"]).agg(mean_val=pl.col(measure).mean())
@@ -997,6 +994,20 @@ def power_analysis_rt_across_groups(
   n1, n2 = len(no_reuse_means), len(reuse_means)
   mean1, mean2 = np.mean(no_reuse_means), np.mean(reuse_means)
   var1, var2 = np.var(no_reuse_means, ddof=1), np.var(reuse_means, ddof=1)
+
+  if stats_file is None:
+    return {
+      "descriptive": {
+        "means": {"no_reuse": mean1, "reuse": mean2},
+        "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
+        "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
+      },
+      "raw_means": {"no_reuse": no_reuse_means, "reuse": reuse_means},
+    }
+
+  # Fit linear mixed effects model
+  model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
+  result = model.fit(reml=True)
 
   # Get effect size (standardized coefficient)
   param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
@@ -1514,405 +1525,45 @@ def experiment_1_results(
   if display_figs:
     plt.show()
 
-  ######################
-  # SF Model
-  ######################
-  sf_episodes = model_df.filter(maze="big_m3_maze1", eval=False, algo="usfa")
-  fig, ax = plot_sf_values(
-    sf_episodes.episodes[0], plot_q_values=False, figsize=(5, 4), idxs=[0]
-  )
-  if save_figs:
-    fig.savefig(
-      os.path.join(save_dir, "exp1_6_sf_predictions.pdf"), bbox_inches="tight"
-    )
-  if display_figs:
-    plt.show()
-
   # Close stats file at the end
   stats_file.close()
   if verbosity > 0:
     with open(os.path.join(save_dir, "stats.txt"), "r") as f:
       print(f.read())
 
-
-def experiment_2_results(
-  user_df: DataFrame,
-  model_df: DataFrame,
-  save_dir: str,
-  filter_columns: List[str] = None,
-  display_figs: bool = False,
-  tell_reuse: int = 1,
-  save_figs: bool = True,
-  verbosity: int = 0,
-):
-  """_summary_
-
-  1. Filter out users with less than 16 successes during training
-
-    Args:
-      user_df (DataFrame): _description_
-      model_df (DataFrame): _description_
-  """
-  save_dir = os.path.join(save_dir, f"exp2_tell_reuse={tell_reuse}")
-  os.makedirs(save_dir, exist_ok=True)
-
-  # Open stats file
-  stats_file = open(os.path.join(save_dir, "stats.txt"), "w")
-  stats_file.write("Experiment 2 Statistical Analysis\n")
-
-  ##################
-  # Get relevant simulations
-  ##################
-  mdf = model_df.filter(maze="big_m1_maze3_shortcut", eval=True)
-
-  ##################
-  # get all episodes for users who achieved at least 16 successes during training
-  ##################
-  exp2_eval_df = user_df.filter_by_group(
-    input_episode_filter=filter_train_by_min_success,
-    input_settings=dict(eval=False),
-    output_settings=dict(manipulation=1, tell_reuse=tell_reuse),
-    group_key="user_id",
-  ).filter(eval=True)
-
-  # Convert reuse column from string to boolean
-  if exp2_eval_df.schema["reuse"] == pl.String:
-    exp2_eval_df = exp2_eval_df.with_columns(pl.col("reuse") == "true")
-  elif exp2_eval_df.schema["reuse"] == pl.Boolean:
-    pass
-  else:
-    raise ValueError("Reuse column is type: ", exp2_eval_df.schema["reuse"])
-
-  ##################
-  # filter outliers based on episode path length and max reaction time
-  ##################
-  # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-  # Check if reuse column is string type
-  if filter_columns:
-    exp2_eval_df = filter_outliers(
-      exp2_eval_df,
-      filter_columns=filter_columns,
-    )
-
-  ##################
-  # Create success rate and path reuse plots
-  ##################
-
-  fig, ax = plt.subplots(figsize=(6, 3))
-  plot_success_rate_comparison(
-    df=exp2_eval_df, model_df=mdf, ax=ax, title="Exp 3 Generalization Success Rate"
-  )
-
-  if save_figs:
-    fig.savefig(os.path.join(save_dir, "exp2_2_success_rate.pdf"), bbox_inches="tight")
-
-  if display_figs:
-    plt.show()
-
-  ##################
-  # Create path re-use analysis plots
-  ##################
-  stats_file.write("\nPath Reuse Analysis\n")
-  stats_file.write("======================================\n")
-
-  fig, ax = plt.subplots(figsize=(6, 3))
-  plot_path_reuse_comparison(
-    df=exp2_eval_df,
-    model_df=mdf,
-    ax=ax,
-    stats_file=stats_file,
-    title="Exp 3 Path Reuse",
-  )
-
-  if save_figs:
-    fig.savefig(os.path.join(save_dir, "exp2_3_path_reuse.pdf"), bbox_inches="tight")
-
-  if display_figs:
-    plt.show()
-
-  # Replace the separate success rate and path reuse plots with:
-  fig, ax1, ax2 = plot_success_rate_path_reuse_metrics(
-    df=exp2_eval_df,
-    model_df=mdf,
-    title="Exp 3 Success Rate and Path Reuse",
-    figsize=(6, 4),
-    include_raw_data=True,
-  )
-
-  if save_figs:
-    fig.savefig(
-      os.path.join(save_dir, "exp3_combined_metrics.pdf"), bbox_inches="tight"
-    )
-
-  if display_figs:
-    plt.show()
-
-  # Close stats file at the end
-  stats_file.close()
-  if verbosity > 0:
-    with open(os.path.join(save_dir, "stats.txt"), "r") as f:
-      print(f.read())
-
-
-def experiment_3_results(
-  user_df: DataFrame,
-  model_df: DataFrame,
-  save_dir: str,
-  filter_columns: List[str] = None,
-  display_figs: bool = False,
-  tell_reuse: int = 1,
-  save_figs: bool = True,
-  verbosity: int = 0,
-):
-  """_summary_
-
-  1. Filter out users with less than 16 successes during training
-
-    Args:
-      user_df (DataFrame): _description_
-      model_df (DataFrame): _description_
-      save_dir (str): Directory to save figures
-      filter_columns (List[str], optional): Columns to use for outlier filtering in RT analysis.
-          Defaults to ['avg_rt'].
-      display_figs (bool, optional): Whether to display figures. Defaults to False.
-      save_figs (bool, optional): Whether to save figures. Defaults to True.
-  """
-  save_dir = os.path.join(save_dir, f"exp3_tell_reuse={tell_reuse}")
-  os.makedirs(save_dir, exist_ok=True)
-  # Default to ['avg_rt'] if no filter columns specified
-
-  stats_file = open(os.path.join(save_dir, "stats.txt"), "w")
-  stats_file.write("Experiment 3 Statistical Analysis\n")
-  stats_file.write("===============================\n\n")
-
-  ##################
-  # get all episodes for users who achieved at least 16 successes during training
-  ##################
-  exp3_eval_df = user_df.filter_by_group(
-    input_episode_filter=filter_train_by_min_success,
-    input_settings=dict(eval=False),
-    output_settings=dict(manipulation=2),
-    group_key="user_id",
-  )
-  ##################
-  # Create reaction time difference plot
-  ##################
-  # Create filter string for filename
-  filter_columns = filter_columns or []
-  filter_str = ",".join(filter_columns)
-  difference_df = compute_condition_difference_df(
-    exp3_eval_df._df.filter(tell_reuse=tell_reuse),
-    measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
-  )
-  xlabels = [
-    "First",
-    # "Max",
-    "Average",
-  ]
-  measures = [
-    "log_first_rt",
-    # "log_max_rt",
-    "log_avg_rt",
-  ]
-  colors = [
-    default_colors["google blue"],
-    # default_colors["sky blue"],
-    default_colors["google orange"],
-  ]
-  fig, ax = plot_rt_differences(
-    difference_df,
-    measures=measures,
-    title=f"Exp 4 RT Diff",
-    colors=colors,
-    ylabel="log seconds",
-    xlabels=xlabels,
-    stats_file=stats_file,
-  )
-
-  if save_figs:
-    fig.savefig(
-      os.path.join(save_dir, f"exp3_2_rt_diff_filter_{filter_str}.pdf"),
-      bbox_inches="tight",
-    )
-  if display_figs:
-    plt.show()
-  stats_file.close()
-  if verbosity > 0:
-    with open(os.path.join(save_dir, "stats.txt"), "r") as f:
-      print(f.read())
-
-
-def experiment_4_results(
-  user_df: DataFrame,
-  # model_df: DataFrame,
-  save_dir: str,
-  filter_columns: List[str] = None,
-  display_figs: bool = False,
-  save_figs: bool = True,
-  verbosity: int = 0,
-):
-  """Analyze results from experiment 4.
-
-  Args:
-      user_df (DataFrame): DataFrame containing user data
-      model_df (DataFrame): DataFrame containing model data
-      save_dir (str): Directory to save figures
-      filter_columns (List[str], optional): Columns to use for outlier filtering in RT analysis.
-          Defaults to ['avg_rt'].
-      display_figs (bool, optional): Whether to display figures. Defaults to False.
-      save_figs (bool, optional): Whether to save figures. Defaults to True.
-  """
-
-  save_dir = os.path.join(save_dir, "exp4")
-  os.makedirs(save_dir, exist_ok=True)
-  # Default to ['avg_rt'] if no filter columns specified
-  filter_columns = filter_columns or []
-
-  # Open stats file
-  stats_filename = os.path.join(save_dir, "stats.txt")
-  stats_file = open(stats_filename, "w")
-  stats_file.write("Experiment 4 Statistical Analysis\n\n")
-
-  ##################
-  # Add setting column based on maze name
-  ##################
-  user_df = user_df._df  # fancy merging will use regular df
-  user_df = user_df.filter(manipulation=4)
-
-  def get_maze_setting(maze_str: str) -> str:
-    if "short" in maze_str.lower():
-      return "short"
-    elif "long" in maze_str.lower():
-      return "long"
-    raise ValueError(f"Could not determine setting from maze string: {maze_str}")
-
-  # Add setting column based on maze name
-  user_df = user_df.with_columns(
-    setting=pl.col("maze").map_elements(get_maze_setting, return_dtype=pl.String)
-  )
-
-  ############################################
-  # Create combined figure
-  ############################################
-  fig, axs = plt.subplots(1, 3, figsize=(15, 4))
-
-  idx = 0
-
-  xlabels = [
-    "First",
-    # "Max",
-    "Average",
-  ]
-  measures = [
-    "log_first_rt",
-    # "log_max_rt",
-    "log_avg_rt",
-  ]
-  colors = [
-    default_colors["google blue"],
-    # default_colors["sky blue"],
-    default_colors["google orange"],
-  ]
-  for setting in ["short", "long"]:
-    stats_file.write(f"\n\n=================={setting}===================\n")
-    for tell_reuse in [1, 0]:
-      if idx > 2:
-        break
-      difference_df = compute_condition_difference_df(
-        user_df.filter(setting=setting, tell_reuse=tell_reuse),
-        measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
-      )
-      stats_file.write(f"\n\nRT Analysis for tell_reuse={tell_reuse}\n")
-      stats_file.write(f"-----------------------------------------\n")
-
-      label = dict(short="Near", long="Far")[setting]
-      v = {0: "Unknown", 1: "Known"}[tell_reuse]
-
-      plot_rt_differences(
-        difference_df,
-        ax=axs[idx],
-        measures=measures,
-        title=f"Exp 2 RT Diff ({label} x {v})",
-        colors=colors,
-        ylabel="log seconds",
-        xlabels=xlabels,
-        stats_file=stats_file,
-      )
-      idx += 1
-
-      # Create and save individual figure
-      if save_figs:
-        ind_fig, ind_ax = plt.subplots(figsize=(6, 4))
-        plot_rt_differences(
-          difference_df,
-          ax=ind_ax,
-          measures=measures,
-          title=f"Exp 2 RT Diff ({label} x {v})",
-          colors=colors,
-          ylabel="log seconds",
-          xlabels=xlabels,
-          stats_file=None,  # Don't write stats again
-        )
-        filter_str = ",".join(filter_columns)
-        # Save individual figure in multiple formats
-        base_path = os.path.join(
-          save_dir, f"exp4_2_rt_diff_{setting}_{v}_filter_{filter_str}"
-        )
-        ind_fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
-        ind_fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
-        plt.close(ind_fig)  # Close individual figure
-
-  # Adjust layout
-  plt.tight_layout()
-
-  # Save combined figure in multiple formats
-  if save_figs:
-    filter_str = ",".join(filter_columns)
-    base_path = os.path.join(save_dir, f"exp4_2_rt_diff_combined_filter_{filter_str}")
-    fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
-    fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
-  if display_figs:
-    plt.show()
-
-  # Close stats file at the end
-  stats_file.close()
-  if verbosity > 0:
-    with open(stats_filename, "r") as f:
-      print(f.read())
 
 
 def plot_success_rate_path_reuse_metrics(
   df: DataFrame,
-  model_df: DataFrame,
+  model_df: DataFrame = None,
   ax=None,
   title="Success Rate and Path Reuse",
-  figsize=(8, 4),
+  figsize=(8, 8),  # Changed to square figure for better 2D visualization
   include_raw_data: bool = True,
-) -> Tuple[plt.Figure, plt.Axes, plt.Axes]:
-  """Plot success rate and path reuse on the same axes with different y-axes.
+) -> Tuple[plt.Figure, plt.Axes]:
+  """Plot success rate vs path reuse as a 2D scatter plot with error bars.
 
   Args:
       df (DataFrame): DataFrame containing human data
-      model_df (DataFrame): DataFrame containing model data
+      model_df (DataFrame, optional): DataFrame containing model data. If None, only plots human data.
       ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
       title (str, optional): Plot title
       figsize (tuple, optional): Figure size if creating new figure
       include_raw_data (bool, optional): Whether to include individual human data points
 
   Returns:
-      tuple: (fig, ax1, ax2) containing the figure and both axes objects
+      tuple: (fig, ax) containing the figure and axes object
   """
   # Create figure if needed
   if ax is None:
-    fig, ax1 = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(figsize=figsize)
   else:
     fig = ax.figure
-    ax1 = ax
 
-  # Create second y-axis
-  ax2 = ax1.twinx()
+  # Filter out rows where success or reuse is None
+  df = df.filter(pl.col("success").is_not_null() & pl.col("reuse").is_not_null())
 
-  # Calculate human success rate statistics
+  # Calculate human statistics
   human_successes = (
     df.group_by("user_id")
     .agg(pl.col("success").mean())
@@ -1921,11 +1572,11 @@ def plot_success_rate_path_reuse_metrics(
     .flatten()
   )
   human_success_mean = np.mean(human_successes)
+  
   human_success_se = np.sqrt(
     (human_success_mean * (1 - human_success_mean)) / len(human_successes)
   )
-
-  # Calculate human reuse statistics
+  
   human_reuse = (
     df.group_by("user_id")
     .agg(pl.col("reuse").mean())
@@ -1938,147 +1589,115 @@ def plot_success_rate_path_reuse_metrics(
     (human_reuse_mean * (1 - human_reuse_mean)) / len(human_reuse)
   )
 
-  # Calculate model statistics
-  model_stats = model_df.group_by("algo").agg(
-    success_mean=pl.col("success").mean() * 100,
-    success_se=(
-      pl.col("success").mean()
-      * (1 - pl.col("success").mean())
-      / pl.col("success").count()
-    ).sqrt()
-    * 100,
-    reuse_mean=pl.col("reuse").mean() * 100,
-    reuse_se=(
-      pl.col("reuse").mean() * (1 - pl.col("reuse").mean()) / pl.col("reuse").count()
-    ).sqrt()
-    * 100,
-  )
-
   # Prepare data for plotting
   all_data = {
-    "human": {"success": 100 * human_success_mean, "reuse": 100 * human_reuse_mean}
-  }
-  success_yerr = [100 * human_success_se]
-  reuse_yerr = [100 * human_reuse_se]
-
-  # Add model data
-  algos = model_stats["algo"].unique().to_list()
-  for algo in model_order:
-    if not algo in algos:
-      continue
-    row = model_stats.filter(algo=algo)
-    all_data[algo] = {
-      "success": row["success_mean"].to_numpy()[0],
-      "reuse": row["reuse_mean"].to_numpy()[0],
+    "human": {
+      "success": 100 * human_success_mean,
+      "reuse": 100 * human_reuse_mean,
+      "success_se": 100 * human_success_se,
+      "reuse_se": 100 * human_reuse_se,
     }
-    success_yerr.append(row["success_se"].to_numpy()[0])
-    reuse_yerr.append(row["reuse_se"].to_numpy()[0])
+  }
 
-  # Plot bars
-  x_pos = np.arange(len(all_data))
+  # Add model data if provided
+  if model_df is not None:
+    # Calculate model statistics
+    model_stats = model_df.group_by("algo").agg(
+      success_mean=pl.col("success").mean() * 100,
+      success_se=(
+        pl.col("success").mean()
+        * (1 - pl.col("success").mean())
+        / pl.col("success").count()
+      ).sqrt()
+      * 100,
+      reuse_mean=pl.col("reuse").mean() * 100,
+      reuse_se=(
+        pl.col("reuse").mean() * (1 - pl.col("reuse").mean()) / pl.col("reuse").count()
+      ).sqrt()
+      * 100,
+    )
+
+    # Add model data
+    algos = model_stats["algo"].unique().to_list()
+    for algo in model_order:
+      if not algo in algos:
+        continue
+      row = model_stats.filter(algo=algo)
+      all_data[algo] = {
+        "success": row["success_mean"].to_numpy()[0],
+        "reuse": row["reuse_mean"].to_numpy()[0],
+        "success_se": row["success_se"].to_numpy()[0],
+        "reuse_se": row["reuse_se"].to_numpy()[0],
+      }
+
+  # Plot data points with error bars
   ordered_keys = [k for k in model_order if k in all_data]
-  bar_width = 0.35
+  marker_size = 100  # Size of the main scatter points
 
-  # Success rate bars (left axis)
-  success_bars = ax1.bar(
-    x_pos - bar_width / 2,
-    [all_data[k]["success"] for k in ordered_keys],
-    bar_width,
-    yerr=success_yerr,
-    capsize=5,
-    color=[model_colors.get(k, "#333333") for k in ordered_keys],
-    label="Success Rate",
-  )
-
-  # Path reuse bars (right axis) - now using same colors without alpha
-  reuse_bars = ax2.bar(
-    x_pos + bar_width / 2,
-    [all_data[k]["reuse"] for k in ordered_keys],
-    bar_width,
-    yerr=reuse_yerr,
-    capsize=5,
-    color=[model_colors.get(k, "#333333") for k in ordered_keys],
-    hatch="///",
-    label="Path Reuse",
-  )
-
-  # Add individual dots for human data if requested
+  # Add individual human data points if requested
   if include_raw_data:
-    x_jitter = np.random.normal(0, 0.05, size=len(human_successes))
-    # ax1.scatter(
-    #    [-bar_width/2 + j for j in x_jitter],
-    #    100 * human_successes,
-    #    color="black",
-    #    alpha=0.5,
-    #    zorder=3,
-    #    s=20
-    # )
-    ax2.scatter(
-      [bar_width / 2 + j for j in x_jitter],
+    ax.scatter(
       100 * human_reuse,
+      100 * human_successes,
       color="black",
-      alpha=0.5,
-      zorder=3,
+      alpha=0.2,
+      zorder=1,
       s=20,
+      label="Individual participants",
+    )
+
+  # Plot each model/human data point with error bars
+  for key in ordered_keys:
+    data = all_data[key]
+    print(data)
+    ax.errorbar(
+      data["reuse"],
+      data["success"],
+      xerr=data["reuse_se"],
+      yerr=data["success_se"],
+      fmt="none",
+      color=model_colors.get(key, "#333333"),
+      capsize=5,
+      capthick=2,
+      elinewidth=2,
+      zorder=2,
+    )
+    ax.scatter(
+      data["reuse"],
+      data["success"],
+      color=model_colors.get(key, "#333333"),
+      s=marker_size,
+      label=model_names[key],
+      zorder=3,
     )
 
   # Customize axes
-  ax1.set_ylabel("Success Rate (%)", fontsize=DEFAULT_LABEL_SIZE)
-  ax2.set_ylabel("Path Reuse (%)", fontsize=DEFAULT_LABEL_SIZE)
-
-  # Set x-ticks
-  ax1.set_xticks(x_pos)
-  ax1.set_xticklabels(["" for k in ordered_keys])
+  ax.set_xlabel("Path Reuse (%)", fontsize=DEFAULT_LABEL_SIZE)
+  ax.set_ylabel("Success Rate (%)", fontsize=DEFAULT_LABEL_SIZE)
+  ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
 
   # Add chance level line for success rate
-  ax1.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
+  ax.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
+  ax.axvline(x=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
 
-  # Set title
-  ax1.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
+  # Set axis limits with some padding
+  ax.set_xlim(-5, 105)
+  ax.set_ylim(-5, 105)
 
-  # Create custom legend
-  # First create legend elements for models/human
-  model_legend = []
-  for i, key in enumerate(ordered_keys):
-    # Create a patch with the model's color
-    patch = mpatches.Patch(
-      color=model_colors.get(key, "#333333"), label=model_names[key]
+  # Add grid
+  ax.grid(True, linestyle="--", alpha=0.7)
+
+  # Add legend
+  if model_df is not None:
+    ax.legend(
+      bbox_to_anchor=(0.5, -0.15),  # Place legend below plot
+      loc="upper center",
+      ncol=len(ordered_keys) // 2,  # Arrange in two rows
+      columnspacing=1,
+      handletextpad=0.5,
     )
-    model_legend.append(patch)
 
-  ## Create legend elements for metrics
-  # chance_line = mlines.Line2D([], [], color='r', linestyle='--', label='Chance')
-  # success_patch = mpatches.Patch(color='gray', label='Success Rate')
-  # reuse_patch = mpatches.Patch(color='gray', hatch='///', label='Path Reuse')
-
-  # Combine all legend elements and organize in one row below the plot
-  ax1.legend(
-    handles=model_legend,
-    ncol=len(model_legend) // 2,  # Single row with all models
-    bbox_to_anchor=(0.5, -0.2),  # Center horizontally, place below plot
-    loc="lower center",
-    columnspacing=1,
-    handletextpad=0.5,
-  )
-
-  # Add grids to both axes
-  ax1.grid(True, linestyle="--", alpha=0.7, which="major", axis="y")
-  # ax2.grid(True, linestyle='--', alpha=0.3, which='major', axis='y')
-
-  ax1.set_ylim(0, 110)  # Set fixed range for percentage
-  ax2.set_ylim(0, 110)
-
-  # Ensure grid lines are behind the bars
-  # ax1.set_axisbelow(True)
-  # ax2.set_axisbelow(True)
-
-  # Adjust layout with more space at bottom for legend
-  # plt.subplots_adjust(bottom=0.2)  # Increase bottom margin to accommodate legend
-
-  # Remove the automatic legend from ax2
-  ax2.get_legend().remove() if ax2.get_legend() else None
-
-  return fig, ax1, ax2
+  return fig, ax
 
 
 if __name__ == "__main__":
@@ -2091,6 +1710,8 @@ if __name__ == "__main__":
   # TODO: implement model and get results
   model_df = None
   if USE_MODEL_DATA:
+    from analysis.craftax_model_data import get_model_data
+
     model_df = get_model_data(
       qlearning_path=f"{data_dir}/model_data/ql/save_data/ql-big-2/tota=40000000,exp=exp2/seed=*",
       sf_path=f"{data_dir}/model_data/usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2/seed=*",
@@ -2103,6 +1724,8 @@ if __name__ == "__main__":
   ################
   # Load user data
   ################
+  from analysis.craftax_user_data import get_human_data
+
   searches = {
     "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
     "Start": f"{data_dir}/user_data/*exps*/*v1*juncture*.json",

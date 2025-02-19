@@ -31,21 +31,7 @@ from nicewebrl import TimeStep
 from nicewebrl.dataframe import DataFrame
 import craftax_experiment_configs as configs
 
-# for tqdm both in notebook and terminal
-try:
-  from IPython import get_ipython
-
-  if "IPKernelApp" in get_ipython().config:
-    from tqdm.notebook import tqdm
-
-    try:
-      import ipywidgets
-    except:
-      pass
-  else:
-    from tqdm import tqdm
-except (ImportError, AttributeError):
-  from tqdm import tqdm
+import asyncio
 
 
 class EpisodeData(NamedTuple):
@@ -83,6 +69,8 @@ def user_id_from_filename(filename: str):
 
 def time_diff(t1, t2) -> float:
   # Convert string timestamps to datetime objects
+  if t1 is None or t2 is None:
+    return np.nan
   t1 = datetime.strptime(t1, "%Y-%m-%dT%H:%M:%S.%fZ")
   t2 = datetime.strptime(t2, "%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -134,6 +122,7 @@ def make_row(
     eval=datum["metadata"]["eval"],
     task=int(get_task_object(timesteps)),
     room=room,
+    start_pos=str(timesteps.state.player_position[0]),
   )
   row.update(datum["user_data"])
 
@@ -168,16 +157,35 @@ def make_row(
     if isinstance(value, str) and value.isdigit():
       row[key] = int(value)
 
-  ####################
-  # add optimal path length
-  ####################
-  from craftax_utils import astar
+  #####################
+  ## add optimal path length - with caching
+  #####################
+  #from craftax_utils import astar
+  #import os
 
-  path = astar(
-    state=jax.tree_map(lambda x: x[0], timesteps.state),  # first time-step
-    goal=row["task"],
-  )
-  row["optimal_length"] = len(path) - 1  # includes done
+  ## Create cache directory if it doesn't exist
+  #cache_dir = os.path.join(os.path.dirname(file), "path_length_cache")
+  #os.makedirs(cache_dir, exist_ok=True)
+  
+  ## Create cache key from relevant state information
+  #cache_key = f"{row['task']}_{timesteps.state.player_position[0]}"
+  #cache_file = os.path.join(cache_dir, f"optimal_length_{cache_key}.npy")
+
+  #if os.path.exists(cache_file):
+  #  # Load cached length
+  #  row["optimal_length"] = np.load(cache_file)
+  #  #print(f"Loaded optimal length from cache for {cache_key}")
+  #else:
+  #  # Calculate and cache length
+  #  path = astar(
+  #    state=jax.tree_map(lambda x: x[0], timesteps.state),  # first time-step
+  #    goal=row["task"],
+  #  )
+  #  optimal_length = len(path) - 1  # includes done
+  #  np.save(cache_file, optimal_length)
+  #  row["optimal_length"] = optimal_length
+
+  #print(f"Optimal length: {row['optimal_length']} for {row['task']}")
 
   return row
 
@@ -234,7 +242,7 @@ def separate_data_by_block_stage(data: List[dict]):
   for datum in data:
     info = get_block_stage_description(datum)
     key = dict_to_string(info)
-    if not key in keys:
+    if key not in keys:
       episode_idx += 1
       keys.add(key)
     info["user_episode_idx"] = episode_idx
@@ -263,34 +271,37 @@ def compute_overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
 
 
 def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
-  """Add a 'reuse' column to the DataFrame indicating whether each episode reused paths.
+  """Add 'reuse' and 'overlap' columns to the DataFrame.
 
   Args:
       df (DataFrame): Input DataFrame
       overlap_threshold (float, optional): Threshold for path reuse. Defaults to 0.15.
 
   Returns:
-      DataFrame: DataFrame with added 'reuse' column
+      DataFrame: DataFrame with added 'reuse' and 'overlap' columns
   """
-
-  # Create a dictionary to store reuse values
+  # Create dictionaries to store values
   reuse_dict = {}
+  overlap_dict = {}
 
   def update_reuse_dict(train_mazes, test_mazes):
-    # Get unique users
-
     for train_maze, test_maze in zip(train_mazes, test_mazes):
       # Get train episodes
-      train = df.filter(maze=train_maze, room=0, eval=False, success=1)
+      test = df.filter(name=test_maze, eval=True)
+      start_pos = test["start_pos"].to_list()[0]
+
+      train = df.filter(
+        name=train_maze, room=0, eval=False, success=1, start_pos=start_pos
+      )
 
       if len(train.episodes) == 0:
+        print(f"No training episodes for {(train_maze, test_maze)}")
         continue
 
       # Create map for training episodes
       train_map = create_maps(train.episodes).sum(0)
 
       # Get test episodes
-      test = df.filter(maze=test_maze, eval=True)
 
       # Process each test episode
       for idx, row in enumerate(test._df.iter_rows(named=True)):
@@ -299,55 +310,42 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
         # Create map for single test episode
         test_map = create_maps([episode]).sum(0)
         overlap = compute_overlap(train_map, test_map)
+        overlap_mean = overlap.mean()
 
-        # Store the reuse value
+        # Store both raw overlap and binary reuse values
         episode_id = (test_maze, global_index)
-        reuse_dict[episode_id] = overlap.mean() > overlap_threshold
+        overlap_dict[episode_id] = overlap_mean
+        reuse_dict[episode_id] = overlap_mean > overlap_threshold
 
-  # -----------------
-  # paths manipulation (3)
-  # -----------------
-  # Define mazes if not provided
-  # manipulation = 3
-  train_mazes = test_mazes = [
-    "big_m3_maze1_(F,F)",
-    "big_m3_maze1_(F,T)",
-    "big_m3_maze1_(T,F)",
-    "big_m3_maze1_(T,T)",
-  ]
-  update_reuse_dict(train_mazes, test_mazes)
-  # -----------------
-  # shortcut manipulation (1)
-  # -----------------
-  # Define mazes if not provided
-  # manipulation = 1
-  train_mazes = [
-    "big_m1_maze3_(F,F)",
-    "big_m1_maze3_(F,T)",
-    "big_m1_maze3_(T,F)",
-    "big_m1_maze3_(T,T)",
-  ]
+  all_mazes = df["name"].unique()
+  train_mazes = sorted([m for m in all_mazes if "training" in m])
+  test_mazes = sorted([m for m in all_mazes if "eval" in m])
 
-  test_mazes = [
-    "big_m1_maze3_shortcut_(F,F)",
-    "big_m1_maze3_shortcut_(F,T)",
-    "big_m1_maze3_shortcut_(T,F)",
-    "big_m1_maze3_shortcut_(T,T)",
-  ]
+  assert len(train_mazes) + len(test_mazes) == len(all_mazes)
+
   update_reuse_dict(train_mazes, test_mazes)
 
-  # -----------------
-  # add everything
-  # -----------------
-  # Create a new column with reuse values
+  # Create Series for both columns
   reuse_values = pl.Series(
     [
-      reuse_dict.get((row["maze"], row["global_episode_idx"]), None)
+      reuse_dict.get((row["name"], row["global_episode_idx"]), None)
       for row in df.iter_rows(named=True)
     ]
   )
-  # Add the new column to the DataFrame
-  new_df = df.with_columns([pl.Series("reuse", reuse_values).cast(pl.Boolean)])
+  overlap_values = pl.Series(
+    [
+      overlap_dict.get((row["name"], row["global_episode_idx"]), None)
+      for row in df.iter_rows(named=True)
+    ]
+  )
+
+  # Add both columns to the DataFrame
+  new_df = df.with_columns(
+    [
+      pl.Series("reuse", reuse_values).cast(pl.Boolean),
+      pl.Series("overlap", overlap_values).cast(pl.Float64),
+    ]
+  )
 
   return new_df
 
@@ -366,15 +364,19 @@ async def make_episode_data(
 
   The dataframe can be used to get indices into the list of EpisodeData for further computation.
   """
-  data = await nicewebrl.read_all_records(file)
+  try:
+    data = await nicewebrl.read_all_records(file)
+  except Exception as e:
+    logging.warning(f"Failed to read records from {file}: {str(e)}")
+    return file, None, None
 
   if len(data) == 0:
-    return None, None
+    return file, None, None
 
   file_metadata = data[-1]
   finished = file_metadata.get("finished", False)
   if not finished:
-    return None, None
+    return file, None, None
   if debug:
     n = max(1, int(len(data) * 0.05))
     data = data[:n]
@@ -408,6 +410,9 @@ async def make_episode_data(
 
   nbefore = len(data)
   data = [datum for datum in data if not filter_fn(datum)]
+  if len(data) == 0:
+    return file, None, None
+
   if verbose:
     print(f"Filtered {nbefore - len(data)} data points")
 
@@ -445,6 +450,7 @@ async def make_episode_data(
       episode_data = serialization.from_bytes(
         [example_episode] * nepisodes, serialized_data
       )
+      print(f"Loaded episode data from {episode_data_filename}")
   else:
     episode_data = [None] * len(gds.keys())
 
@@ -453,7 +459,7 @@ async def make_episode_data(
       timestep = serialization.from_bytes(example_timestep, timestep)
       return timestep
 
-    for key in tqdm(gds.keys(), desc="Processing episodes"):
+    for key in gds.keys():
       red = raw_episode_data = gds[key]
       actions = jnp.asarray([datum["data"]["action_idx"] for datum in red])
       timesteps = [get_timestep(datum, example_timestep) for datum in red]
@@ -501,8 +507,10 @@ async def make_episode_data(
   #####################
   # Load or create episode_info
   #####################
+
   if os.path.exists(episode_info_filename) and not overwrite_episode_info:
     episode_info = pl.read_csv(episode_info_filename)
+    print(f"Loaded episode info from {episode_info_filename}")
   else:
     # --------------
     # first make df with raw data from file
@@ -588,14 +596,14 @@ async def make_episode_data(
       "path_length": path_length,
       "termination": terminated,
       "log_first_rt": first_rt,
-      "log_avg_rt": avg_rt,
-      "log_total_rt": total_rt,
-      "log_avg_post_rt": avg_post_rt,
-      "log_max_rt": max_rt,
-      "log_max_post_rt": max_post_rt,
-      "log_max_init_post_rt": max_init_post_rt,
-      "log_max_end_rt": max_end_rt,
-      "log_max_final_rt": max_final_rt,
+      #"log_avg_rt": avg_rt,
+      #"log_total_rt": total_rt,
+      #"log_avg_post_rt": avg_post_rt,
+      #"log_max_rt": max_rt,
+      #"log_max_post_rt": max_post_rt,
+      #"log_max_init_post_rt": max_init_post_rt,
+      #"log_max_end_rt": max_end_rt,
+      #"log_max_final_rt": max_final_rt,
     }
     computed_values = {key: [] for key in measures}
 
@@ -614,7 +622,7 @@ async def make_episode_data(
       .alias("optimal_length_deviance")
     )
     _temp_df = DataFrame(episode_info, episode_data)
-    # _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
+    _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
     episode_info = _temp_df._df
 
     episode_info.write_csv(episode_info_filename)
@@ -624,55 +632,64 @@ async def make_episode_data(
       serialized_data = serialization.to_bytes(episode_data)
       f.write(serialized_data)
 
-  return episode_info, episode_data
+  return file, episode_info, episode_data
 
 
-def make_all_episode_data(
+async def make_all_episode_data(
   files,
   example_timestep,
   debug=False,
   overwrite_episode_data=False,
   overwrite_episode_info=False,
 ):
-  def process_file(file):
-    return make_episode_data(
-      file,
-      example_timestep,
-      overwrite_episode_data=overwrite_episode_data,
-      overwrite_episode_info=overwrite_episode_info,
-      debug=debug,
-    )
+  """Synchronous version of make_all_episode_data that processes files sequentially."""
 
   if debug:
     files = files[: max(int(len(files) * 0.1), 10)]
-  results = Parallel(n_jobs=-1)(delayed(process_file)(file) for file in files)
 
   all_episode_data = []
   episode_df_list = []
 
-  for episode_df, episode_data in tqdm(
-    results, desc="Combining results", total=len(files)
-  ):
-    if episode_df is not None and episode_data is not None:
-      all_episode_data.extend(episode_data)
-      episode_df_list.append(episode_df)
+  # Process files sequentially
+  for enum, file in enumerate(files):
+    try:
+      # Convert the async make_episode_data to sync by running it in an event loop
+      file, episode_df, episode_data = await make_episode_data(
+        file,
+        example_timestep,
+        overwrite_episode_data=overwrite_episode_data,
+        overwrite_episode_info=overwrite_episode_info,
+        debug=debug,
+        )
+
+      print(f"{enum}/{len(files)}", file)
+
+      if episode_df is not None and episode_data is not None:
+        all_episode_data.extend(episode_data)
+        episode_df_list.append(episode_df)
+      else:
+        print(f"skipping {file} because one of the episode_df or episode_data is None")
+
+    except Exception as e:
+      print(f"error processing {file}: {str(e)}")
+      continue
 
   episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
-
   return DataFrame(episode_df, all_episode_data)
 
 
 def create_maps(episode_data_list: List[EpisodeData]):
   maps = []
+
   for episode_data in episode_data_list:
     timesteps = episode_data.timesteps
 
-    # [T, H, W, 1]
+    # [T, N, H, W]
     # Assuming grid is 3D with time as first dimension
-    grid_shape = timesteps.state.grid.shape
+    grid_shape = timesteps.state.map.shape
 
     # skip the time dimension and final channel dimension
-    grid = jnp.zeros(grid_shape[1:-1], dtype=jnp.int32)
+    grid = jnp.zeros(grid_shape[2:], dtype=jnp.int32)
 
     # go through each position and set the corresponding index to 1
     for pos in episode_data.positions:
@@ -681,70 +698,27 @@ def create_maps(episode_data_list: List[EpisodeData]):
   return np.array(maps)
 
 
-def get_human_data(
-  valid_files, overwrite_episode_data=False, overwrite_episode_info=True
+async def get_human_data(
+  valid_files,
+  overwrite_episode_data=False,
+  overwrite_episode_info=True,
+  debug=False,
 ):
-  from simulations.craftax_web_env import CraftaxSymbolicWebEnvNoAutoReset
-  from simulations.craftax_web_env import EnvParams
-  from craftax.craftax.constants import Action
+  import craftax_experiment_structure as experiment
 
-  ################
-  # Setup environment
-  ################
-  # TODO: change to craftax
-  static_env_params = CraftaxSymbolicWebEnvNoAutoReset.default_static_params()
-  MONSTERS = 1
-  MAX_START_POSITIONS = 10
-  static_env_params = static_env_params.replace(
-    max_melee_mobs=MONSTERS,
-    max_ranged_mobs=MONSTERS,
-    max_passive_mobs=10,  # cows
-    initial_crafting_tables=True,
-    initial_strength=20,
-    map_size=(48, 48),
+  example_web_timestep = experiment.jax_web_env.reset(
+    jax.random.PRNGKey(0), experiment.dummy_params
   )
-  jax_env = CraftaxSymbolicWebEnvNoAutoReset(
-    static_env_params=static_env_params,
-  )
-
-  def make_start_position(start_positions):
-    start_position = jnp.zeros((MAX_START_POSITIONS, 2), dtype=jnp.int32)
-    return start_position.at[: len(start_positions)].set(jnp.asarray(start_positions))
-
-  dummy_start_position = make_start_position((24, 24))
-
-  default_params = EnvParams(
-    day_length=100000,
-    max_timesteps=200,
-    mob_despawn_distance=100000,
-    # possible_goals=possible_goals,
-    # active_goals=all_goals_active,
-    world_seeds=(0,),
-    start_positions=dummy_start_position,
-  )
-  dummy_block_config = configs.PATHS_CONFIGS[0]
-  dummy_params = configs.make_block_env_params(
-    dummy_block_config, default_params
-  ).replace(
-    # to have compilation use valid current_goal value
-    current_goal=dummy_block_config.train_objects[0],
-  )
-
-  # create web environment wrapper
-  actions = [Action.RIGHT, Action.DOWN, Action.LEFT, Action.UP, Action.DO]
-  action_array = jnp.array([a.value for a in actions])
-
-  jax_web_env = nicewebrl.JaxWebEnv(env=jax_env, actions=action_array)
-  example_web_timestep = jax_web_env.reset(jax.random.PRNGKey(0), dummy_params)
 
   ################
   # Load data
   ################
-  initial_user_df = make_all_episode_data(
+  initial_user_df = await make_all_episode_data(
     files=valid_files,
     example_timestep=example_web_timestep,
     overwrite_episode_data=overwrite_episode_data,
     overwrite_episode_info=overwrite_episode_info,
+    debug=debug,
   )
 
   def bad_episode(e):
@@ -758,7 +732,7 @@ def get_human_data(
   return initial_user_df
 
 
-if __name__ == "__main__":
+async def main():
   # Define searches
   data_dir = "/Users/wilka/git/research/results/human_dyna_craftax/"
 
@@ -771,6 +745,13 @@ if __name__ == "__main__":
     files.extend(glob(v))
 
   # valid_files = get_valid_files(searches, verbose=True, plot=False)
-  user_df = get_human_data(
+  user_df = await get_human_data(
     files, overwrite_episode_data=False, overwrite_episode_info=True
   )
+  return user_df
+
+
+if __name__ == "__main__":
+  import asyncio
+
+  user_df = asyncio.run(main())

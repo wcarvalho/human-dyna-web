@@ -13,11 +13,11 @@ from nicewebrl.logging import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
+GOOGLE_CREDENTIALS = "./keys/datastore-key.json"
+
 
 def initialize_storage_client(bucket_name="human-dyna"):
-  storage_client = storage.Client.from_service_account_json(
-    os.environ["GOOGLE_CREDENTIALS"]
-  )
+  storage_client = storage.Client.from_service_account_json(GOOGLE_CREDENTIALS)
 
   bucket = storage_client.bucket(bucket_name)
   return bucket
