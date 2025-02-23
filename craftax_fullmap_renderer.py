@@ -16,7 +16,7 @@ from craftax.craftax.util.game_logic_utils import is_boss_vulnerable
   ),
 )
 def render_craftax_pixels(
-  state, block_pixel_size, do_night_noise=True, show_inventory=False, show_agent=True
+  state, block_pixel_size, do_night_noise=True, show_inventory=False, show_agent=True, show_center_agent=False
 ):
   textures = TEXTURES[block_pixel_size]
   obs_dim_array = jnp.array([OBS_DIM[0], OBS_DIM[1]], dtype=jnp.int32)
@@ -126,6 +126,18 @@ def render_craftax_pixels(
   map_pixels, _ = jax.lax.scan(
     _add_item_type_to_pixels, map_pixels, jnp.arange(1, len(ItemType))
   )
+
+  if show_center_agent:
+    # Render player
+    player_texture_index = jax.lax.select(
+        state.is_sleeping, 4, state.player_direction - 1
+    )
+    map_pixels = (
+        map_pixels
+        * (1 - textures["full_map_player_textures_alpha"][player_texture_index])
+        + textures["full_map_player_textures"][player_texture_index]
+        * textures["full_map_player_textures_alpha"][player_texture_index]
+    )
 
   # Render mobs
   # Zombies

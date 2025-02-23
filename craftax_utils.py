@@ -314,6 +314,8 @@ def actions_from_path(path):
       actions.append(Action.RIGHT.value)
     elif dy == -1:
       actions.append(Action.LEFT.value)
+    else:
+      actions.append(Action.NOOP.value)
 
   actions.append(Action.NOOP.value)
   return jnp.array(actions)
@@ -351,13 +353,6 @@ def place_arrows_on_image(
   if display_image:
     ax.imshow(image)
 
-  ## Add star at starting position (first position) with specified color
-  # if len(positions) > 0:
-  #  start_y = offset_y + (positions[0][0] + 0.5) * scale_y
-  #  start_x = offset_x + (positions[0][1] + 0.5) * scale_x
-  #  ax.plot(
-  #    start_x, start_y, "*", color=start_color, markersize=15, markeredgecolor="black"
-  #  )
 
   # Calculate the center coordinates near the end position for text placement
   if show_path_length and len(positions) > 3:
@@ -803,7 +798,7 @@ def render_goal_object(goal_object_idx: int, block_pixel_size: int):
 
 
 def create_reaction_times_video(
-  initial_map, images, reaction_times, output_file, fps=1
+  initial_map, first_state, images, path, actions, reaction_times, output_file, fps=1
 ):
   # Ensure the directory exists
   output_dir = os.path.dirname(output_file)
@@ -814,6 +809,18 @@ def create_reaction_times_video(
   width = 4
   fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(3 * width, width))
   ax1.imshow(initial_map)
+  place_arrows_on_image(
+        image=initial_map,
+        positions=path,
+        actions=actions,
+        maze_height=first_state.map.shape[1],
+        maze_width=first_state.map.shape[2],
+        ax=ax1,
+        display_image=True,
+        arrow_color='red',
+        show_path_length=False,
+        start_color='red',
+      )
 
   def update(frame):
     # Clear previous content
@@ -844,6 +851,7 @@ def create_reaction_times_video(
   # Create the animation
   anim = FuncAnimation(fig, update, frames=n, interval=1000 / fps, blit=False)
   video = anim.to_html5_video()
+  plt.close(fig)  # Close the figure after creating the video
   return video
 
 
@@ -868,8 +876,19 @@ def create_episode_reaction_times_video(
   )
   images = jax.vmap(partial_render_fn)(episode_data.timesteps.state)
   reaction_times = episode_data.reaction_times
+  path = episode_data.timesteps.state.player_position
+  actions = actions_from_path(path)
+  assert len(path) == len(actions) == len(reaction_times), f"lengths: {len(path)}, {len(actions)}, {len(reaction_times)}"
+  first_state = jax.tree_map(lambda s: s[0], episode_data.timesteps.state)
   video = create_reaction_times_video(
-    initial_map, images, reaction_times, output_file, fps
+    initial_map=initial_map,
+    first_state=first_state,
+    images=images,
+    path=path,
+    actions=actions,
+    reaction_times=reaction_times,
+    output_file=output_file,
+    fps=fps,
   )
   if html:
     from IPython.display import HTML, display

@@ -30,7 +30,7 @@ import nicewebrl
 from nicewebrl import TimeStep
 from nicewebrl.dataframe import DataFrame
 import craftax_experiment_configs as configs
-
+from analysis import craftax_analysis
 import asyncio
 
 
@@ -160,32 +160,13 @@ def make_row(
   #####################
   ## add optimal path length - with caching
   #####################
-  #from craftax_utils import astar
-  #import os
+  if row["eval"]:
+    key = f"world={int(row['world_seed'])}"
+    optimal_length = craftax_analysis.OPTIMAL_TEST_LENGTHS[key]
+    row["optimal_length"] = optimal_length
+    path_length = len(timesteps.state.player_position) - 1
+    row["suboptimal_path"] = path_length >= 2*optimal_length
 
-  ## Create cache directory if it doesn't exist
-  #cache_dir = os.path.join(os.path.dirname(file), "path_length_cache")
-  #os.makedirs(cache_dir, exist_ok=True)
-  
-  ## Create cache key from relevant state information
-  #cache_key = f"{row['task']}_{timesteps.state.player_position[0]}"
-  #cache_file = os.path.join(cache_dir, f"optimal_length_{cache_key}.npy")
-
-  #if os.path.exists(cache_file):
-  #  # Load cached length
-  #  row["optimal_length"] = np.load(cache_file)
-  #  #print(f"Loaded optimal length from cache for {cache_key}")
-  #else:
-  #  # Calculate and cache length
-  #  path = astar(
-  #    state=jax.tree_map(lambda x: x[0], timesteps.state),  # first time-step
-  #    goal=row["task"],
-  #  )
-  #  optimal_length = len(path) - 1  # includes done
-  #  np.save(cache_file, optimal_length)
-  #  row["optimal_length"] = optimal_length
-
-  #print(f"Optimal length: {row['optimal_length']} for {row['task']}")
 
   return row
 
@@ -253,7 +234,7 @@ def separate_data_by_block_stage(data: List[dict]):
   return grouped_data, infos
 
 
-def compute_overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
+def compute_overlap(map1: np.ndarray, map2: np.ndarray, subset_t: int = None):
   """map1: HxW, map2: HxW"""
   """Calculate the overlap between two maps."""
   nonzero_indices = np.argwhere(map1 > 0)
@@ -264,9 +245,9 @@ def compute_overlap(map1: np.ndarray, map2: np.ndarray, final_t: int = None):
     np.float32
   )
 
-  overlap = ((values_map1 + values_map2) > 1)[:final_t]
-  if final_t is not None:
-    overlap = overlap[-final_t:]
+  overlap = ((values_map1 + values_map2) > 1)
+  if subset_t is not None:
+    overlap = jnp.concatenate([overlap[:subset_t], overlap[-subset_t:]])
   return overlap
 
 
@@ -288,6 +269,9 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
     for train_maze, test_maze in zip(train_mazes, test_mazes):
       # Get train episodes
       test = df.filter(name=test_maze, eval=True)
+      if len(test) == 0:
+        print(f"No test episodes for {(train_maze, test_maze)}")
+        continue
       start_pos = test["start_pos"].to_list()[0]
 
       train = df.filter(
@@ -309,19 +293,21 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
         episode = test.episodes[idx]
         # Create map for single test episode
         test_map = create_maps([episode]).sum(0)
-        overlap = compute_overlap(train_map, test_map)
+        overlap = compute_overlap(train_map, test_map, subset_t=None)
         overlap_mean = overlap.mean()
 
         # Store both raw overlap and binary reuse values
         episode_id = (test_maze, global_index)
         overlap_dict[episode_id] = overlap_mean
-        reuse_dict[episode_id] = overlap_mean > overlap_threshold
+        reuse_dict[episode_id] = int(overlap_mean > overlap_threshold)
 
-  all_mazes = df["name"].unique()
-  train_mazes = sorted([m for m in all_mazes if "training" in m])
-  test_mazes = sorted([m for m in all_mazes if "eval" in m])
+  #all_mazes = df["name"].unique()
+  train_mazes = [f'paths_{i}_training' for i in range(4)]
+  test_mazes = [f'paths_{i}_eval1' for i in range(4)]
+  #train_mazes = sorted([m for m in all_mazes if "training" in m])
+  #test_mazes = sorted([m for m in all_mazes if "eval" in m])
 
-  assert len(train_mazes) + len(test_mazes) == len(all_mazes)
+  #assert len(train_mazes) + len(test_mazes) == len(all_mazes)
 
   update_reuse_dict(train_mazes, test_mazes)
 
@@ -342,7 +328,7 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
   # Add both columns to the DataFrame
   new_df = df.with_columns(
     [
-      pl.Series("reuse", reuse_values).cast(pl.Boolean),
+      pl.Series("reuse", reuse_values).cast(pl.Int32),
       pl.Series("overlap", overlap_values).cast(pl.Float64),
     ]
   )
@@ -376,6 +362,7 @@ async def make_episode_data(
   file_metadata = data[-1]
   finished = file_metadata.get("finished", False)
   if not finished:
+    print(f"Skipping {file} because it is not finished")
     return file, None, None
   if debug:
     n = max(1, int(len(data) * 0.05))
@@ -427,12 +414,9 @@ async def make_episode_data(
   #####################
   # Load or create episode_data
   #####################
-  import ipdb
-
-  ipdb.set_trace()
-  example_timestep = example_timestep.replace(
-    state=jax.tree_map(lambda t: t[:1], example_timestep.state)
-  )
+  #example_timestep = example_timestep.replace(
+  #  state=jax.tree_map(lambda t: t[:1], example_timestep.state)
+  #)
   if os.path.exists(episode_data_filename) and not overwrite_episode_data:
     with open(episode_data_filename, "rb") as f:
       serialized_data = f.read()
@@ -596,14 +580,14 @@ async def make_episode_data(
       "path_length": path_length,
       "termination": terminated,
       "log_first_rt": first_rt,
-      #"log_avg_rt": avg_rt,
-      #"log_total_rt": total_rt,
-      #"log_avg_post_rt": avg_post_rt,
-      #"log_max_rt": max_rt,
-      #"log_max_post_rt": max_post_rt,
-      #"log_max_init_post_rt": max_init_post_rt,
-      #"log_max_end_rt": max_end_rt,
-      #"log_max_final_rt": max_final_rt,
+      "log_avg_rt": avg_rt,
+      "log_total_rt": total_rt,
+      "log_avg_post_rt": avg_post_rt,
+      "log_max_rt": max_rt,
+      "log_max_post_rt": max_post_rt,
+      "log_max_init_post_rt": max_init_post_rt,
+      "log_max_end_rt": max_end_rt,
+      "log_max_final_rt": max_final_rt,
     }
     computed_values = {key: [] for key in measures}
 
@@ -616,11 +600,12 @@ async def make_episode_data(
     episode_info = episode_info.with_columns(
       [pl.Series(key, values) for key, values in computed_values.items()]
     )
-    episode_info = episode_info.with_columns(
-      pl.col("path_length")
-      .sub(pl.col("optimal_length"))
-      .alias("optimal_length_deviance")
-    )
+    if "optimal_length" in episode_info.columns:
+      episode_info = episode_info.with_columns(
+        pl.col("path_length")
+        .sub(pl.col("optimal_length"))
+        .alias("optimal_length_deviance")
+      )
     _temp_df = DataFrame(episode_info, episode_data)
     _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
     episode_info = _temp_df._df

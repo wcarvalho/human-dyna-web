@@ -186,8 +186,8 @@ def sample_goal_and_position(
     stage_idx = app.storage.user.get("stage_idx", 0)
   except Exception:
     # no page setup yet
-    dummy_goal = jnp.asarray(0, dtype=jnp.int32)
-    dummy_position = jnp.asarray((0, 0), dtype=jnp.int32)
+    dummy_goal = possible_goals[0]
+    dummy_position = start_positions[0]
     return dummy_goal, dummy_position
 
   ###################

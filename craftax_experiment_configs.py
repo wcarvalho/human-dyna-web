@@ -365,7 +365,11 @@ def visualize_block_config(config: BlockConfig, jax_env, **kwargs):
   key = jax.random.PRNGKey(0)
   obs, state = jax_env.reset(key, env_params)
   with jax.disable_jit():
-    full_map = render_full(state, block_pixel_size=BLOCK_PIXEL_SIZE_HUMAN).astype(
+    full_map = render_full(
+      state,
+      show_agent=False,
+      show_center_agent=True,
+      block_pixel_size=BLOCK_PIXEL_SIZE_HUMAN).astype(
       np.uint8
     )
   plt.imshow(full_map)
