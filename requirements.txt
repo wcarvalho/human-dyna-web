@@ -13,3 +13,4 @@ jupyterlab
 matplotlib
 seaborn
 tqdm
+nicegui==2.10.1

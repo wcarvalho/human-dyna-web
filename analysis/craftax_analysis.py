@@ -23,7 +23,7 @@ from IPython.display import HTML, display
 OPTIMAL_TEST_PATHS = {}
 for config in craftax_experiment_configs.PATHS_CONFIGS:
     # Create cache path
-    cache_dir = "path_cache"
+    cache_dir = "craftax_cache/optimal_paths"
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, f"path_{hash(str(config))}.npy")
 
@@ -44,10 +44,9 @@ for config in craftax_experiment_configs.PATHS_CONFIGS:
       path = np.array(path)
 
       np.save(cache_file, path)
-    key = f"world={config.world_seed}"
-    OPTIMAL_TEST_PATHS[key] = path
+    OPTIMAL_TEST_PATHS[config.world_seed] = path
 
-OPTIMAL_TEST_LENGTHS = {k: len(v) for k,v in OPTIMAL_TEST_PATHS.items()}
+OPTIMAL_TEST_LENGTHS = {k: len(v) - 1 for k,v in OPTIMAL_TEST_PATHS.items()}
 
 def filter_to_str(filter: dict):
   return "".join([f"{k}={v}" for k, v in filter.items()])
@@ -106,7 +105,7 @@ def path_similarity(path1, path2):
     
     return similarity
 
-def visualize_user_path_reuse(df: DataFrame, user_id: int, idx=None):
+def visualize_user_path_reuse(df: DataFrame, user_id: int, idx=None, **kwargs):
   user_df = df.filter(user_id=user_id)
   test_mazes = user_df["name"].unique()
   test_mazes = [t for t in test_mazes if "eval" in t]
@@ -119,7 +118,7 @@ def visualize_user_path_reuse(df: DataFrame, user_id: int, idx=None):
     # get random test maze
     i = int(i)
     test_maze = test_mazes[i]
-    test_df = user_df.filter(eval=True, name=test_maze)
+    test_df = user_df.filter(eval=True, name=test_maze, **kwargs)
     if len(test_df.episodes) == 0:
       print(f"No test episodes for maze: {test_maze}")
       continue
@@ -178,10 +177,11 @@ def visualize_user_path_reuse(df: DataFrame, user_id: int, idx=None):
       train_path = train_episode.positions
       test_path = test_episode.positions
       #similarity = path_similarity(train_path, test_path)
-      path_length = len(test_episode.positions)
+      world_seed = test_df['world_seed'].to_list()[0]
+      path_length = len(test_episode.positions) - 1
       title = f"{test_maze}. Path Length: {path_length}"
       title += f"\nOverlap: {test_df['overlap'][0]:.2f}. Reuse: {bool(test_df['reuse'][0])}"
-      #title += f"\nSimilarity: {similarity:.2f}. Reuse: {similarity > .5}"
+      title += f"\nOptimal Path Length: {OPTIMAL_TEST_LENGTHS[world_seed]}"
       axs[2].set_title(title, fontsize=13)
 
 
@@ -202,6 +202,8 @@ def path_reuse_manipulation_analysis(
   save_figs: bool = True,
   display_figs: bool = True,
   verbosity: int = 1,
+  reuse_column: str = "reuse",
+  n_simulations: int = 1000,
 ):
   ############################################################
   # Create stats file
@@ -214,22 +216,46 @@ def path_reuse_manipulation_analysis(
   ############################################################
   # Plot success rate and path reuse
   ############################################################
+  tell_reuse = filter.get("tell_reuse")
+  if reuse_column == "reuse":
+    title = "Exp 1 Success Rate and Path Reuse"
+  else:
+    title = "Exp 1 Success Rate and Efficient Path Reuse"
+  if tell_reuse is not None:
+    title += f"\nTell Reuse: {bool(tell_reuse)}"
   fig, ax = experiment_analysis.plot_success_rate_path_reuse_metrics(
     df=sub_df,
     model_df=None,
     stats_file=stats_file,
-    title="Exp 1 Success Rate and Path Reuse",
+    title=title,
     figsize=(6, 4),
     include_raw_data=True,
+    reuse_column=reuse_column,
   )
+  if reuse_column == "efficient_reuse":
+    ax.set_xlabel("Efficient Path Reuse (%)", fontsize=experiment_analysis.DEFAULT_LABEL_SIZE)
+
   if save_figs:
     fig.savefig(os.path.join(save_dir, "success_path_reuse.pdf"), bbox_inches="tight")
   if display_figs:
     plt.show()
 
-  ############################################################
-  # Plot success rate and path reuse
-  ############################################################
+  #############################################################
+  ## Plot path length
+  #############################################################
+  #fig, ax = plt.subplots(figsize=(4, 4))
+  #experiment_analysis.plot_bar_rt_comparison(
+  #  sub_df.filter(success=1),
+  #  "path_length",
+  #  #title="Path Length",
+  #  #ylabel="Length",
+  #  #xlabels=["New Path", "Partial Reuse"],
+  #  #colors=[experiment_analysis.default_colors["nice purple"], experiment_analysis.default_colors["bluish green"]],
+  #  n_simulations=n_simulations,
+  #  stats_file=stats_file,
+  #  ax=ax,
+  #)
+  #plt.show()
 
   stats_file.close()
   if verbosity > 0:

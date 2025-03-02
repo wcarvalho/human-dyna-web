@@ -22,9 +22,9 @@ from experiment_utils import SuccessTrackingAutoResetWrapper
 
 
 from nicegui import ui, app
+import nicewebrl
 from nicewebrl import stages
 from nicewebrl.stages import Stage, EnvStage, Block, FeedbackStage
-from nicewebrl.stages import ExperimentData
 from nicewebrl.nicejax import JaxWebEnv, base64_npimage, make_serializable
 from nicewebrl.utils import wait_for_button_or_keypress, clear_element
 from nicewebrl import nicejax
@@ -42,7 +42,7 @@ DATA_DIR = os.environ.get("DATA_DIR", "data")
 FEEDBACK = int(os.environ.get("FEEDBACK", 1))
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 1))
 COND2_TRAIN = int(os.environ.get("COND2_TRAIN", 1))
-TIMER = int(os.environ.get("TIMER", 30))
+TIMER = int(os.environ.get("TIMER", 0))
 VERBOSITY = int(os.environ.get("VERBOSITY", 0))
 NTRAIN = int(os.environ.get("NTRAIN", 8))
 TIME_LIMIT = int(os.environ.get("TIME_LIMIT", 10_000_000))
@@ -158,14 +158,6 @@ def housemaze_render_fn(
     include_objects=include_objects,
   )
   return image
-
-
-@struct.dataclass
-class EnvStageState:
-  timestep: maze.TimeStep = None
-  nsteps: int = 0
-  nepisodes: int = 0
-  nsuccesses: int = 0
 
 
 image_keys = image_data["keys"]
@@ -284,11 +276,12 @@ async def experiment_instructions_display_fn(stage, container):
 async def stage_instructions_display_fn(stage, container):
   with container.style("align-items: center;"):
     clear_element(container)
-    ui.markdown(f"## {stage.name}")
+    ui.markdown(f"## {stage.title}")
     if DEBUG:
       ui.markdown(debug_info(stage))
     ui.markdown(f"{remove_extra_spaces(stage.body)}", extras=["cuddled-lists"])
 
+    await asyncio.sleep(1)
     ui.markdown("Task objects will be selected from the set below.")
     if SAY_REUSE:
       ui.markdown("**We note objects relevant to phase 2**")
@@ -496,7 +489,7 @@ def make_env_stage(
     display_fn=env_stage_display_fn,
     evaluate_success_fn=lambda t, params: int(t.reward > 0.5),
     check_finished=lambda t: t.finished,
-    state_cls=EnvStageState,
+    #state_cls=EnvStageState,
     max_episodes=max_episodes,
     min_success=min_success,
     metadata=metadata,
@@ -528,18 +521,23 @@ def make_block(
   str_transform: Callable[[str], str] = lambda s: s,
   appendix: str = "",
 ):
-  def create_stage(name, body):
-    return Stage(name=f"{name}", body=body, display_fn=stage_instructions_display_fn)
+  block_name = metadata.get("desc", "block")
+  def create_stage(name, title, body):
+    return Stage(
+      name=name,
+      title=title,
+      body=body,
+      display_fn=stage_instructions_display_fn)
 
   make_env_kwargs = make_env_kwargs or {}
   phase2_cond1_env_kwargs = phase2_cond1_env_kwargs or {}
   phase2_cond2_env_kwargs = phase2_cond2_env_kwargs or {}
 
   def create_env_stage(
-    name, maze_name, training, min_success, max_episodes, duration=None, **kwargs
+    name, maze_name, training, min_success, max_episodes, duration=None, extra_apppendix='', **kwargs
   ):
     all_kwargs = dict(
-      name=f"{name}",
+      name=f"{name}_{appendix}_{extra_apppendix}",
       maze_str=str_transform(getattr(mazes, maze_name)),
       min_success=min_success,
       max_episodes=max_episodes,
@@ -554,6 +552,7 @@ def make_block(
 
   phase2_cond1_kwargs = dict(
     name=phase_2_cond1_name or phase_2_cond1_maze_name,
+    extra_apppendix='train',
     maze_name=phase_2_cond1_maze_name,
     metadata=dict(maze=phase_2_cond1_maze_name + appendix, condition=1),
     training=False,
@@ -566,9 +565,12 @@ def make_block(
   )
   phase2_cond1_kwargs.update(phase2_cond1_env_kwargs)
   stages = [
-    create_stage("Phase 1", phase_1_text),
+    create_stage(
+      name=f"{block_name} Phase 1",
+      title="Phase 1", body=phase_1_text),
     create_env_stage(
       name=phase_1_maze_name,
+      extra_apppendix='eval1',
       maze_name=phase_1_maze_name,
       metadata=dict(maze=phase_1_maze_name + appendix, condition=0),
       training=True,
@@ -576,7 +578,9 @@ def make_block(
       min_success=min_success or min_success_train,
       max_episodes=max_episodes or max_episodes_train,
     ),
-    create_stage("Phase 2", phase_2_text),
+    create_stage(
+      name=f"{block_name} Phase 2",
+      title="Phase 2", body=phase_2_text),
     create_env_stage(**phase2_cond1_kwargs),
   ]
   randomize = []
@@ -584,6 +588,7 @@ def make_block(
     randomize = [False, False, False, True, True]
     phase2_cond2_kwargs = dict(
       name=phase_2_cond2_name or phase_2_cond2_maze_name,
+      extra_apppendix='eval2',
       maze_name=phase_2_cond2_maze_name,
       metadata=dict(maze=phase_2_cond2_maze_name + appendix, condition=2),
       training=False,
@@ -895,7 +900,9 @@ elif MAN == "paths":  # paths manipulation (3)
       )
     )
 elif MAN == "plan":  # planning manipulation (4)
-  manipulations = [create_plan_manipulation_block(r, "short") for r in reversals] + [
+  manipulations = [
+    create_plan_manipulation_block(r, "short") for r in reversals
+    ] + [
     create_plan_manipulation_block(r, "long") for r in reversals
   ]
 elif MAN == "shortcut":  # shortcut manipulation (1)
@@ -929,7 +936,7 @@ else:
 
 
 instruct_block = Block(
-  [
+  stages=[
     Stage(
       name="Experiment instructions",
       body=instruct_text,
@@ -940,10 +947,19 @@ instruct_block = Block(
 )
 
 all_blocks = []
+#randomize = []
 if GIVE_INSTRUCTIONS:
   all_blocks.extend([instruct_block, create_practice_block()])
+  #randomize.extend([False, False])
 
 all_blocks.extend(manipulations + feedback_block)
+#randomize.extend([True] * len(manipulations + feedback_block))
+
+#experiment = nicewebrl.Experiment(
+#  blocks=all_blocks,
+#  randomize=randomize,
+#  name=f'jaxmaze_experiment_{NAME}',
+#)
 all_stages = stages.prepare_blocks(all_blocks)
 
 ##########################

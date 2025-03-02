@@ -60,9 +60,10 @@ DUMMY_ENV = int(os.environ.get("DUMMY_ENV", 0))
 MONSTERS = int(os.environ.get("MONSTERS", 1))
 NAME = os.environ.get("NAME", "exp")
 DATA_DIR = os.environ.get("DATA_DIR", "data")
+NTRAIN = int(os.environ.get("NTRAIN", 8))
 
 MAX_STAGE_EPISODES = 50 if DEBUG == 0 else 2
-MIN_SUCCESS_TASK = 8 if DEBUG == 0 else 1
+MIN_SUCCESS_TASK = NTRAIN if DEBUG == 0 else 1
 MAX_START_POSITIONS = 10
 
 
@@ -70,7 +71,7 @@ MAX_START_POSITIONS = 10
 class EnvParams(OriginalEnvParams):
   active_goals: Tuple[int, ...] = tuple()
   num_success: int = 5
-  min_samples_per_location: int = 2
+  min_samples_per_location: int = 1
   num_start_locations: int = 10
 
 
@@ -179,13 +180,14 @@ def sample_goal_and_position(
   possible_goals,
   success_per_goal,
   start_positions,
-  min_samples_per_location: int = 2,
+  min_samples_per_location: int = 1,
   num_start_locations: int = 1,
 ):
   try:
     stage_idx = app.storage.user.get("stage_idx", 0)
   except Exception:
     # no page setup yet
+    logger.info("no page setup yet")
     dummy_goal = possible_goals[0]
     dummy_position = start_positions[0]
     return dummy_goal, dummy_position
@@ -206,14 +208,14 @@ def sample_goal_and_position(
   ###################
   # sample start position in proportion to how often not sampled
   ####################
-  key = f"{stage_idx}_remaining_start_positions"
+  key = f"{stage_idx}_goal_{goal}_remaining_start_positions"
   start_position, remaining_counts = sample_from_remaining(
     key=key,
     possible_values=start_positions,
     min_samples=min_samples_per_location,
     num_dimensions=num_start_locations,
   )
-  logger.info(f"sampled: {start_position}. prior start position counts: {remaining_counts}")
+  logger.info(f"sampled: {start_position} for goal {goal}. prior start position counts: {remaining_counts}")
   app.storage.user[key] = remaining_counts
 
   return goal, start_position
@@ -235,19 +237,21 @@ def on_episode_finish_updates(current_goal, success, start_position):
     remaining[current_goal] -= int(success)
     remaining[current_goal] = max(remaining[current_goal], 0)
     app.storage.user[key] = remaining
+    logger.info(f"remaining {key} counts: {remaining}")
   else:
     logger.info(f"{key} not found. storage: {app.storage.user}")
 
   ################################
   # Update number of times position seen
   ################################
-  key = f"{stage_idx}_remaining_start_positions"
+  key = f"{stage_idx}_goal_{int(current_goal)}_remaining_start_positions"
   remaining = app.storage.user.get(key)
   if remaining:
     start_position = str(start_position)
     remaining[start_position] -= 1
     remaining[start_position] = max(remaining[start_position], 0)
     app.storage.user[key] = remaining
+    logger.info(f"remaining {key} counts: {remaining}")
   else:
     logger.info(f"{key} not found. storage: {app.storage.user}")
 

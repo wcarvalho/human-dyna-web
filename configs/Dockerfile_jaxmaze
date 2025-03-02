@@ -10,5 +10,8 @@ COPY . /app
 
 RUN pip install -e libraries/housemaze -e libraries/nicewebrl -e libraries/jaxneurorl -r requirements.txt
 
+ENV PYTHONUNBUFFERED=1
+ENV LOG_LEVEL=DEBUG
 
-CMD ["python", "jaxmaze_web_app.py"]
+
+CMD ["python", "housemaze_web_app.py"]
