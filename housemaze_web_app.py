@@ -42,7 +42,7 @@ NAME = os.environ.get("NAME", "exp")
 DEBUG = int(os.environ.get("DEBUG", 0))
 DEBUG_SEED = int(os.environ.get("SEED", 0))
 EXPERIMENT = int(os.environ.get("EXP", 4))
-LIGHT = int(os.environ.get("LIGHT", 0))
+UPLOAD_DATA = int(os.environ.get("UPLOAD_DATA", 1))
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
@@ -249,13 +249,10 @@ async def save_data(final_save=True, feedback=None, **kwargs):
       user_storage=user_storage,
       **kwargs,
     )
-    async with aiofiles.open(user_data_file, "ab") as f:  # Changed to binary mode
-      # Use msgpack to serialize the data
-      packed_data = msgpack.packb(last_line)
-      await f.write(packed_data)
-      await f.write(b"\n")  # Add newline in binary mode
+    async with aiofiles.open(user_data_file, "ab") as f:
+      await nicewebrl.write_msgpack_record(f, last_line)
 
-  if not DEBUG:
+  if UPLOAD_DATA:
     files_to_save = [
       (user_data_file, f"data/{blob_user_filename()}.json"),
       (

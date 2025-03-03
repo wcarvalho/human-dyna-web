@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from absl import logging
 from flax import serialization
+import nicewebrl
 
 import jax.tree_util as jtu
 from housemaze import utils
@@ -215,14 +216,17 @@ def get_valid_files(
 
 
 def get_timestep(datum, example_timestep):
-  timestep = nicejax.deserialize_bytes(
-    cls=multitask_env.TimeStep, encoded_data=datum["data"]["timestep"]
-  )
-
-  # `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
-  timestep = nicejax.match_types(example=example_timestep, data=timestep)
-
+  timestep = datum["data"]["timestep"]
+  timestep = serialization.from_bytes(example_timestep, timestep)
   return timestep
+  #timestep = nicejax.deserialize_bytes(
+  #  cls=multitask_env.TimeStep, encoded_data=datum["data"]["timestep"]
+  #)
+
+  ## `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
+  #timestep = nicejax.match_types(example=example_timestep, data=timestep)
+
+  #return timestep
 
 
 def time_diff(t1, t2) -> float:
@@ -323,6 +327,7 @@ def make_row(
   timesteps: multitask_env.TimeStep,
   file: str,
   episode_info: Optional[dict],
+  user_storage: dict, 
 ):
   """THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
 
@@ -362,28 +367,32 @@ def make_row(
     new_vals["exp_name"] = new_vals.pop("name")
   row.update(new_vals)
 
+
   ####################
   # add version, tell_reuse, timer
   ####################
-  name = new_vals.get("exp_name")
-  if name is not None:
-    # example 'exp4-v1-r1-t0-plan'
-    # split on '-' and take the first element
-    # if v--> version
-    # if r--> tell_reuse
-    # if t--> timer
-    # if there's a word at the end, it's the manipulation
-    # create a dictionary according to this legend
-    legend = dict(v="version", r="tell_reuse", t="timer")
-    name_info = dict()
-    for k, v in legend.items():
-      if k in name:
-        name_info[v] = name.split(k)[1].split("-")[0]
-    row.update(name_info)
-  # Convert all numeric strings to integers
-  for key, value in row.items():
-    if isinstance(value, str) and value.isdigit():
-      row[key] = int(value)
+  #name = new_vals.get("exp_name")
+  #if name is not None:
+  #  # example 'exp4-v1-r1-t0-plan'
+  #  # split on '-' and take the first element
+  #  # if v--> version
+  #  # if r--> tell_reuse
+  #  # if t--> timer
+  #  # if there's a word at the end, it's the manipulation
+  #  # create a dictionary according to this legend
+  #  legend = dict(v="version", r="tell_reuse", t="timer")
+  #  name_info = dict()
+  #  for k, v in legend.items():
+  #    if k in name:
+  #      name_info[v] = name.split(k)[1].split("-")[0]
+  #  print(name_info)
+  #  row.update(name_info)
+  ## Convert all numeric strings to integers
+  #for key, value in row.items():
+  #  if isinstance(value, str) and value.isdigit():
+  #    row[key] = int(value)
+  env_vars = user_storage.get("env_vars", {})
+  row['tell_reuse'] = env_vars.get("SAY_REUSE", 0)
   reversal = datum["metadata"]["block_metadata"].get("reversal", [False, False])
   row["reversal"] = reversal_label(reversal)
 
@@ -517,6 +526,7 @@ def make_episode_data(
   overwrite_episode_data: bool = False,
   overwrite_episode_info: bool = False,
   verbose: bool = False,
+  require_finished: bool = True,
 ):
   """This groups all of the data by block/stage information and prepares
       (1) a list of EpisodeData objects per block/stage
@@ -524,13 +534,18 @@ def make_episode_data(
 
   The dataframe can be used to get indices into the list of EpisodeData for further computation.
   """
-  data = read_dict_list_from_file(file)
+  try:
+    data = nicewebrl.read_all_records_sync(file)
+  except Exception as e:
+    logging.warning(f"Failed to read records from {file}: {str(e)}")
+    return None, None
 
   if len(data) == 0:
     return None, None
 
-  finished = data[-1].get("finished", False)
-  if not finished:
+  file_metadata = data[-1]
+  finished = file_metadata.get("finished", False)
+  if require_finished and not finished:
     return None, None
   if debug:
     n = max(1, int(len(data) * 0.05))
@@ -663,6 +678,7 @@ def make_episode_data(
         episode_info=gd_infos[key],
         timesteps=timesteps,
         file=file,
+        user_storage=file_metadata.get("user_storage", {}),
       )
 
       reaction_times = [compute_reaction_time(datum) for datum in raw_episode_data]
@@ -777,6 +793,7 @@ def make_all_episode_data(
   debug=False,
   overwrite_episode_data=False,
   overwrite_episode_info=False,
+  require_finished: bool = True,
 ):
   def process_file(file):
     return make_episode_data(
@@ -785,6 +802,7 @@ def make_all_episode_data(
       overwrite_episode_data=overwrite_episode_data,
       overwrite_episode_info=overwrite_episode_info,
       debug=debug,
+      require_finished=require_finished,
     )
 
   if debug:
@@ -826,7 +844,7 @@ def create_maps(episode_data_list: List[EpisodeData]):
 
 
 def get_human_data(
-  valid_files, overwrite_episode_data=False, overwrite_episode_info=True
+  valid_files, overwrite_episode_data=False, overwrite_episode_info=True, require_finished: bool = True
 ):
   from experiment_utils import SuccessTrackingAutoResetWrapper
 
@@ -851,6 +869,7 @@ def get_human_data(
     example_timestep=example_web_timestep,
     overwrite_episode_data=overwrite_episode_data,
     overwrite_episode_info=overwrite_episode_info,
+    require_finished=require_finished,
   )
 
   def bad_episode(e):

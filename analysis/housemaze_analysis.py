@@ -1751,6 +1751,7 @@ def experiment_4_results(
   display_figs: bool = False,
   save_figs: bool = True,
   verbosity: int = 0,
+  tell_reuse_options=[1,0],
 ):
   """Analyze results from experiment 4.
 
@@ -1816,7 +1817,7 @@ def experiment_4_results(
   ]
   for setting in ["short", "long"]:
     stats_file.write(f"\n\n=================={setting}===================\n")
-    for tell_reuse in [1, 0]:
+    for tell_reuse in tell_reuse_options:
       if idx > 2:
         break
       difference_df = compute_condition_difference_df(

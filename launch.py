@@ -2,7 +2,7 @@ import subprocess
 import argparse
 
 
-def launch_experiment(name, environment, env_vars, count=8, scale=False):
+def launch_experiment(name, environment, env_vars, count=8):
   # Construct the flyctl launch command
   launch_cmd = [
     "flyctl",
@@ -29,7 +29,7 @@ def launch_experiment(name, environment, env_vars, count=8, scale=False):
   subprocess.run(deploy_cmd, check=True)
 
   # Scale the application
-  if scale:
+  if count > 0:
     scale_cmd = [
       "flyctl",
       "scale",
@@ -49,7 +49,7 @@ if __name__ == "__main__":
   parser.add_argument(
     "--env", action="append", help="Environment variables in the format KEY=VALUE")
   parser.add_argument(
-    "--scale", type=int, default=1, help="Number of machines to scale to")
+    "--scale", type=int, default=4, help="Number of machines to scale to")
 
   args = parser.parse_args()
 
@@ -59,4 +59,4 @@ if __name__ == "__main__":
     for env in args.env:
       env_vars.extend(["--env", env])
 
-  launch_experiment(args.name, args.environment, env_vars, scale=args.scale)
+  launch_experiment(args.name, args.environment, env_vars, count=args.scale)

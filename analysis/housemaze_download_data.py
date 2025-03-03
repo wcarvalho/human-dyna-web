@@ -115,14 +115,13 @@ sf_local_dir = f"{local_dir}/{sf_dir}"
 dyna_local_dir = f"{local_dir}/{dyna_dir}"
 
 if __name__ == "__main__":
-  pass
-  # download_user_files(bucket_name, prefix, human_data_pattern, destination_folder)
-  download_model_files(
-    base_server_dir=server_dir,
-    base_local_dir=local_dir,
-    dir_list=[
-      # qlearning_dir,
-      sf_dir,
-      # dyna_dir,
-    ],
-  )
+  download_user_files(bucket_name, prefix, human_data_pattern, destination_folder)
+  #download_model_files(
+  #  base_server_dir=server_dir,
+  #  base_local_dir=local_dir,
+  #  dir_list=[
+  #    # qlearning_dir,
+  #    sf_dir,
+  #    # dyna_dir,
+  #  ],
+  #)

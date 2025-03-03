@@ -39,7 +39,7 @@ DATA_DIR = os.environ.get("DATA_DIR", "data")
 
 # USE_REVERSALS = int(os.environ.get('REV', 0))
 # EVAL_OBJECTS = int(os.environ.get('EVAL_OBJECTS', 1))
-FEEDBACK = int(os.environ.get("FEEDBACK", 1))
+FEEDBACK = int(os.environ.get("FEEDBACK", 0))
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 1))
 COND2_TRAIN = int(os.environ.get("COND2_TRAIN", 1))
 TIMER = int(os.environ.get("TIMER", 0))
