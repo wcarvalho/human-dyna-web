@@ -489,7 +489,7 @@ def make_env_stage(
     display_fn=env_stage_display_fn,
     evaluate_success_fn=lambda t, params: int(t.reward > 0.5),
     check_finished=lambda t: t.finished,
-    #state_cls=EnvStageState,
+    # state_cls=EnvStageState,
     max_episodes=max_episodes,
     min_success=min_success,
     metadata=metadata,
@@ -522,19 +522,25 @@ def make_block(
   appendix: str = "",
 ):
   block_name = metadata.get("desc", "block")
+
   def create_stage(name, title, body):
     return Stage(
-      name=name,
-      title=title,
-      body=body,
-      display_fn=stage_instructions_display_fn)
+      name=name, title=title, body=body, display_fn=stage_instructions_display_fn
+    )
 
   make_env_kwargs = make_env_kwargs or {}
   phase2_cond1_env_kwargs = phase2_cond1_env_kwargs or {}
   phase2_cond2_env_kwargs = phase2_cond2_env_kwargs or {}
 
   def create_env_stage(
-    name, maze_name, training, min_success, max_episodes, duration=None, extra_apppendix='', **kwargs
+    name,
+    maze_name,
+    training,
+    min_success,
+    max_episodes,
+    duration=None,
+    extra_apppendix="",
+    **kwargs,
   ):
     all_kwargs = dict(
       name=f"{name}_{appendix}_{extra_apppendix}",
@@ -552,7 +558,7 @@ def make_block(
 
   phase2_cond1_kwargs = dict(
     name=phase_2_cond1_name or phase_2_cond1_maze_name,
-    extra_apppendix='train',
+    extra_apppendix="train",
     maze_name=phase_2_cond1_maze_name,
     metadata=dict(maze=phase_2_cond1_maze_name + appendix, condition=1),
     training=False,
@@ -565,12 +571,10 @@ def make_block(
   )
   phase2_cond1_kwargs.update(phase2_cond1_env_kwargs)
   stages = [
-    create_stage(
-      name=f"{block_name} Phase 1",
-      title="Phase 1", body=phase_1_text),
+    create_stage(name=f"{block_name} Phase 1", title="Phase 1", body=phase_1_text),
     create_env_stage(
       name=phase_1_maze_name,
-      extra_apppendix='eval1',
+      extra_apppendix="eval1",
       maze_name=phase_1_maze_name,
       metadata=dict(maze=phase_1_maze_name + appendix, condition=0),
       training=True,
@@ -578,9 +582,7 @@ def make_block(
       min_success=min_success or min_success_train,
       max_episodes=max_episodes or max_episodes_train,
     ),
-    create_stage(
-      name=f"{block_name} Phase 2",
-      title="Phase 2", body=phase_2_text),
+    create_stage(name=f"{block_name} Phase 2", title="Phase 2", body=phase_2_text),
     create_env_stage(**phase2_cond1_kwargs),
   ]
   randomize = []
@@ -588,7 +590,7 @@ def make_block(
     randomize = [False, False, False, True, True]
     phase2_cond2_kwargs = dict(
       name=phase_2_cond2_name or phase_2_cond2_maze_name,
-      extra_apppendix='eval2',
+      extra_apppendix="eval2",
       maze_name=phase_2_cond2_maze_name,
       metadata=dict(maze=phase_2_cond2_maze_name + appendix, condition=2),
       training=False,
@@ -900,9 +902,7 @@ elif MAN == "paths":  # paths manipulation (3)
       )
     )
 elif MAN == "plan":  # planning manipulation (4)
-  manipulations = [
-    create_plan_manipulation_block(r, "short") for r in reversals
-    ] + [
+  manipulations = [create_plan_manipulation_block(r, "short") for r in reversals] + [
     create_plan_manipulation_block(r, "long") for r in reversals
   ]
 elif MAN == "shortcut":  # shortcut manipulation (1)
@@ -947,19 +947,19 @@ instruct_block = Block(
 )
 
 all_blocks = []
-#randomize = []
+# randomize = []
 if GIVE_INSTRUCTIONS:
   all_blocks.extend([instruct_block, create_practice_block()])
-  #randomize.extend([False, False])
+  # randomize.extend([False, False])
 
 all_blocks.extend(manipulations + feedback_block)
-#randomize.extend([True] * len(manipulations + feedback_block))
+# randomize.extend([True] * len(manipulations + feedback_block))
 
-#experiment = nicewebrl.Experiment(
+# experiment = nicewebrl.Experiment(
 #  blocks=all_blocks,
 #  randomize=randomize,
 #  name=f'jaxmaze_experiment_{NAME}',
-#)
+# )
 all_stages = stages.prepare_blocks(all_blocks)
 
 ##########################

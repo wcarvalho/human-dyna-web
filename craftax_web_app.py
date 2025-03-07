@@ -196,6 +196,7 @@ def blob_user_filename():
   else:
     return f"user={seed}_name={NAME}_debug={DEBUG}"
 
+
 async def global_handle_key_press(e, container):
   """Define global key press handler
 
@@ -509,7 +510,9 @@ async def finish_experiment(meta_container, stage_container, button_container):
     nicewebrl.clear_element(meta_container)
     ui.markdown("# Experiment over")
     ui.markdown("## Data saved")
-    ui.markdown("### Please record the following code which you will need to provide for compensation")
+    ui.markdown(
+      "### Please record the following code which you will need to provide for compensation"
+    )
     ui.markdown("### 'gershman.craftax'")
     ui.markdown("#### You may close the browser")
 

@@ -215,7 +215,9 @@ def sample_goal_and_position(
     min_samples=min_samples_per_location,
     num_dimensions=num_start_locations,
   )
-  logger.info(f"sampled: {start_position} for goal {goal}. prior start position counts: {remaining_counts}")
+  logger.info(
+    f"sampled: {start_position} for goal {goal}. prior start position counts: {remaining_counts}"
+  )
   app.storage.user[key] = remaining_counts
 
   return goal, start_position
@@ -431,7 +433,9 @@ if PRECOMPILE:
 
 def evaluate_success_fn(timestep: nicewebrl.TimeStep, params: EnvParams):
   success = timestep.reward > 0.5 and timestep.last() > 0
-  on_episode_finish_updates(timestep.state.current_goal, success, timestep.state.start_position)
+  on_episode_finish_updates(
+    timestep.state.current_goal, success, timestep.state.start_position
+  )
   return success
 
 
@@ -1296,17 +1300,17 @@ randomize.extend([True] * len(experiment_blocks))
 experiment = nicewebrl.Experiment(
   blocks=all_blocks,
   randomize=randomize,
-  name=f'craftax_experiment_{NAME}',
+  name=f"craftax_experiment_{NAME}",
 )
 
-#all_stages = [stage for block in all_blocks for stage in block.stages]
+# all_stages = [stage for block in all_blocks for stage in block.stages]
 
 ###########################
 ## generating block order
 ###########################
 
 
-#def generate_block_order(rng_key):
+# def generate_block_order(rng_key):
 #  """Take blocks defined above and generate a random order"""
 #  fixed_blocks = []
 #  offset = 0

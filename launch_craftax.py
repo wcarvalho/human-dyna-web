@@ -2,17 +2,25 @@ import subprocess
 import argparse
 
 
-def launch_experiment(name, environment, env_vars, memory=16, scale: bool = True, count=8):
+def launch_experiment(
+  name, environment, env_vars, memory=16, scale: bool = True, count=8
+):
   # Construct the flyctl launch command
   launch_cmd = [
     "flyctl",
     "launch",
-    "--dockerfile", f"Dockerfile_{environment}",
-    "--name", f"human-dyna-{environment}-{name}",
-    "--config", f"configs/human-dyna-{environment}-{name}.toml",
-    "--vm-size", "performance-8x",
-    "--vm-memory", str(1024 * memory),
-    "--wait-timeout", "20m0s",
+    "--dockerfile",
+    f"Dockerfile_{environment}",
+    "--name",
+    f"human-dyna-{environment}-{name}",
+    "--config",
+    f"configs/human-dyna-{environment}-{name}.toml",
+    "--vm-size",
+    "performance-8x",
+    "--vm-memory",
+    str(1024 * memory),
+    "--wait-timeout",
+    "20m0s",
     "--yes",
   ]
   launch_cmd.extend(env_vars)
@@ -42,9 +50,12 @@ def launch_experiment(name, environment, env_vars, memory=16, scale: bool = True
     scale_cmd = [
       "flyctl",
       "scale",
-      "count", str(count),
-      "--config", f"configs/human-dyna-{environment}-{name}.toml",
-      "--region", "iad,sea,lax,den",
+      "count",
+      str(count),
+      "--config",
+      f"configs/human-dyna-{environment}-{name}.toml",
+      "--region",
+      "iad,sea,lax,den",
       "--yes",
     ]
     subprocess.run(scale_cmd, check=True)

@@ -136,6 +136,7 @@ async def collect_demographic_info(container):
     ui.button("Submit", on_click=submit)
     await collected_demographic_info_event.wait()
 
+
 ########################
 # Utility functions
 ########################
@@ -233,7 +234,9 @@ async def finish_experiment(meta_container, stage_container, button_container):
     clear_element(meta_container)
     ui.markdown("# Experiment over")
     ui.markdown("## Data saved")
-    ui.markdown("### Please record the following code which you will need to provide for compensation")
+    ui.markdown(
+      "### Please record the following code which you will need to provide for compensation"
+    )
     ui.markdown("### 'gershman.dyna'")
     ui.markdown("#### You may close the browser")
 
@@ -451,6 +454,7 @@ async def start_experiment(meta_container, stage_container, button_container):
 
   await finish_experiment(meta_container, stage_container, button_container)
 
+
 async def try_to_make_fullscreen():
   if DEBUG > 0:
     return True
@@ -538,127 +542,6 @@ async def run_stage(stage, stage_container, button_container):
 
   await stage_over_event.wait()
   nicewebrl.clear_element(button_container)
-
-#async def run_stage(stage, stage_container, button_container):
-#  #########
-#  # create functions for handling key and button presses
-#  # Create an event to signal when the stage is over
-#  #########
-#  stage_over_event = asyncio.Event()
-
-#  async def local_handle_key_press():
-#    async with get_user_lock():
-#      if stage.get_user_data("finished", False):
-#        # Signal that the stage is over
-#        logger.info(f"Finished {stage_name(stage)} via key press")
-#        stage_over_event.set()
-
-#  async def handle_button_press():
-#    if DEBUG == 0 and not await nicewebrl.utils.check_fullscreen():
-#      ui.run_javascript("await document.documentElement.requestFullscreen()")
-#      await asyncio.sleep(1)
-#      ui.notify("Please stay in fullscreen mode to continue experiment", type="negative")
-#      logger.info("Button press but not fullscreen")
-#      return
-#    if stage.get_user_data("finished", False):
-#      return
-#    # clear_element(button_container)
-#    await stage.handle_button_press(stage_container)
-#    async with get_user_lock():
-#      if stage.get_user_data("finished", False):
-#        # Signal that the stage is over
-#        logger.info(f"Finished {stage_name(stage)} via button press")
-#        stage_over_event.set()
-
-#  async def update_countdown(countdown_label):
-#    if stage.get_user_data("finished", False):
-#      # clear_element(button_container)
-#      return
-#    current_end_time = app.storage.user[f"{stage_idx}_end"]
-
-#    if not isinstance(current_end_time, datetime):
-#      current_end_time = datetime.fromisoformat(current_end_time)
-#    remaining = current_end_time - datetime.now()
-
-#    if remaining.total_seconds() <= 0:
-#      # clear_element(button_container)
-#      notification = ui.notification(
-#        "The timer has run out.", position="center", type="info"
-#      )
-#      await stage.finish_stage()
-
-#      with button_container:
-#        button = ui.button("click to continue")
-#        await wait_for_button_or_keypress(button)
-#        notification.dismiss()
-
-#      async with get_user_lock():
-#        if stage.get_user_data("finished", False):
-#          logger.info(f"Finished {stage_name(stage)} via timer")
-#          stage_over_event.set()
-
-#    else:
-#      countdown_label.set_text(f"Seconds left: {remaining.seconds:02d}")
-
-#  #############################################
-#  # Activate new stage
-#  #############################################
-#  with stage_container.style("align-items: center;"):
-#    await stage.activate(stage_container)
-
-#  if stage.get_user_data("finished", False):
-#    # over as soon as stage activation was complete
-#    logger.info(f"Finished {stage_name(stage)} immediately after activation")
-#    stage_over_event.set()
-
-#  await stage.set_user_data(local_handle_key_press=local_handle_key_press)
-
-#  with button_container.style("align-items: center;"):
-#    clear_element(button_container)
-#    ####################
-#    # Timer
-#    ####################
-#    if stage.duration:
-#      # get ending
-#      default_end_time = datetime.now() + timedelta(seconds=stage.duration)
-
-#      # either re-use stored end time, or if none, use end time above
-#      stage_idx = app.storage.user["stage_idx"]
-#      app.storage.user[f"{stage_idx}_end"] = app.storage.user.get(
-#        f"{stage_idx}_end", default_end_time
-#      )
-#      with ui.element("div").classes("p-2 bg-orange-100"):
-#        countdown_label = ui.label(f"Seconds left: {stage.duration}")
-#        ui.timer(0.1, lambda: update_countdown(countdown_label))
-
-#    ####################
-#    # Button to go to next page
-#    ####################
-#    checking_fullscreen = DEBUG == 0
-#    next_button_container = ui.row()
-
-#    async def create_button_and_wait():
-#      with next_button_container:
-#        clear_element(next_button_container)
-#        button = ui.button("Next page").bind_visibility_from(stage, "next_button")
-#        await wait_for_button_or_keypress(button)
-#        logger.info("Button or key pressed")
-#        await handle_button_press()
-
-#    if stage.next_button:
-#      if checking_fullscreen:
-#        await create_button_and_wait()
-#        while not await nicewebrl.utils.check_fullscreen():
-#          if await stage_over_event.wait():
-#            break
-#          logger.info("Waiting for fullscreen")
-#          await asyncio.sleep(0.1)
-#          await create_button_and_wait()
-#      else:
-#        await create_button_and_wait()
-
-#  await stage_over_event.wait()
-#  nicewebrl.clear_element(button_container)
 
 
 #####################################

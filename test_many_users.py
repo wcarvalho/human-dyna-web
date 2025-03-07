@@ -53,8 +53,10 @@ async def control_browser(context_number):
 
           # Check for "Experiment over" text
           if await page.locator("text='Experiment over'").is_visible():
-              print(f"Browser {context_number}: Experiment over detected. Closing browser.")
-              break  # Exit the loop to close the browser
+            print(
+              f"Browser {context_number}: Experiment over detected. Closing browser."
+            )
+            break  # Exit the loop to close the browser
 
           try:
             button = page.locator('button:has-text("START")')

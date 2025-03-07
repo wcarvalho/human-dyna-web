@@ -116,7 +116,7 @@ dyna_local_dir = f"{local_dir}/{dyna_dir}"
 
 if __name__ == "__main__":
   download_user_files(bucket_name, prefix, human_data_pattern, destination_folder)
-  #download_model_files(
+  # download_model_files(
   #  base_server_dir=server_dir,
   #  base_local_dir=local_dir,
   #  dir_list=[
@@ -124,4 +124,4 @@ if __name__ == "__main__":
   #    sf_dir,
   #    # dyna_dir,
   #  ],
-  #)
+  # )

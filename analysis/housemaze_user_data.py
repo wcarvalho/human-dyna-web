@@ -219,14 +219,14 @@ def get_timestep(datum, example_timestep):
   timestep = datum["data"]["timestep"]
   timestep = serialization.from_bytes(example_timestep, timestep)
   return timestep
-  #timestep = nicejax.deserialize_bytes(
+  # timestep = nicejax.deserialize_bytes(
   #  cls=multitask_env.TimeStep, encoded_data=datum["data"]["timestep"]
-  #)
+  # )
 
   ## `deserialize_bytes` infers the types so it might be slightly wrong. you can enforce the correct types by matching them to example data.
-  #timestep = nicejax.match_types(example=example_timestep, data=timestep)
+  # timestep = nicejax.match_types(example=example_timestep, data=timestep)
 
-  #return timestep
+  # return timestep
 
 
 def time_diff(t1, t2) -> float:
@@ -327,7 +327,7 @@ def make_row(
   timesteps: multitask_env.TimeStep,
   file: str,
   episode_info: Optional[dict],
-  user_storage: dict, 
+  user_storage: dict,
 ):
   """THIS IS WHERE YOU'LL WANT TO INSERT OTHER EPISODE LEVEL INFO TO TRACK IN DATAFRAME!!!
 
@@ -367,12 +367,11 @@ def make_row(
     new_vals["exp_name"] = new_vals.pop("name")
   row.update(new_vals)
 
-
   ####################
   # add version, tell_reuse, timer
   ####################
-  #name = new_vals.get("exp_name")
-  #if name is not None:
+  # name = new_vals.get("exp_name")
+  # if name is not None:
   #  # example 'exp4-v1-r1-t0-plan'
   #  # split on '-' and take the first element
   #  # if v--> version
@@ -388,11 +387,11 @@ def make_row(
   #  print(name_info)
   #  row.update(name_info)
   ## Convert all numeric strings to integers
-  #for key, value in row.items():
+  # for key, value in row.items():
   #  if isinstance(value, str) and value.isdigit():
   #    row[key] = int(value)
   env_vars = user_storage.get("env_vars", {})
-  row['tell_reuse'] = env_vars.get("SAY_REUSE", 0)
+  row["tell_reuse"] = int(env_vars.get("SAY_REUSE", 0))
   reversal = datum["metadata"]["block_metadata"].get("reversal", [False, False])
   row["reversal"] = reversal_label(reversal)
 
@@ -469,7 +468,7 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
 
         # Store the reuse value
         episode_id = (test_maze, global_index)
-        reuse_dict[episode_id] = overlap.mean() > overlap_threshold
+        reuse_dict[episode_id] = int(overlap.mean() > overlap_threshold)
 
   # -----------------
   # paths manipulation (3)
@@ -514,7 +513,7 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
     ]
   )
   # Add the new column to the DataFrame
-  new_df = df.with_columns([pl.Series("reuse", reuse_values).cast(pl.Boolean)])
+  new_df = df.with_columns([pl.Series("reuse", reuse_values).cast(pl.Int32)])
 
   return new_df
 
@@ -540,7 +539,7 @@ def make_episode_data(
     logging.warning(f"Failed to read records from {file}: {str(e)}")
     return None, None
 
-  if len(data) == 0:
+  if len(data) < 2:
     return None, None
 
   file_metadata = data[-1]
@@ -794,20 +793,28 @@ def make_all_episode_data(
   overwrite_episode_data=False,
   overwrite_episode_info=False,
   require_finished: bool = True,
+  parallel: bool = True,
 ):
   def process_file(file):
-    return make_episode_data(
-      file,
-      example_timestep,
-      overwrite_episode_data=overwrite_episode_data,
-      overwrite_episode_info=overwrite_episode_info,
-      debug=debug,
+    try:
+      return make_episode_data(
+        file,
+        example_timestep,
+        overwrite_episode_data=overwrite_episode_data,
+        overwrite_episode_info=overwrite_episode_info,
+        debug=debug,
       require_finished=require_finished,
-    )
+      )
+    except Exception as e:
+      logging.error(f"Error processing file {file}: {e}")
+      return None, None
 
   if debug:
     files = files[: max(int(len(files) * 0.1), 10)]
-  results = Parallel(n_jobs=-1)(delayed(process_file)(file) for file in files)
+  if parallel:
+    results = Parallel(n_jobs=-1)(delayed(process_file)(file) for file in files)
+  else:
+    results = [process_file(file) for file in files]
 
   all_episode_data = []
   episode_df_list = []
@@ -844,7 +851,10 @@ def create_maps(episode_data_list: List[EpisodeData]):
 
 
 def get_human_data(
-  valid_files, overwrite_episode_data=False, overwrite_episode_info=True, require_finished: bool = True
+  valid_files,
+  overwrite_episode_data=False,
+  overwrite_episode_info=True,
+  require_finished: bool = True,
 ):
   from experiment_utils import SuccessTrackingAutoResetWrapper
 

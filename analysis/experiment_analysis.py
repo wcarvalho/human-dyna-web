@@ -1,5 +1,5 @@
 """
-Functions for 
+Functions for
 (1) plotting experimental results
 (2) doing power analysis
 """
@@ -27,7 +27,8 @@ DEFAULT_TITLE_SIZE = 14
 DEFAULT_LABEL_SIZE = 12
 DEFAULT_LEGEND_SIZE = 10
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
+
 default_colors = {
   "reddish purple": (204 / 255, 121 / 255, 167 / 255),
   "yellow": (240 / 255, 228 / 255, 66 / 255),
@@ -47,15 +48,15 @@ default_colors = {
   "white": "#FFFFFF",
 }
 
-default_colors['new_path'] = default_colors["nice purple"]
-default_colors['reuse'] = default_colors["bluish green"]
+default_colors["new_path"] = default_colors["nice purple"]
+default_colors["reuse"] = default_colors["bluish green"]
 
 model_colors = {
   #'human_success': '#0072B2',
   "human": default_colors["orange"],
   #'human_terminate': '#D55E00',
-  "usfa": default_colors["light gray"],
-  "qlearning": default_colors["dark gray"],
+  "usfa": default_colors["nice purple"],
+  "qlearning": default_colors["purple"],
   "dynaq_shared": default_colors["vermillion"],
   "bfs": default_colors["pretty blue"],
   "dfs": default_colors["sky blue"],
@@ -102,39 +103,39 @@ measures = [
   "log_max_final_rt",
 ]
 measure_to_title = {
-    "success": "Success Rate",
-    "path_length": "Path Length",
-    "termination": "Task Completion Rate",
-    "log_first_rt": "First Action Response Time",
-    "log_avg_rt": "Average Response Time",
-    "log_total_rt": "Total Response Time",
-    "log_avg_post_rt": "Post First Action Average Response Time",
-    "log_max_rt": "Maximum Response Time",
-    "log_max_post_rt": "Post First Action Maximum Response Time",
-    "log_max_init_post_rt": "Initial Post First Action Maximum Response Time",
-    "log_max_end_rt": "End-Phase Maximum Response Time",
-    "log_max_final_rt": "Final Maximum Response Time"
+  "success": "Success Rate",
+  "path_length": "Path Length",
+  "termination": "Task Completion Rate",
+  "log_first_rt": "First Action Response Time",
+  "log_avg_rt": "Average Response Time",
+  "log_total_rt": "Total Response Time",
+  "log_avg_post_rt": "Post First Action Average Response Time",
+  "log_max_rt": "Maximum Response Time",
+  "log_max_post_rt": "Post First Action Maximum Response Time",
+  "log_max_init_post_rt": "Initial Post First Action Maximum Response Time",
+  "log_max_end_rt": "End-Phase Maximum Response Time",
+  "log_max_final_rt": "Final Maximum Response Time",
 }
 
 measure_to_ylabel = {
-    "success": "Success Rate (%)",
-    "path_length": "Number of Steps",
-    "termination": "Completion Rate (%)",
-    "log_first_rt": "Log Response Time (milliseconds)",
-    "log_avg_rt": "Log Response Time (milliseconds)",
-    "log_total_rt": "Log Response Time (milliseconds)",
-    "log_avg_post_rt": "Log Response Time (milliseconds)",
-    "log_max_rt": "Log Response Time (milliseconds)",
-    "log_max_post_rt": "Log Response Time (milliseconds)",
-    "log_max_init_post_rt": "Log Response Time (milliseconds)",
-    "log_max_end_rt": "Log Response Time (milliseconds)",
-    "log_max_final_rt": "Log Response Time (milliseconds)"
+  "success": "Success Rate (%)",
+  "path_length": "Number of Steps",
+  "termination": "Completion Rate (%)",
+  "log_first_rt": "Log Response Time (milliseconds)",
+  "log_avg_rt": "Log Response Time (milliseconds)",
+  "log_total_rt": "Log Response Time (milliseconds)",
+  "log_avg_post_rt": "Log Response Time (milliseconds)",
+  "log_max_rt": "Log Response Time (milliseconds)",
+  "log_max_post_rt": "Log Response Time (milliseconds)",
+  "log_max_init_post_rt": "Log Response Time (milliseconds)",
+  "log_max_end_rt": "Log Response Time (milliseconds)",
+  "log_max_final_rt": "Log Response Time (milliseconds)",
 }
 
 
 class EpisodeData(NamedTuple):
   actions: jax.Array
-  timesteps: struct.PyTreeNode 
+  timesteps: struct.PyTreeNode
   positions: jax.Array = None
   reaction_times: jax.Array = None
   transitions: struct.PyTreeNode = None
@@ -284,7 +285,7 @@ def plot_bar_rt_comparison(
   reuse_column: str = "reuse",
   stats_file=None,
   percentile_ylim: bool = True,
-  n_simulations: int = 1,
+  n_simulations: int = 1000,
 ):
   """Plot comparison of reaction times between multiple conditions.
 
@@ -309,16 +310,59 @@ def plot_bar_rt_comparison(
   len_after = len(df)
   print(f"Filtered {len_before - len_after} rows with null success or reuse")
 
-  if 'rt' in rt_column:
-    power_results = power_analysis_rt_across_groups(
-      df, measure=rt_column, reuse_column=reuse_column, stats_file=stats_file, n_simulations=n_simulations
-    )
-  elif 'path_length' in rt_column:
-    power_results = power_analysis_path_length_across_groups(
-      df, measure=rt_column, reuse_column=reuse_column, stats_file=stats_file, n_simulations=n_simulations
-    )
-  else:
-    raise ValueError(f"Unknown rt_column: {rt_column}")
+  power_results = None
+  if stats_file is not None:
+    import os
+    import pickle
+
+    # Create a unique cache key based on the analysis parameters
+    cache_key = f"{rt_column}_{reuse_column}_{n_simulations}"
+    cache_path = f"{stats_file}.{cache_key}.pkl"
+
+    if os.path.exists(cache_path):
+      print(f"Loading cached results from {cache_path}")
+      try:
+        with open(cache_path, 'rb') as f:
+          power_results = pickle.load(f)
+      except Exception as e:
+        print(f"Error loading cache: {e}")
+        power_results = None
+
+  # Run analysis if no cached results
+  if power_results is None:
+    if "rt" in rt_column:
+      power_results = power_analysis_rt_across_groups(
+        df,
+        measure=rt_column,
+        reuse_column=reuse_column,
+        stats_file=stats_file,
+        n_simulations=n_simulations,
+      )
+    elif "path_length" in rt_column:
+      power_results = power_analysis_path_length_across_groups(
+        df,
+        measure=rt_column,
+        reuse_column=reuse_column,
+        stats_file=stats_file,
+        n_simulations=n_simulations,
+      )
+    else:
+      raise ValueError(f"Unknown rt_column: {rt_column}")
+    
+    # Save results to cache if cache_file is provided
+    if cache_file is not None:
+      import os
+      import pickle
+      
+      # Create directory if it doesn't exist
+      os.makedirs(os.path.dirname(cache_file) if os.path.dirname(cache_file) else '.', exist_ok=True)
+      
+      cache_key = f"{rt_column}_{reuse_column}_{n_simulations}"
+      cache_path = f"{cache_file}_{cache_key}.pkl"
+      
+      print(f"Saving results to {cache_path}")
+      with open(cache_path, 'wb') as f:
+        pickle.dump(power_results, f)
 
   means = (
     power_results["descriptive"]["means"]["no_reuse"],
@@ -331,7 +375,7 @@ def plot_bar_rt_comparison(
 
   # Create bar plot
   x_pos = np.arange(len(means))
-  colors=[default_colors["nice purple"], default_colors["bluish green"]]
+  colors = [default_colors["nice purple"], default_colors["bluish green"]]
   ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[: len(means)])
 
   # Add individual points with jitter
@@ -458,7 +502,12 @@ def plot_rt_differences(
     )
     means.append(results["mean"])
     sems.append(results["se"])
-    all_diffs.append(difference_df[measure].to_numpy())
+
+    # Get user-wide means instead of all individual data points
+    user_means = (
+      difference_df.group_by("user_id").agg(pl.col(measure).mean()).select(measure)
+    )
+    all_diffs.append(user_means.to_numpy().flatten())
 
   # Create/get axis
   if ax is None:
@@ -477,7 +526,7 @@ def plot_rt_differences(
     error_kw=dict(ecolor=default_colors["vermillion"]),
   )
 
-  # Add individual points with jitter
+  # Add individual points with jitter (now showing user means)
   for i, diffs in enumerate(all_diffs):
     x_jitter = np.random.normal(i, 0.125, size=len(diffs))
     ax.scatter(x_jitter, diffs, alpha=0.3, color="black", s=20)
@@ -679,7 +728,6 @@ def compute_condition_difference_df(
   return diff_df
 
 
-
 def plot_success_rate_path_reuse_metrics(
   df: DataFrame,
   model_df: DataFrame = None,
@@ -727,18 +775,13 @@ def plot_success_rate_path_reuse_metrics(
     .flatten()
   )
   human_success_mean = np.mean(human_successes)
-  
+
   human_success_se = np.sqrt(
     (human_success_mean * (1 - human_success_mean)) / len(human_successes)
   )
-  
+
   results = power_analysis_path_reuse(
-    df,
-    measure=reuse_column,
-    mu=0.5,
-    alpha=0.05,
-    plot=False,
-    stats_file=stats_file
+    df, measure=reuse_column, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
   )
 
   human_reuse = (
@@ -764,10 +807,16 @@ def plot_success_rate_path_reuse_metrics(
     mean_deviance = np.mean(user_deviance)
     # Map deviance values to circle sizes between min_circle_size and max_circle_size
     if np.max(user_deviance) > np.min(user_deviance):  # Avoid division by zero
-      normalized_deviance = (user_deviance - np.min(user_deviance)) / (np.max(user_deviance) - np.min(user_deviance))
-      user_circle_sizes = min_circle_size + normalized_deviance * (max_circle_size - min_circle_size)
+      normalized_deviance = (user_deviance - np.min(user_deviance)) / (
+        np.max(user_deviance) - np.min(user_deviance)
+      )
+      user_circle_sizes = min_circle_size + normalized_deviance * (
+        max_circle_size - min_circle_size
+      )
     else:
-      user_circle_sizes = np.ones_like(user_deviance) * ((min_circle_size + max_circle_size) / 2)
+      user_circle_sizes = np.ones_like(user_deviance) * (
+        (min_circle_size + max_circle_size) / 2
+      )
   else:
     # If path_deviance_column doesn't exist, use a default size
     user_circle_sizes = np.ones(len(human_successes)) * 20
@@ -821,15 +870,40 @@ def plot_success_rate_path_reuse_metrics(
 
   # Add individual human data points if requested
   if include_raw_data:
-    ax.scatter(
-      100 * human_reuse,
-      100 * human_successes,
-      color="black",
-      alpha=0.2,
-      zorder=1,
-      s=user_circle_sizes,  # Use calculated sizes based on deviance
-      label="Individual participants",
-    )
+    # Count occurrences of each unique (reuse, success) combination
+    reuse_success_pairs = list(zip(100 * human_reuse, 100 * human_successes))
+    unique_pairs, counts = np.unique(reuse_success_pairs, axis=0, return_counts=True)
+    
+    # Create a dictionary to store counts for each position
+    position_counts = {tuple(pair): count for pair, count in zip(unique_pairs, counts)}
+    
+    # Plot each unique point with size based on count
+    for (x, y), count in position_counts.items():
+      # Scale point size based on count
+      point_size = user_circle_sizes[0] * (1 + 0.5 * np.log(count))
+      
+      # Plot the point
+      ax.scatter(
+        x, y,
+        color="black",
+        alpha=0.2,
+        zorder=1,
+        s=point_size,
+      )
+      
+      # Add annotation with count if more than 1 participant
+      if count > 1:
+        ax.annotate(
+          f"{count}",
+          xy=(x + 2, y - 5),  # Offset slightly from the point
+          fontsize=10,
+          color="black",
+          alpha=0.7,
+          zorder=2
+        )
+    
+    # Add a single entry to the legend
+    ax.scatter([], [], color="black", alpha=0.2, s=user_circle_sizes[0], label="Individual participants")
 
   # Plot each model/human data point with error bars
   for key in ordered_keys:
@@ -847,16 +921,16 @@ def plot_success_rate_path_reuse_metrics(
       elinewidth=2,
       zorder=2,
     )
-    
+
     # Set marker size based on deviance if available
     if "deviance" in data and data["deviance"] is not None:
       if mean_deviance is not None:  # Scale relative to human mean
         point_size = marker_size * (data["deviance"] / mean_deviance)
         # Ensure size is reasonable
-        #point_size = max(min_circle_size, min(max_circle_size * 2, point_size))
-        
+        # point_size = max(min_circle_size, min(max_circle_size * 2, point_size))
+
         # Add annotation for the deviance value
-        #ax.annotate(
+        # ax.annotate(
         #    f"Dev: {data['deviance']:.2f}",
         #    xy=(data["reuse"], data["success"] - 5),  # Position slightly below the point
         #    xytext=(0, -15),  # Offset text below the point
@@ -865,12 +939,12 @@ def plot_success_rate_path_reuse_metrics(
         #    fontsize=12,
         #    color=model_colors.get(key, "#333333"),
         #    alpha=0.8
-        #)
+        # )
       else:
         point_size = marker_size
     else:
       point_size = marker_size
-      
+
     ax.scatter(
       data["reuse"],
       data["success"],
@@ -887,7 +961,7 @@ def plot_success_rate_path_reuse_metrics(
 
   # Add chance level line for success rate
   ax.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
-  ax.axvline(x=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
+  ax.axvline(x=50, color="r", linestyle="--", alpha=0.5)
 
   # Set axis limits with some padding
   ax.set_xlim(-5, 105)
@@ -908,9 +982,11 @@ def plot_success_rate_path_reuse_metrics(
 
   return fig, ax
 
+
 ######################################
 # Power Analysis function
 ######################################
+
 
 # define functions to run power analysis for linear mixed effects model (LME)
 def simulate_mixed_effects_trial(args):
@@ -1022,7 +1098,6 @@ def mixed_effects_compute_power(
   return sum(results) / n_simulations
 
 
-
 def power_analysis_path_reuse(
   df: pl.DataFrame,
   measure: str = "reuse",
@@ -1045,7 +1120,6 @@ def power_analysis_path_reuse(
     reuse_rate=pl.col(measure).mean(), n_trials=pl.col(measure).count()
   )
   reuse_rates = user_means["reuse_rate"].to_numpy()
-  print(reuse_rates)
   n_users = len(reuse_rates)
   n_trials = user_means["n_trials"].to_numpy()
 
@@ -1160,7 +1234,7 @@ def power_analysis_rt_across_groups(
   reuse_column: str = "reuse",
   alpha=0.05,
   stats_file=None,
-  n_simulations=500
+  n_simulations=500,
 ):
   """Perform power analysis for between-groups comparison using linear mixed effects model.
 
@@ -1179,12 +1253,15 @@ def power_analysis_rt_across_groups(
   data = df._df.select(["user_id", reuse_column, measure]).to_pandas()
   data.columns = ["user_id", "reuse", "RT"]
 
-
   # Calculate descriptive statistics by group
-  user_stats = df.group_by(["user_id", reuse_column]).agg(mean_val=pl.col(measure).mean())
+  user_stats = df.group_by(["user_id", reuse_column]).agg(
+    mean_val=pl.col(measure).mean()
+  )
 
   reuse_means = user_stats.filter(pl.col(reuse_column) == True)["mean_val"].to_numpy()
-  no_reuse_means = user_stats.filter(pl.col(reuse_column) == False)["mean_val"].to_numpy()
+  no_reuse_means = user_stats.filter(pl.col(reuse_column) == False)[
+    "mean_val"
+  ].to_numpy()
 
   n1, n2 = len(no_reuse_means), len(reuse_means)
   mean1, mean2 = np.mean(no_reuse_means), np.mean(reuse_means)
@@ -1294,218 +1371,227 @@ def power_analysis_rt_across_groups(
 
   return results
 
+
 def power_analysis_path_length_across_groups(
-    df: pl.DataFrame, 
-    measure: str,
-    alpha: float = 0.05, 
-    stats_file=None,
-    reuse_column: str = "reuse",
-    n_simulations: int = 500
+  df: pl.DataFrame,
+  measure: str,
+  alpha: float = 0.05,
+  stats_file=None,
+  reuse_column: str = "reuse",
+  n_simulations: int = 500,
 ):
-    """Perform power analysis for between-groups comparison of path lengths using linear mixed effects model.
-    
-    Args:
-        df: DataFrame with columns [user_id, reuse, path_length] where:
-            - user_id: identifier for each participant
-            - reuse: boolean indicating condition
-            - path_length: length of path taken
-        alpha: Significance level (default: 0.05)
-        stats_file: Optional file handle to write stats output
-        n_simulations: Number of simulations for power analysis
-    
-    Returns:
-        dict containing analysis results
-    """
-    # Convert to pandas for statsmodels compatibility
-    data = df._df.select(["user_id", reuse_column, measure]).to_pandas()
-    data.columns = ["user_id", "reuse", "path_length"]
-    
-    # Calculate descriptive statistics by group
-    user_stats = df.group_by(["user_id", "reuse"]).agg(
-        mean_val=pl.col(measure).mean(),
-        median_val=pl.col(measure).median(),
-        std_val=pl.col(measure).std()
-    )
+  """Perform power analysis for between-groups comparison of path lengths using linear mixed effects model.
 
-    reuse_stats = user_stats.filter(pl.col("reuse") == True)
-    no_reuse_stats = user_stats.filter(pl.col("reuse") == False)
+  Args:
+      df: DataFrame with columns [user_id, reuse, path_length] where:
+          - user_id: identifier for each participant
+          - reuse: boolean indicating condition
+          - path_length: length of path taken
+      alpha: Significance level (default: 0.05)
+      stats_file: Optional file handle to write stats output
+      n_simulations: Number of simulations for power analysis
 
-    n1, n2 = len(no_reuse_stats), len(reuse_stats)
-    mean1, mean2 = no_reuse_stats["mean_val"].mean(), reuse_stats["mean_val"].mean()
-    median1, median2 = no_reuse_stats["median_val"].median(), reuse_stats["median_val"].median()
-    var1, var2 = np.var(no_reuse_stats["mean_val"].to_numpy(), ddof=1), np.var(reuse_stats["mean_val"].to_numpy(), ddof=1)
+  Returns:
+      dict containing analysis results
+  """
+  # Convert to pandas for statsmodels compatibility
+  data = df._df.select(["user_id", reuse_column, measure]).to_pandas()
+  data.columns = ["user_id", "reuse", "path_length"]
 
-    if stats_file is None:
-        return {
-            "descriptive": {
-                "means": {"no_reuse": mean1, "reuse": mean2},
-                "medians": {"no_reuse": median1, "reuse": median2},
-                "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
-                "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
-            },
-            "raw_means": {
-                "no_reuse": no_reuse_stats["mean_val"].to_numpy(),
-                "reuse": reuse_stats["mean_val"].to_numpy()
-            },
-        }
+  # Calculate descriptive statistics by group
+  user_stats = df.group_by(["user_id", "reuse"]).agg(
+    mean_val=pl.col(measure).mean(),
+    median_val=pl.col(measure).median(),
+    std_val=pl.col(measure).std(),
+  )
 
-    # Fit linear mixed effects model
-    model = smf.mixedlm("path_length ~ reuse", data, groups=data["user_id"])
-    result = model.fit(reml=True)
+  reuse_stats = user_stats.filter(pl.col("reuse") == True)
+  no_reuse_stats = user_stats.filter(pl.col("reuse") == False)
 
-    # Get effect size (standardized coefficient)
-    param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
-    effect_size = result.params[param_name] / np.std(data["path_length"])
+  n1, n2 = len(no_reuse_stats), len(reuse_stats)
+  mean1, mean2 = no_reuse_stats["mean_val"].mean(), reuse_stats["mean_val"].mean()
+  median1, median2 = (
+    no_reuse_stats["median_val"].median(),
+    reuse_stats["median_val"].median(),
+  )
+  var1, var2 = (
+    np.var(no_reuse_stats["mean_val"].to_numpy(), ddof=1),
+    np.var(reuse_stats["mean_val"].to_numpy(), ddof=1),
+  )
 
-    # Calculate required sample sizes for different power levels
-    power_levels = [0.8, 0.9, 0.95]
-    n_required = {}
+  if stats_file is None:
+    return {
+      "descriptive": {
+        "means": {"no_reuse": mean1, "reuse": mean2},
+        "medians": {"no_reuse": median1, "reuse": median2},
+        "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
+        "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
+      },
+      "raw_means": {
+        "no_reuse": no_reuse_stats["mean_val"].to_numpy(),
+        "reuse": reuse_stats["mean_val"].to_numpy(),
+      },
+    }
 
-    # Binary search for each power level
-    for target_power in tqdm(power_levels, desc="Power levels"):
-        left = 10  # minimum sample size
-        right = 200  # maximum sample size to try
+  # Fit linear mixed effects model
+  model = smf.mixedlm("path_length ~ reuse", data, groups=data["user_id"])
+  result = model.fit(reml=True)
 
-        while left < right:
-            n = (left + right) // 2
-            # Use gamma distribution for simulation to better match path length distribution
-            power = mixed_effects_compute_power_gamma(
-                num_subjects=n,
-                trials_per_subject=len(data) // len(data["user_id"].unique()),
-                B0=result.params["Intercept"],
-                B1=result.params[param_name],
-                random_effect_var=result.cov_re.iloc[0, 0],
-                shape=np.mean(data["path_length"])**2 / np.var(data["path_length"]),
-                n_simulations=n_simulations,
-            )
+  # Get effect size (standardized coefficient)
+  param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
+  effect_size = result.params[param_name] / np.std(data["path_length"])
 
-            if abs(power - target_power) < 0.01:  # within 1% of target
-                break
-            elif power < target_power:
-                left = n + 1
-            else:
-                right = n - 1
+  # Calculate required sample sizes for different power levels
+  power_levels = [0.8, 0.9, 0.95]
+  n_required = {}
 
-        n_required[target_power] = n
+  # Binary search for each power level
+  for target_power in tqdm(power_levels, desc="Power levels"):
+    left = 10  # minimum sample size
+    right = 200  # maximum sample size to try
 
-    # Calculate actual power with current sample size
-    current_power = mixed_effects_compute_power_gamma(
-        num_subjects=len(data["user_id"].unique()),
+    while left < right:
+      n = (left + right) // 2
+      # Use gamma distribution for simulation to better match path length distribution
+      power = mixed_effects_compute_power_gamma(
+        num_subjects=n,
         trials_per_subject=len(data) // len(data["user_id"].unique()),
         B0=result.params["Intercept"],
         B1=result.params[param_name],
         random_effect_var=result.cov_re.iloc[0, 0],
-        shape=np.mean(data["path_length"])**2 / np.var(data["path_length"]),
+        shape=np.mean(data["path_length"]) ** 2 / np.var(data["path_length"]),
         n_simulations=n_simulations,
+      )
+
+      if abs(power - target_power) < 0.01:  # within 1% of target
+        break
+      elif power < target_power:
+        left = n + 1
+      else:
+        right = n - 1
+
+    n_required[target_power] = n
+
+  # Calculate actual power with current sample size
+  current_power = mixed_effects_compute_power_gamma(
+    num_subjects=len(data["user_id"].unique()),
+    trials_per_subject=len(data) // len(data["user_id"].unique()),
+    B0=result.params["Intercept"],
+    B1=result.params[param_name],
+    random_effect_var=result.cov_re.iloc[0, 0],
+    shape=np.mean(data["path_length"]) ** 2 / np.var(data["path_length"]),
+    n_simulations=n_simulations,
+  )
+
+  results = {
+    "effect_size": {"name": "Standardized coefficient", "value": effect_size},
+    "n_required": n_required,
+    "current_power": current_power,
+    "test_results": {
+      "name": "Linear mixed effects model",
+      "statistic": result.tvalues[param_name],
+      "p_value": result.pvalues[param_name],
+      "n1": n1,
+      "n2": n2,
+    },
+    "descriptive": {
+      "means": {"no_reuse": mean1, "reuse": mean2},
+      "medians": {"no_reuse": median1, "reuse": median2},
+      "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
+      "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
+    },
+    "raw_means": {
+      "no_reuse": no_reuse_stats["mean_val"].to_numpy(),
+      "reuse": reuse_stats["mean_val"].to_numpy(),
+    },
+  }
+
+  if stats_file:
+    stats_file.write("\nLinear Mixed Effects Model Results (Path Length):\n")
+    stats_file.write("=========================================\n")
+    stats_file.write(str(result.summary()) + "\n\n")
+
+    stats_file.write("Sample Sizes:\n")
+    stats_file.write(f"\tNo Reuse: {n1} users\n")
+    stats_file.write(f"\tReuse: {n2} users\n")
+    stats_file.write(
+      f"\tTrials per user: {len(data) // len(data['user_id'].unique())}\n\n"
     )
 
-    results = {
-        "effect_size": {"name": "Standardized coefficient", "value": effect_size},
-        "n_required": n_required,
-        "current_power": current_power,
-        "test_results": {
-            "name": "Linear mixed effects model",
-            "statistic": result.tvalues[param_name],
-            "p_value": result.pvalues[param_name],
-            "n1": n1,
-            "n2": n2,
-        },
-        "descriptive": {
-            "means": {"no_reuse": mean1, "reuse": mean2},
-            "medians": {"no_reuse": median1, "reuse": median2},
-            "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
-            "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
-        },
-        "raw_means": {
-            "no_reuse": no_reuse_stats["mean_val"].to_numpy(),
-            "reuse": reuse_stats["mean_val"].to_numpy()
-        },
-    }
+    stats_file.write("Means:\n")
+    stats_file.write(f"\tNo Reuse: {mean1:.3f}\n")
+    stats_file.write(f"\tReuse: {mean2:.3f}\n")
+    stats_file.write(f"\tDifference: {mean2 - mean1:.3f}\n\n")
 
-    if stats_file:
-        stats_file.write("\nLinear Mixed Effects Model Results (Path Length):\n")
-        stats_file.write("=========================================\n")
-        stats_file.write(str(result.summary()) + "\n\n")
+    stats_file.write("Medians:\n")
+    stats_file.write(f"\tNo Reuse: {median1:.3f}\n")
+    stats_file.write(f"\tReuse: {median2:.3f}\n")
+    stats_file.write(f"\tDifference: {median2 - median1:.3f}\n\n")
 
-        stats_file.write("Sample Sizes:\n")
-        stats_file.write(f"\tNo Reuse: {n1} users\n")
-        stats_file.write(f"\tReuse: {n2} users\n")
-        stats_file.write(f"\tTrials per user: {len(data) // len(data['user_id'].unique())}\n\n")
+    stats_file.write(f"Effect size: {effect_size:.3f}\n\n")
 
-        stats_file.write("Means:\n")
-        stats_file.write(f"\tNo Reuse: {mean1:.3f}\n")
-        stats_file.write(f"\tReuse: {mean2:.3f}\n")
-        stats_file.write(f"\tDifference: {mean2 - mean1:.3f}\n\n")
+    stats_file.write("Power Analysis:\n")
+    stats_file.write(f"Current power: {current_power:.3f}\n")
+    for power, n in n_required.items():
+      stats_file.write(f"Required sample size for {power * 100}% power: {n}\n")
 
-        stats_file.write("Medians:\n")
-        stats_file.write(f"\tNo Reuse: {median1:.3f}\n")
-        stats_file.write(f"\tReuse: {median2:.3f}\n")
-        stats_file.write(f"\tDifference: {median2 - median1:.3f}\n\n")
+  return results
 
-        stats_file.write(f"Effect size: {effect_size:.3f}\n\n")
-
-        stats_file.write("Power Analysis:\n")
-        stats_file.write(f"Current power: {current_power:.3f}\n")
-        for power, n in n_required.items():
-            stats_file.write(f"Required sample size for {power * 100}% power: {n}\n")
-
-    return results
 
 def mixed_effects_compute_power_gamma(
-    num_subjects: int,
-    trials_per_subject: int,
-    B0: float,
-    B1: float,
-    random_effect_var: float,
-    shape: float,
-    n_simulations: int = 500,
-    alpha: float = 0.05,
+  num_subjects: int,
+  trials_per_subject: int,
+  B0: float,
+  B1: float,
+  random_effect_var: float,
+  shape: float,
+  n_simulations: int = 500,
+  alpha: float = 0.05,
 ):
-    """Simulate a mixed effects trial with gamma-distributed path lengths and test for significance.
+  """Simulate a mixed effects trial with gamma-distributed path lengths and test for significance.
 
-    Args:
-        num_subjects: Number of subjects in simulation
-        trials_per_subject: Number of trials per subject
-        B0: Intercept coefficient
-        B1: Slope coefficient
-        random_effect_var: Variance of random effects
-        shape: Shape parameter for gamma distribution
-        n_simulations: Number of simulations to run
-        alpha: Significance level for test
+  Args:
+      num_subjects: Number of subjects in simulation
+      trials_per_subject: Number of trials per subject
+      B0: Intercept coefficient
+      B1: Slope coefficient
+      random_effect_var: Variance of random effects
+      shape: Shape parameter for gamma distribution
+      n_simulations: Number of simulations to run
+      alpha: Significance level for test
 
-    Returns:
-        float: Computed power (proportion of significant results)
-    """
-    significant_results = 0
+  Returns:
+      float: Computed power (proportion of significant results)
+  """
+  significant_results = 0
 
-    for _ in range(n_simulations):
-        # Generate data
-        user_ids = np.repeat(range(num_subjects), trials_per_subject)
-        reuse = np.random.choice([0, 1], num_subjects * trials_per_subject)
-        random_intercepts = np.random.normal(0, np.sqrt(random_effect_var), num_subjects)
-        random_intercepts = np.repeat(random_intercepts, trials_per_subject)
+  for _ in range(n_simulations):
+    # Generate data
+    user_ids = np.repeat(range(num_subjects), trials_per_subject)
+    reuse = np.random.choice([0, 1], num_subjects * trials_per_subject)
+    random_intercepts = np.random.normal(0, np.sqrt(random_effect_var), num_subjects)
+    random_intercepts = np.repeat(random_intercepts, trials_per_subject)
 
-        # Generate path lengths using gamma distribution
-        mean = np.exp(B0 + B1 * reuse + random_intercepts)
-        scale = mean / shape  # scale parameter for gamma distribution
-        path_length = np.random.gamma(shape, scale)
+    # Generate path lengths using gamma distribution
+    mean = np.exp(B0 + B1 * reuse + random_intercepts)
+    scale = mean / shape  # scale parameter for gamma distribution
+    path_length = np.random.gamma(shape, scale)
 
-        # Create and test model
-        data = pd.DataFrame({
-            "path_length": path_length,
-            "reuse": reuse,
-            "user_id": user_ids
-        })
-        model = smf.mixedlm("path_length ~ reuse", data, groups=data["user_id"])
-        try:
-            result = model.fit(reml=True)
-            param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
-            if result.pvalues[param_name] < alpha:
-                significant_results += 1
-        except:
-            continue
+    # Create and test model
+    data = pd.DataFrame(
+      {"path_length": path_length, "reuse": reuse, "user_id": user_ids}
+    )
+    model = smf.mixedlm("path_length ~ reuse", data, groups=data["user_id"])
+    try:
+      result = model.fit(reml=True)
+      param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
+      if result.pvalues[param_name] < alpha:
+        significant_results += 1
+    except:
+      continue
 
-    return significant_results / n_simulations
+  return significant_results / n_simulations
+
 
 def power_analysis_rt_differences(
   difference_df: pl.DataFrame, measure: str, alpha: float = 0.05, stats_file=None
@@ -1632,6 +1718,7 @@ def power_analysis_rt_differences(
     "power_analysis": {"actual_power": actual_power, "required_n": required_n},
   }
 
+
 def plot_success_rate_efficient_reuse_metrics(
   df: DataFrame,
   model_df: DataFrame = None,
@@ -1681,33 +1768,26 @@ def plot_success_rate_efficient_reuse_metrics(
   human_success_se = np.sqrt(
     (human_success_mean * (1 - human_success_mean)) / len(human_successes)
   )
-  
+
   # Prepare data for plotting
   reuse_data = []
-  
+
   # Calculate statistics for each reuse metric
   for reuse_column in reuse_columns:
     results = power_analysis_path_reuse(
-      df,
-      measure=reuse_column,
-      mu=0.5,
-      alpha=0.05,
-      plot=False,
-      stats_file=stats_file
+      df, measure=reuse_column, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
     )
 
     # Extract threshold value from column name (e.g., "efficient_reuse_1.25" -> "1.25")
     threshold = reuse_column.split("_")[-1]
-    
-    reuse_data.append({
-      "threshold": threshold,
-      "reuse_mean": results["mean"],
-      "reuse_se": results["se"]
-    })
+
+    reuse_data.append(
+      {"threshold": threshold, "reuse_mean": results["mean"], "reuse_se": results["se"]}
+    )
 
   # Plot each reuse metric data point with error bars
   marker_size = 100  # Size of the scatter points
-  
+
   for data in reuse_data:
     ax.errorbar(
       100 * data["reuse_mean"],
@@ -1753,4 +1833,3 @@ def plot_success_rate_efficient_reuse_metrics(
   ax.grid(True, linestyle="--", alpha=0.7)
 
   return fig, ax
-

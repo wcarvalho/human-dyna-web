@@ -161,18 +161,20 @@ def make_row(
   ## add optimal path length - with caching
   #####################
   if row["eval"]:
-    optimal_length = craftax_analysis.OPTIMAL_TEST_LENGTHS[int(row['world_seed'])]
+    optimal_length = craftax_analysis.OPTIMAL_TEST_LENGTHS[int(row["world_seed"])]
     row["optimal_length"] = optimal_length
     path_length = len(timesteps.state.player_position) - 1
-    row["suboptimal_path"] = path_length >= 2*optimal_length
-    row["efficient_1.25"] = path_length <= 1.25*optimal_length
-    row["efficient_1.5"] = path_length <= 1.5*optimal_length
-    row["efficient_1.75"] = path_length <= 1.75*optimal_length
-    row["efficient_2"] = path_length <= 2*optimal_length
+    row["suboptimal_path"] = path_length >= 2 * optimal_length
+    row["efficient_1.25"] = path_length <= 1.25 * optimal_length
+    row["efficient_1.5"] = path_length <= 1.5 * optimal_length
+    row["efficient_1.75"] = path_length <= 1.75 * optimal_length
+    row["efficient_2"] = path_length <= 2 * optimal_length
     deviation = path_length - optimal_length
     if deviation < 0:
-      user_seed = user_storage['seed']
-      raise RuntimeError(f"{user_seed}: path_length_deviance is negative: {row['path_length_deviance']}")
+      user_seed = user_storage["seed"]
+      raise RuntimeError(
+        f"{user_seed}: path_length_deviance is negative: {row['path_length_deviance']}"
+      )
 
     row["path_length_deviance"] = max(0, deviation)
 
@@ -253,7 +255,7 @@ def compute_overlap(map1: np.ndarray, map2: np.ndarray, subset_t: int = None):
     np.float32
   )
 
-  overlap = ((values_map1 + values_map2) > 1)
+  overlap = (values_map1 + values_map2) > 1
   if subset_t is not None:
     overlap = jnp.concatenate([overlap[:subset_t], overlap[-subset_t:]])
   return overlap
@@ -309,13 +311,13 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
         overlap_dict[episode_id] = overlap_mean
         reuse_dict[episode_id] = int(overlap_mean > overlap_threshold)
 
-  #all_mazes = df["name"].unique()
-  train_mazes = [f'paths_{i}_training' for i in range(4)]
-  test_mazes = [f'paths_{i}_eval1' for i in range(4)]
-  #train_mazes = sorted([m for m in all_mazes if "training" in m])
-  #test_mazes = sorted([m for m in all_mazes if "eval" in m])
+  # all_mazes = df["name"].unique()
+  train_mazes = [f"paths_{i}_training" for i in range(4)]
+  test_mazes = [f"paths_{i}_eval1" for i in range(4)]
+  # train_mazes = sorted([m for m in all_mazes if "training" in m])
+  # test_mazes = sorted([m for m in all_mazes if "eval" in m])
 
-  #assert len(train_mazes) + len(test_mazes) == len(all_mazes)
+  # assert len(train_mazes) + len(test_mazes) == len(all_mazes)
 
   update_reuse_dict(train_mazes, test_mazes)
 
@@ -422,9 +424,9 @@ async def make_episode_data(
   #####################
   # Load or create episode_data
   #####################
-  #example_timestep = example_timestep.replace(
+  # example_timestep = example_timestep.replace(
   #  state=jax.tree_map(lambda t: t[:1], example_timestep.state)
-  #)
+  # )
   if os.path.exists(episode_data_filename) and not overwrite_episode_data:
     with open(episode_data_filename, "rb") as f:
       serialized_data = f.read()
@@ -550,7 +552,7 @@ async def make_episode_data(
 
     def get_rt(e: EpisodeData):
       # convert to milliseconds
-      return np.log(1000*(e.reaction_times) + 1e-5)
+      return np.log(1000 * (e.reaction_times) + 1e-5)
 
     def total_rt(e: EpisodeData):
       return np.sum(get_rt(e)[:-1])
@@ -599,7 +601,7 @@ async def make_episode_data(
       "log_max_final_rt": max_final_rt,
     }
     computed_values = {key: [] for key in measures}
-    
+
     # Calculate values for each episode
     for i, episode in enumerate(episode_data):
       for key, fn in measures.items():
@@ -609,7 +611,7 @@ async def make_episode_data(
         except Exception as e:
           logging.warning(f"Failed to compute {key} for episode {i}: {str(e)}")
           computed_values[key].append(None)  # Use None for failed computations
-    
+
     # Create a new DataFrame with the additional columns
     episode_info = episode_info.with_columns(
       [pl.Series(key, values) for key, values in computed_values.items()]
@@ -617,19 +619,27 @@ async def make_episode_data(
     _temp_df = DataFrame(episode_info, episode_data)
     _temp_df = add_reuse_columns(_temp_df, overlap_threshold=0.15)
     episode_info = _temp_df._df
-    
+
     # Add column for efficient reuse (reuse=1 and not suboptimal)
     episode_info = episode_info.with_columns(
-      (pl.col("reuse").eq(1) & pl.col("efficient_1.25").eq(True)).alias("efficient_reuse_1.25")
+      (pl.col("reuse").eq(1) & pl.col("efficient_1.25").eq(True)).alias(
+        "efficient_reuse_1.25"
+      )
     )
     episode_info = episode_info.with_columns(
-      (pl.col("reuse").eq(1) & pl.col("efficient_1.5").eq(True)).alias("efficient_reuse_1.5")
+      (pl.col("reuse").eq(1) & pl.col("efficient_1.5").eq(True)).alias(
+        "efficient_reuse_1.5"
+      )
     )
     episode_info = episode_info.with_columns(
-      (pl.col("reuse").eq(1) & pl.col("efficient_1.75").eq(True)).alias("efficient_reuse_1.75")
+      (pl.col("reuse").eq(1) & pl.col("efficient_1.75").eq(True)).alias(
+        "efficient_reuse_1.75"
+      )
     )
     episode_info = episode_info.with_columns(
-      (pl.col("reuse").eq(1) & pl.col("efficient_2").eq(True)).alias("efficient_reuse_2")
+      (pl.col("reuse").eq(1) & pl.col("efficient_2").eq(True)).alias(
+        "efficient_reuse_2"
+      )
     )
 
     episode_info.write_csv(episode_info_filename)
@@ -659,15 +669,15 @@ async def make_all_episode_data(
 
   # Process files sequentially
   for enum, file in enumerate(files):
-    #try:
-      # Convert the async make_episode_data to sync by running it in an event loop
+    # try:
+    # Convert the async make_episode_data to sync by running it in an event loop
     file, episode_df, episode_data = await make_episode_data(
       file,
       example_timestep,
       overwrite_episode_data=overwrite_episode_data,
       overwrite_episode_info=overwrite_episode_info,
       debug=debug,
-      )
+    )
 
     print(f"{enum}/{len(files)}", file)
 
@@ -677,7 +687,7 @@ async def make_all_episode_data(
     else:
       print(f"skipping {file} because one of the episode_df or episode_data is None")
 
-    #except Exception as e:
+    # except Exception as e:
     #  print(f"error processing {file}: {str(e)}")
     #  continue
 

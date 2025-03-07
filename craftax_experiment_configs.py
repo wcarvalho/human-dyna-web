@@ -361,9 +361,8 @@ def visualize_block_config(config: BlockConfig, jax_env, **kwargs):
       state,
       show_agent=False,
       show_center_agent=True,
-      block_pixel_size=BLOCK_PIXEL_SIZE_HUMAN).astype(
-      np.uint8
-    )
+      block_pixel_size=BLOCK_PIXEL_SIZE_HUMAN,
+    ).astype(np.uint8)
   plt.imshow(full_map)
   title = f"Rendered Environment (World Seed: {config.world_seed})"
   title += f"\nTrain objects: {[BlockType(o).name for o in config.train_objects]}"

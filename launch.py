@@ -7,9 +7,12 @@ def launch_experiment(name, environment, env_vars, count=8):
   launch_cmd = [
     "flyctl",
     "launch",
-    "--dockerfile", f"Dockerfile_{environment}",
-    "--name", f"human-dyna-{environment}-{name}",
-    "--config", f"configs/human-dyna-{environment}-{name}.toml",
+    "--dockerfile",
+    f"Dockerfile_{environment}",
+    "--name",
+    f"human-dyna-{environment}-{name}",
+    "--config",
+    f"configs/human-dyna-{environment}-{name}.toml",
     "--vm-size", "performance-2x",
     "--wait-timeout", "20m0s",
     "--yes",
@@ -33,10 +36,13 @@ def launch_experiment(name, environment, env_vars, count=8):
     scale_cmd = [
       "flyctl",
       "scale",
-      "count", str(count),
-      "--config", f"configs/human-dyna-{environment}-{name}.toml",
-      "--region", "iad,sea,lax,den",
-    "--yes",
+      "count",
+      str(count),
+      "--config",
+      f"configs/human-dyna-{environment}-{name}.toml",
+      "--region",
+      "iad,sea,lax,den",
+      "--yes",
     ]
     subprocess.run(scale_cmd, check=True)
 
@@ -45,11 +51,14 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Launch a Fly.io experiment")
   parser.add_argument("name", help="Name of the experiment")
   parser.add_argument(
-    "--environment", default="jaxmaze", help="Name of the environment")
+    "--environment", default="jaxmaze", help="Name of the environment"
+  )
   parser.add_argument(
-    "--env", action="append", help="Environment variables in the format KEY=VALUE")
+    "--env", action="append", help="Environment variables in the format KEY=VALUE"
+  )
   parser.add_argument(
-    "--scale", type=int, default=4, help="Number of machines to scale to")
+    "--scale", type=int, default=4, help="Number of machines to scale to"
+  )
 
   args = parser.parse_args()
 
