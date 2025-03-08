@@ -23,9 +23,9 @@ from multiprocessing import Pool
 
 from nicewebrl.dataframe import DataFrame
 
-DEFAULT_TITLE_SIZE = 14
-DEFAULT_LABEL_SIZE = 12
-DEFAULT_LEGEND_SIZE = 10
+DEFAULT_TITLE_SIZE = 15
+DEFAULT_LABEL_SIZE = 15
+DEFAULT_LEGEND_SIZE = 10.5
 
 from tqdm.auto import tqdm
 
@@ -350,16 +350,13 @@ def plot_bar_rt_comparison(
       raise ValueError(f"Unknown rt_column: {rt_column}")
     
     # Save results to cache if cache_file is provided
-    if cache_file is not None:
+    if stats_file is not None:
       import os
       import pickle
       
       # Create directory if it doesn't exist
-      os.makedirs(os.path.dirname(cache_file) if os.path.dirname(cache_file) else '.', exist_ok=True)
-      
-      cache_key = f"{rt_column}_{reuse_column}_{n_simulations}"
-      cache_path = f"{cache_file}_{cache_key}.pkl"
-      
+      os.makedirs(os.path.dirname(cache_path) if os.path.dirname(cache_path) else '.', exist_ok=True)
+
       print(f"Saving results to {cache_path}")
       with open(cache_path, 'wb') as f:
         pickle.dump(power_results, f)
@@ -973,11 +970,13 @@ def plot_success_rate_path_reuse_metrics(
   # Add legend
   if model_df is not None:
     ax.legend(
-      bbox_to_anchor=(0.5, -0.15),  # Place legend below plot
-      loc="upper center",
-      ncol=len(ordered_keys) // 2,  # Arrange in two rows
+      #bbox_to_anchor=(0.5, -0.15),  # Place legend below plot
+      loc="lower right",
+      #ncol=len(ordered_keys) // 2,  # Arrange in two rows
+      ncol=2,
       columnspacing=1,
       handletextpad=0.5,
+      fontsize=DEFAULT_LEGEND_SIZE,
     )
 
   return fig, ax

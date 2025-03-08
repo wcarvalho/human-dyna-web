@@ -27,9 +27,9 @@ from analysis import experiment_analysis
 from nicewebrl.dataframe import DataFrame
 import matplotlib.patches as mpatches
 
-DEFAULT_TITLE_SIZE = 14
-DEFAULT_LABEL_SIZE = 12
-DEFAULT_LEGEND_SIZE = 10
+DEFAULT_TITLE_SIZE = 15
+DEFAULT_LABEL_SIZE = 15
+DEFAULT_LEGEND_SIZE = 10.5
 
 image_dict = utils.load_image_dict()
 
@@ -473,217 +473,7 @@ def plot_bar_rt_comparison_columns(
 
   return ax
 
-
-# def plot_rt_differences(
-#  difference_df: pl.DataFrame,
-#  measures: List[str],
-#  title: str,
-#  ax: plt.Axes = None,
-#  colors=None,
-#  ylabel="Log RT Difference (Cond2 - Cond1)",
-#  stats_file=None,
-#  xlabels=None,
-# ) -> Tuple[plt.Figure, plt.Axes]:
-#  """Plot RT differences between conditions.
-
-#  First compute a power analysis for each measure, seeing if its statistically significantly above 0.
-#  - note we have repeated measures per user, corresponding to the 'reversal column'.
-#  """
-#  # Calculate statistics for each measure
-#  means = []
-#  sems = []
-#  all_diffs = []
-#  for measure in measures:
-#    results = power_analysis_rt_differences(
-#      difference_df, measure, stats_file=stats_file
-#    )
-#    means.append(results["mean"])
-#    sems.append(results["se"])
-#    all_diffs.append(difference_df[measure].to_numpy())
-
-#  # Create/get axis
-#  if ax is None:
-#    fig, ax = plt.subplots(figsize=(5, 4))
-#  else:
-#    fig = ax.figure
-
-#  # Create bar plot
-#  x_pos = np.arange(len(measures))
-#  bars = ax.bar(
-#    x_pos,
-#    means,
-#    yerr=sems,
-#    capsize=5,
-#    color=colors,
-#    error_kw=dict(ecolor=default_colors["vermillion"]),
-#  )
-
-#  # Add individual points with jitter
-#  for i, diffs in enumerate(all_diffs):
-#    x_jitter = np.random.normal(i, 0.125, size=len(diffs))
-#    ax.scatter(x_jitter, diffs, alpha=0.3, color="black", s=20)
-
-#  # Add zero line
-#  ax.axhline(y=0, color="black", linestyle="--", alpha=0.5)
-
-#  # Customize plot
-#  ax.set_xticks(x_pos)
-#  ax.set_xticklabels(xlabels or measures, ha="center")
-#  ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
-#  if title:
-#    ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
-#  ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
-#  ax.grid(True, linestyle="--", alpha=0.7)
-
-#  # Set y-axis limits based on all data points
-#  all_data = np.concatenate(all_diffs)
-#  y_min, y_max = np.percentile(all_data, [1, 99])
-#  y_range = y_max - y_min
-#  ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
-
-#  return fig, ax
 from analysis.experiment_analysis import plot_rt_differences
-
-
-def plot_success_rate_comparison(
-  df: DataFrame,
-  model_df: DataFrame,
-  ax=None,
-  title="Success Rate Comparison",
-  include_raw_data: bool = False,
-  figsize=(6, 3),
-) -> Tuple[plt.Figure, plt.Axes]:
-  """Plot success rate comparison between human and model data.
-
-  Args:
-      df (DataFrame): DataFrame containing human data
-      model_df (DataFrame): DataFrame containing model data
-      ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
-      title (str, optional): Plot title. Defaults to "Success Rate Comparison"
-      include_raw_data (bool, optional): Whether to include individual human data points.
-          Defaults to False
-      figsize (tuple, optional): Figure size if creating new figure. Defaults to (6,3)
-
-  Returns:
-      tuple: (fig, ax) containing the matplotlib figure and axes objects
-  """
-  # Calculate human statistics
-  human_successes = (
-    df.group_by("user_id")
-    .agg(pl.col("success").mean())
-    .select("success")
-    .to_numpy()
-    .flatten()
-  )
-  # Calculate mean and standard error across users
-  human_mean = np.mean(human_successes)
-  human_se = np.sqrt((human_mean * (1 - human_mean)) / len(human_successes))
-
-  # Calculate model statistics
-  model_stats = model_df.group_by("algo").agg(
-    mean=pl.col("success").mean() * 100,
-    se=(
-      pl.col("success").mean()
-      * (1 - pl.col("success").mean())
-      / pl.col("success").count()
-    ).sqrt()
-    * 100,
-  )
-
-  # Create figure if needed
-  if ax is None:
-    fig, ax = plt.subplots(figsize=figsize)
-  else:
-    fig = ax.figure
-
-  # Create plot
-  human_data = {
-    "means": 100 * human_mean,
-    "se": 100 * human_se,
-  }
-  if include_raw_data:
-    human_data["raw"] = human_successes
-
-  bar_plot_error(
-    human_data=human_data,
-    model_stats=model_stats,
-    ax=ax,
-    legend=True,
-  )
-
-  # Customize plot
-  ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
-  ax.set_ylabel("Success Rate (%)", fontsize=DEFAULT_LABEL_SIZE)
-
-  return fig, ax
-
-
-def plot_path_reuse_comparison(
-  df: DataFrame,
-  model_df: DataFrame,
-  stats_file=None,
-  ax=None,
-  measure: str = "reuse",
-  title="Path Reuse Comparison",
-  ylabel="Path Reuse (%)",
-  include_raw_data: bool = True,
-  figsize=(6, 3),
-) -> Tuple[plt.Figure, plt.Axes]:
-  """Plot path reuse comparison between human and model data with statistical analysis.
-
-  Args:
-      df (DataFrame): DataFrame containing human data
-      model_df (DataFrame): DataFrame containing model data
-      stats_file: Optional file handle for writing statistical analysis
-      ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
-      title (str, optional): Plot title. Defaults to "Path Reuse Comparison"
-      include_raw_data (bool, optional): Whether to include individual human data points.
-          Defaults to True
-      figsize (tuple, optional): Figure size if creating new figure. Defaults to (6,3)
-
-  Returns:
-      tuple: (fig, ax) containing the matplotlib figure and axes objects
-  """
-
-  results = power_analysis_path_reuse(
-    df, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
-  )
-
-  # Calculate model statistics
-  model_stats = model_df.group_by("algo").agg(
-    mean=pl.col(measure).mean() * 100,
-    se=(
-      pl.col(measure).mean() * (1 - pl.col(measure).mean()) / pl.col(measure).count()
-    ).sqrt()
-    * 100,
-  )
-
-  # Create figure if needed
-  if ax is None:
-    fig, ax = plt.subplots(figsize=figsize)
-  else:
-    fig = ax.figure
-
-  # Create plot
-  human_data = {
-    "means": 100 * results["mean"],
-    "se": 100 * results["se"],
-  }
-  if include_raw_data:
-    human_data["raw"] = 100 * results["reuse_rates"]
-
-  bar_plot_error(
-    human_data=human_data,
-    model_stats=model_stats,
-    ax=ax,
-    legend=False,
-  )
-
-  # Customize plot
-  ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
-  ax.set_ylabel(ylabel, fontsize=DEFAULT_LABEL_SIZE)
-
-  return fig, ax
 
 
 def compute_condition_difference_df(
@@ -1086,7 +876,7 @@ def power_analysis_rt_across_groups(
     stats_file.write("Power Analysis:\n")
     stats_file.write(f"Current power: {current_power:.3f}\n")
     for power, n in n_required.items():
-      stats_file.write(f"Required sample size for {power * 100}% power: {n}\n")
+      stats_file.write(f"Required sample size for {power * 100:g}% power: {n}\n")
 
   return results
 
@@ -1480,6 +1270,171 @@ def sf_analysis_results(
     plt.show()
 
 
+def juncture_results(
+  user_df: DataFrame,
+  # model_df: DataFrame,
+  save_dir: str,
+  filter_columns: List[str] = None,
+  display_figs: bool = False,
+  save_figs: bool = True,
+  verbosity: int = 0,
+  tell_reuse_options=[1, 0],
+):
+  """Analyze results from experiment 4.
+
+  Args:
+      user_df (DataFrame): DataFrame containing user data
+      model_df (DataFrame): DataFrame containing model data
+      save_dir (str): Directory to save figures
+      filter_columns (List[str], optional): Columns to use for outlier filtering in RT analysis.
+          Defaults to ['avg_rt'].
+      display_figs (bool, optional): Whether to display figures. Defaults to False.
+      save_figs (bool, optional): Whether to save figures. Defaults to True.
+  """
+
+  save_dir = os.path.join(save_dir, "exp4")
+  os.makedirs(save_dir, exist_ok=True)
+  # Default to ['avg_rt'] if no filter columns specified
+  filter_columns = filter_columns or []
+
+  # Open stats file
+  stats_filename = os.path.join(save_dir, "stats.txt")
+  stats_file = open(stats_filename, "w")
+  stats_file.write("Experiment 4 Statistical Analysis\n\n")
+
+  ##################
+  # Add setting column based on maze name
+  ##################
+  user_df = user_df._df  # fancy merging will use regular df
+  user_df = user_df.filter(manipulation=4)
+
+  def get_maze_setting(maze_str: str) -> str:
+    if "short" in maze_str.lower():
+      return "short"
+    elif "long" in maze_str.lower():
+      return "long"
+    raise ValueError(f"Could not determine setting from maze string: {maze_str}")
+
+  # Add setting column based on maze name
+  user_df = user_df.with_columns(
+    setting=pl.col("maze").map_elements(get_maze_setting, return_dtype=pl.String)
+  )
+
+  ############################################
+  # Create combined figure with all conditions on one plot
+  ############################################
+  fig, ax = plt.subplots(figsize=(5.5, 4))
+
+  # We'll focus only on first RT
+  measure = "log_first_rt"
+  
+  # Define colors and labels for each condition
+  condition_colors = {
+    ('short', 1): default_colors["sky blue"],     # Near x Known
+    ('long', 1): default_colors["vermillion"],    # Far x Known
+    ('short', 0): default_colors["bluish green"], # Near x Unknown
+  }
+  
+  condition_labels = {
+    ('short', 1): "Near × Known Test goal",
+    ('long', 1): "Far × Known Test goal",
+    ('short', 0): "Near × Unknown Test goal",
+  }
+  
+  # Store all data for combined plot
+  all_diffs = []
+  all_means = []
+  all_sems = []
+  all_labels = []
+  all_colors = []
+  
+  options = [
+    ('short', 1),
+    ('long', 1),
+    ('short', 0),
+  ]
+  
+  # Collect data for each condition
+  for setting, tell_reuse in options:
+    stats_file.write(f"\n\n=================={setting}===================\n")
+    difference_df = compute_condition_difference_df(
+      user_df.filter(setting=setting, tell_reuse=tell_reuse),
+      measures=[measure],
+    )
+    stats_file.write(f"\n\nRT Analysis for tell_reuse={tell_reuse}\n")
+    stats_file.write("-----------------------------------------\n")
+
+    # Get statistics for this condition
+    results = power_analysis_rt_differences(
+      difference_df, measure, stats_file=stats_file
+    )
+    
+    # Store data for plotting
+    all_diffs.append(difference_df[measure].to_numpy())
+    all_means.append(results["mean"])
+    all_sems.append(results["se"])
+    all_labels.append(condition_labels[(setting, tell_reuse)])
+    all_colors.append(condition_colors[(setting, tell_reuse)])
+
+  # Create bar plot with all conditions
+  x_pos = np.arange(len(all_means))
+  bars = ax.bar(
+    x_pos,
+    all_means,
+    yerr=all_sems,
+    capsize=5,
+    color=all_colors,
+    error_kw=dict(ecolor=default_colors["vermillion"]),
+  )
+
+  # Add individual points with jitter
+  for i, diffs in enumerate(all_diffs):
+    x_jitter = np.random.normal(i, 0.125, size=len(diffs))
+    ax.scatter(x_jitter, diffs, alpha=0.3, color="black", s=20)
+
+  # Add zero line
+  ax.axhline(y=0, color="black", linestyle="--", alpha=0.5)
+
+  # Customize plot
+  ax.set_xticks(x_pos)
+  ax.set_xticklabels([])
+  ax.set_ylabel("Log RT Difference", fontsize=DEFAULT_LABEL_SIZE)
+  ax.set_title("Reaction Time Differences Across Conditions", fontsize=DEFAULT_TITLE_SIZE)
+  ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
+  ax.grid(True, linestyle="--", alpha=0.7)
+
+  # Create legend with colored patches
+  legend_elements = [
+    mpatches.Patch(color=all_colors[i], label=all_labels[i])
+    for i in range(len(all_labels))
+  ]
+  ax.legend(handles=legend_elements, loc="lower right", fontsize=DEFAULT_LEGEND_SIZE)
+
+  # Set y-axis limits based on all data points
+  all_data = np.concatenate(all_diffs)
+  y_min, y_max = np.percentile(all_data, [1, 99])
+  y_range = y_max - y_min
+  ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+
+  # Adjust layout
+  plt.tight_layout()
+
+  # Save combined figure in multiple formats
+  if save_figs:
+    filter_str = ",".join(filter_columns)
+    base_path = os.path.join(save_dir, f"exp4_2_rt_diff_combined_filter_{filter_str}")
+    fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
+    fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
+  if display_figs:
+    plt.show()
+
+  # Close stats file at the end
+  stats_file.close()
+  if verbosity > 0:
+    with open(stats_filename, "r") as f:
+      print(f.read())
+
+
 def shortcut_results(
   user_df: DataFrame,
   model_df: DataFrame,
@@ -1686,145 +1641,6 @@ def start_results(
     with open(os.path.join(save_dir, "stats.txt"), "r") as f:
       print(f.read())
 
-
-def juncture_results(
-  user_df: DataFrame,
-  # model_df: DataFrame,
-  save_dir: str,
-  filter_columns: List[str] = None,
-  display_figs: bool = False,
-  save_figs: bool = True,
-  verbosity: int = 0,
-  tell_reuse_options=[1, 0],
-):
-  """Analyze results from experiment 4.
-
-  Args:
-      user_df (DataFrame): DataFrame containing user data
-      model_df (DataFrame): DataFrame containing model data
-      save_dir (str): Directory to save figures
-      filter_columns (List[str], optional): Columns to use for outlier filtering in RT analysis.
-          Defaults to ['avg_rt'].
-      display_figs (bool, optional): Whether to display figures. Defaults to False.
-      save_figs (bool, optional): Whether to save figures. Defaults to True.
-  """
-
-  save_dir = os.path.join(save_dir, "exp4")
-  os.makedirs(save_dir, exist_ok=True)
-  # Default to ['avg_rt'] if no filter columns specified
-  filter_columns = filter_columns or []
-
-  # Open stats file
-  stats_filename = os.path.join(save_dir, "stats.txt")
-  stats_file = open(stats_filename, "w")
-  stats_file.write("Experiment 4 Statistical Analysis\n\n")
-
-  ##################
-  # Add setting column based on maze name
-  ##################
-  user_df = user_df._df  # fancy merging will use regular df
-  user_df = user_df.filter(manipulation=4)
-
-  def get_maze_setting(maze_str: str) -> str:
-    if "short" in maze_str.lower():
-      return "short"
-    elif "long" in maze_str.lower():
-      return "long"
-    raise ValueError(f"Could not determine setting from maze string: {maze_str}")
-
-  # Add setting column based on maze name
-  user_df = user_df.with_columns(
-    setting=pl.col("maze").map_elements(get_maze_setting, return_dtype=pl.String)
-  )
-
-  ############################################
-  # Create combined figure
-  ############################################
-  fig, axs = plt.subplots(1, 3, figsize=(15, 4))
-
-  idx = 0
-
-  xlabels = [
-    "First",
-    # "Max",
-    "Average",
-  ]
-  measures = [
-    "log_first_rt",
-    # "log_max_rt",
-    "log_avg_rt",
-  ]
-  colors = [
-    default_colors["google blue"],
-    # default_colors["sky blue"],
-    default_colors["google orange"],
-  ]
-  for setting in ["short", "long"]:
-    stats_file.write(f"\n\n=================={setting}===================\n")
-    for tell_reuse in tell_reuse_options:
-      if idx > 2:
-        break
-      difference_df = compute_condition_difference_df(
-        user_df.filter(setting=setting, tell_reuse=tell_reuse),
-        measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
-      )
-      stats_file.write(f"\n\nRT Analysis for tell_reuse={tell_reuse}\n")
-      stats_file.write("-----------------------------------------\n")
-
-      label = dict(short="Near", long="Far")[setting]
-      v = {0: "Unknown", 1: "Known"}[tell_reuse]
-
-      plot_rt_differences(
-        difference_df,
-        ax=axs[idx],
-        measures=measures,
-        title=f"Exp 2 RT Diff ({label} x {v})",
-        colors=colors,
-        ylabel="log seconds",
-        xlabels=xlabels,
-        stats_file=stats_file,
-      )
-      idx += 1
-
-      # Create and save individual figure
-      if save_figs:
-        ind_fig, ind_ax = plt.subplots(figsize=(6, 4))
-        plot_rt_differences(
-          difference_df,
-          ax=ind_ax,
-          measures=measures,
-          title=f"Exp 2 RT Diff ({label} x {v})",
-          colors=colors,
-          ylabel="log seconds",
-          xlabels=xlabels,
-          stats_file=None,  # Don't write stats again
-        )
-        filter_str = ",".join(filter_columns)
-        # Save individual figure in multiple formats
-        base_path = os.path.join(
-          save_dir, f"exp4_2_rt_diff_{setting}_{v}_filter_{filter_str}"
-        )
-        ind_fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
-        ind_fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
-        plt.close(ind_fig)  # Close individual figure
-
-  # Adjust layout
-  plt.tight_layout()
-
-  # Save combined figure in multiple formats
-  if save_figs:
-    filter_str = ",".join(filter_columns)
-    base_path = os.path.join(save_dir, f"exp4_2_rt_diff_combined_filter_{filter_str}")
-    fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
-    fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
-  if display_figs:
-    plt.show()
-
-  # Close stats file at the end
-  stats_file.close()
-  if verbosity > 0:
-    with open(stats_filename, "r") as f:
-      print(f.read())
 
 
 

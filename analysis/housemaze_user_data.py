@@ -353,7 +353,7 @@ def make_row(
     room=int(get_task_room(timesteps, task_groups=groups)),
   )
   row.update(datum["user_data"])
-
+  row.update(user_storage['user_info'])
   ##########
   # get experiment name from file
   ##########
@@ -707,37 +707,40 @@ def make_episode_data(
     def terminated(e):
       return features_achieved(e)
 
-    def get_rt(e: EpisodeData):
+    def get_log_rt(e: EpisodeData):
       return np.log(e.reaction_times + 1e-5)
 
     def total_rt(e: EpisodeData):
-      return np.sum(get_rt(e)[:-1])
+      return np.sum(e.reaction_times[:-1])
 
-    def avg_rt(e: EpisodeData):
-      return np.mean(get_rt(e)[:-1])
+    def log_total_rt(e: EpisodeData):
+      return np.sum(get_log_rt(e)[:-1])
 
-    def first_rt(e: EpisodeData):
-      return get_rt(e)[0]
+    def log_avg_rt(e: EpisodeData):
+      return np.mean(get_log_rt(e)[:-1])
 
-    def max_rt(e: EpisodeData):
-      return np.max(get_rt(e)[:-1])
+    def log_first_rt(e: EpisodeData):
+      return get_log_rt(e)[0]
 
-    def max_post_rt(e: EpisodeData):
-      return np.max(get_rt(e)[1:-1])
+    def log_max_rt(e: EpisodeData):
+      return np.max(get_log_rt(e)[:-1])
 
-    def max_init_post_rt(e: EpisodeData):
-      n = len(get_rt(e)[:-1]) // 2 + 1
-      return np.max(get_rt(e)[1:n])
+    def log_max_post_rt(e: EpisodeData):
+      return np.max(get_log_rt(e)[1:-1])
 
-    def max_final_rt(e: EpisodeData):
-      n = len(get_rt(e)[:-1]) // 2 + 1
-      return np.max(get_rt(e)[-n:-1])
+    def log_max_init_post_rt(e: EpisodeData):
+      n = len(get_log_rt(e)[:-1]) // 2 + 1
+      return np.max(get_log_rt(e)[1:n])
 
-    def max_end_rt(e: EpisodeData):
-      return np.max(get_rt(e)[-11:-1])
+    def log_max_final_rt(e: EpisodeData):
+      n = len(get_log_rt(e)[:-1]) // 2 + 1
+      return np.max(get_log_rt(e)[-n:-1])
 
-    def avg_post_rt(e: EpisodeData):
-      return np.mean(get_rt(e)[1:-1])
+    def log_max_end_rt(e: EpisodeData):
+      return np.max(get_log_rt(e)[-11:-1])
+
+    def log_avg_post_rt(e: EpisodeData):
+      return np.mean(get_log_rt(e)[1:-1])
 
     def path_length(e: EpisodeData):
       return len(e.actions[:-1])
@@ -746,15 +749,17 @@ def make_episode_data(
       "success": success,
       "path_length": path_length,
       "termination": terminated,
-      "log_first_rt": first_rt,
-      "log_avg_rt": avg_rt,
-      "log_total_rt": total_rt,
-      "log_avg_post_rt": avg_post_rt,
-      "log_max_rt": max_rt,
-      "log_max_post_rt": max_post_rt,
-      "log_max_init_post_rt": max_init_post_rt,
-      "log_max_end_rt": max_end_rt,
-      "log_max_final_rt": max_final_rt,
+      "log_first_rt": log_first_rt,
+      "first_rt": lambda e: e.reaction_times[0],
+      "log_avg_rt": log_avg_rt,
+      "log_total_rt": log_total_rt,
+      "total_rt": total_rt,
+      "log_avg_post_rt": log_avg_post_rt,
+      "log_max_rt": log_max_rt,
+      "log_max_post_rt": log_max_post_rt,
+      "log_max_init_post_rt": log_max_init_post_rt,
+      "log_max_end_rt": log_max_end_rt,
+      "log_max_final_rt": log_max_final_rt,
     }
     computed_values = {key: [] for key in measures}
 
@@ -854,7 +859,9 @@ def get_human_data(
   valid_files,
   overwrite_episode_data=False,
   overwrite_episode_info=True,
+  load_df_only: bool = False,
   require_finished: bool = True,
+  debug=False,
 ):
   from experiment_utils import SuccessTrackingAutoResetWrapper
 
@@ -871,15 +878,29 @@ def get_human_data(
   end = SuccessTrackingAutoResetWrapper(base_env)
   example_web_timestep = end.reset(dummy_rng, dummy_env_params)
 
+  data_dir = "/Users/wilka/git/research/results/human_dyna/"
+  df_location = os.path.join(data_dir, "user_data/exps/all_data.csv")
   ################
   # Load data
   ################
+
+  # Try to load existing dataframe if load_df_only is True
+  if load_df_only and os.path.exists(df_location) and not overwrite_episode_info:
+    try:
+      import polars as pl
+      print(f"Loading existing dataframe from {df_location}")
+      return pl.read_csv(df_location)
+    except Exception as e:
+      print(f"Failed to load existing dataframe: {e}")
+      # Fall through to creating a new dataframe
+
   initial_user_df = make_all_episode_data(
     files=valid_files,
     example_timestep=example_web_timestep,
     overwrite_episode_data=overwrite_episode_data,
     overwrite_episode_info=overwrite_episode_info,
     require_finished=require_finished,
+    debug=debug,
   )
 
   def bad_episode(e):
@@ -889,6 +910,11 @@ def get_human_data(
     return remove
 
   initial_user_df = initial_user_df.filter(episode_filter=bad_episode)
+
+  # Save the dataframe for future use
+  initial_user_df._df.write_csv(df_location)
+  if load_df_only:
+    return initial_user_df._df
 
   return initial_user_df
 
