@@ -126,885 +126,885 @@ class EpisodeData(NamedTuple):
   transitions: struct.PyTreeNode = None
 
 
-def success(e: EpisodeData):
-  """Returns 1.0 if episode received reward > 0.5 at any timestep, 0.0 otherwise."""
-  rewards = e.timesteps.reward
-  # return rewards
-  assert rewards.ndim == 1, "this is only defined over vector, e.g. 1 episode"
-  success = rewards > 0.5
-  return success.any().astype(np.float32)
-
-
-def get_in_episode(timestep):
-  # get mask for within episode
-  non_terminal = timestep.discount
-  is_last = timestep.last()
-  term_cumsum = jnp.cumsum(is_last, -1)
-  in_episode = (term_cumsum + non_terminal) < 2
-  return in_episode
-
-
-def filter_train_by_min_success(df: DataFrame, min_successes: int = 16):
-  """Filter out users who did not achieve enough successes during training.
-
-  Args:
-      df (DataFrame): DataFrame containing episodes for a single user
-      min_successes (int, optional): Minimum number of successful episodes required. Defaults to 16.
-
-  Returns:
-      bool: True if user should be removed (did not meet min_successes), False otherwise
-
-  Notes:
-      - Applies success() function to each episode to count total successes
-      - Prints debug info about removed users including:
-          - Success rate
-          - Number of successes vs minimum required
-          - Total number of episodes
-  """
-  successes = df.apply(success)
-  remove = True
-  if len(successes) == 0:
-    return remove
-
-  user = df["user_id"].unique().to_list()[0]
-  nsuccess = int(sum(successes))
-  remove = nsuccess < min_successes
-  if remove:
-    print(
-      f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{min_successes}/{len(successes)}"
-    )
-  return remove
-
-
-def filter_outliers(
-  df: DataFrame,
-  filter_columns: List[str],
-  method: str = "iqr",
-  verbose: bool = False,
-  threshold: float = 1.5,
-) -> DataFrame:
-  """Filter outliers from specified columns using various methods.
-
-  Args:
-      df (DataFrame): Input DataFrame
-      filter_columns (list): List of column names to check for outliers
-      method (str): Method to use for outlier detection ('iqr', 'zscore', or 'percentile')
-      threshold (float): Threshold for outlier detection:
-          - For IQR: Number of IQRs to use (default: 1.5)
-          - For zscore: Number of standard deviations (default: 3)
-          - For percentile: Percentile range from 0-100 (default: 1, meaning 1st-99th percentile)
-
-  Returns:
-      DataFrame: Filtered DataFrame with outliers removed
-  """
-  original_size = len(df)
-
-  # Create mask (all True initially)
-  mask = np.ones(len(df), dtype=bool)
-  bounds = {}
-
-  # Check each column
-  for col in filter_columns:
-    values = np.array(df[col])
-
-    if method == "iqr":
-      q1 = np.percentile(values, 25)
-      q3 = np.percentile(values, 75)
-      iqr = q3 - q1
-      lower_bound = q1 - threshold * iqr
-      upper_bound = q3 + threshold * iqr
-
-    elif method == "zscore":
-      mean = np.mean(values)
-      std = np.std(values)
-      lower_bound = mean - threshold * std
-      upper_bound = mean + threshold * std
-
-    elif method == "percentile":
-      lower_bound = np.percentile(values, threshold)
-      upper_bound = np.percentile(values, 100 - threshold)
-
-    else:
-      raise ValueError(f"Unknown method: {method}")
-
-    bounds[col] = {"lower": lower_bound, "upper": upper_bound}
-
-    # Update mask with column constraints
-    col_mask = (values >= lower_bound) & (values <= upper_bound)
-    mask &= col_mask
-
-  # Apply the mask to filter outliers
-  filtered_df = df.filter(pl.Series(mask))
-
-  # Print how many were filtered
-  n_filtered = original_size - len(filtered_df)
-  if n_filtered > 0 and verbose:
-    removed_df = df.filter(pl.Series(~mask))
-    users_removed = set()
-    print(
-      f"Filtered {n_filtered} outliers from {original_size} rows using {method} method"
-    )
-    for row in removed_df.iter_rows(named=True):
-      user = str(row["user_id"])
-      users_removed.add(user)
-      for col in filter_columns:
-        val = row[col]
-        bound = bounds[col]
-        if val < bound["lower"] or val > bound["upper"]:
-          print(
-            f"\t{user}. {col}:{val} \t(bounds: {bound['lower']} to {bound['upper']})"
-          )
-    print(f"Users removed: {users_removed}")
-
-  return filtered_df
-
-
-def bar_plot_error(
-  human_data, model_stats=None, ax=None, ylim=None, legend=True, xlabels=False
-):
-  """Plot bar chart comparing human and model performance with error bars.
-
-  Args:
-      human_data: Dict containing human_means and human_se
-      model_stats: DataFrame with columns 'algo', 'mean', 'se'
-      ax: Optional matplotlib axis
-      ylim: Optional y-axis limits tuple
-  """
-  if ax is None:
-    fig, ax = plt.subplots(figsize=(8, 6))
-  else:
-    fig = ax.figure
-
-  # Combine human and model data
-  all_data = {"human": human_data["means"]}
-  # Add model data
-  yerr = [human_data["se"]]  # Start with human SE
-  if model_stats is not None:
-    algos = model_stats["algo"].unique().to_list()
-    for algo in model_order:
-      if not algo in algos:
-        continue
-      row = model_stats.filter(algo=algo)
-      all_data[algo] = row["mean"].to_numpy()[0]
-      yerr.append(row["se"].to_numpy()[0])
-
-  # Plot bars
-  x_pos = np.arange(len(all_data))
-  ordered_keys = [k for k in model_order if k in all_data]
-  bars = ax.bar(
-    x_pos,
-    [all_data[k] for k in ordered_keys],
-    yerr=yerr,
-    capsize=5,
-    color=[model_colors.get(k, "#333333") for k in ordered_keys],
-  )
-
-  # Update x-tick labels to match new ordering
-  if xlabels:
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels([model_names[k] for k in ordered_keys], rotation=45, ha="right")
-  else:
-    ax.set_xticks([])
-
-  # Add individual dots for human data with jitter
-  if "raw" in human_data:
-    x_jitter = np.random.normal(0, 0.15, size=len(human_data["raw"]))
-    ax.scatter(
-      [0 + j for j in x_jitter],
-      human_data["raw"],
-      color="black",
-      alpha=0.5,
-      zorder=3,
-    )
-
-  # Add chance level line
-  ax.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
-
-  if ylim is not None:
-    ax.set_ylim(ylim)
-
-  if legend:
-    legend_elements = bars
-    legend_labels = [model_names[k] for k in ordered_keys]
-    ax.legend(legend_elements, legend_labels, loc="lower right")
-
-  ax.grid(True, linestyle="--", alpha=0.7)
-
-  return fig, ax
-
-
-def plot_bar_rt_comparison(
-  df,
-  rt_column,
-  ax=None,
-  title=None,
-  ylabel=None,
-  xlabels=None,
-  colors=None,
-  stats_file=None,
-  percentile_ylim: bool = True,
-  n_simulations: int = 500,
-):
-  """Plot comparison of reaction times between multiple conditions.
-
-  Args:
-      episode_sets: List of DataFrames, each containing episodes for one condition
-      rt_column: Name of reaction time column to analyze (e.g. 'first_rt', 'avg_rt')
-      ax: Optional matplotlib axis to plot on
-      display_stats: Whether to print statistical test results
-      title: Custom title
-      ylabel: Custom y-axis label
-      xlabels: List of labels for x-axis ticks
-      colors: List of colors for bars
-
-  Returns:
-      matplotlib axis
-  """
-
-  power_results = power_analysis_rt_across_groups(
-    df, measure=rt_column, stats_file=stats_file, n_simulations=n_simulations
-  )
-  means = (
-    power_results["descriptive"]["means"]["no_reuse"],
-    power_results["descriptive"]["means"]["reuse"],
-  )
-  sems = (
-    power_results["descriptive"]["ses"]["no_reuse"],
-    power_results["descriptive"]["ses"]["reuse"],
-  )
-
-  # Create bar plot
-  x_pos = np.arange(len(means))
-  ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[: len(means)])
-
-  # Add individual points with jitter
-  all_data = []
-  for i, key in enumerate(["no_reuse", "reuse"]):
-    data = power_results["raw_means"][key]
-    x_jitter = np.random.normal(i, 0.04, size=len(data))
-    ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
-    all_data.append(data)
-
-  # Customize plot
-  ax.set_xticks(x_pos)
-  if xlabels:
-    ax.set_xticklabels(xlabels, ha="center")
-  ax.set_ylabel(ylabel or f"Log {rt_column}", fontsize=DEFAULT_LABEL_SIZE)
-  ax.set_title(title or f"{rt_column} Comparison", fontsize=DEFAULT_TITLE_SIZE)
-  ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
-  ax.grid(True, linestyle="--", alpha=0.7)
-
-  if percentile_ylim:
-    all_data_combined = np.concatenate(all_data)
-    y_min, y_max = np.percentile(all_data_combined, [1, 99])
-    y_range = y_max - y_min
-    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
-
-  return ax
-
-
-def plot_bar_rt_comparison_columns(
-  df,
-  rt_columns,
-  ax=None,
-  title=None,
-  ylabel=None,
-  xlabels=None,
-  colors=None,
-):
-  """Plot comparison of reaction times between multiple columns in a DataFrame.
-
-  Args:
-      df: DataFrame containing reaction time data
-      rt_columns: List of column names to analyze (e.g. ['first_rt', 'avg_rt'])
-      ax: Optional matplotlib axis to plot on
-      title: Custom title
-      ylabel: Custom y-axis label
-      xlabels: List of labels for x-axis ticks (defaults to column names)
-      colors: List of colors for bars
-
-  Returns:
-      matplotlib axis
-  """
-
-  if colors is None:
-    colors = [i for i in default_colors.values()]
-    # Extend colors if needed
-    while len(colors) < len(rt_columns):
-      colors.extend(colors)
-
-  if ax is None:
-    _, ax = plt.subplots(figsize=(5, 4))
-
-  # Calculate log RTs and group by user for each column
-  all_data = []
-  for col in rt_columns:
-    log_col = f"log_{col}"
-    stats = (
-      df.with_columns((1000 * pl.col(col)).log().alias(log_col))
-      .group_by("user_id")
-      .agg(pl.col(log_col).mean())
-    )
-    all_data.append(stats[log_col].to_numpy())
-
-  # Calculate means and standard errors
-  means = [np.mean(data) for data in all_data]
-  sems = [np.std(data) / np.sqrt(len(data)) for data in all_data]
-
-  # Create bar plot
-  x_pos = np.arange(len(rt_columns))
-  bars = ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[: len(rt_columns)])
-
-  # Add individual points with jitter
-  for i, data in enumerate(all_data):
-    x_jitter = np.random.normal(i, 0.04, size=len(data))
-    ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
-
-  # Customize plot
-  ax.set_xticks(x_pos)
-  if xlabels:
-    ax.set_xticklabels(xlabels, ha="center")
-  else:
-    ax.set_xticklabels(rt_columns, ha="center")
-  ax.set_ylabel(ylabel or "Log Reaction Time", fontsize=DEFAULT_LABEL_SIZE)
-  ax.set_title(title or "Reaction Time Comparison", fontsize=DEFAULT_TITLE_SIZE)
-  ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
-  ax.grid(True, linestyle="--", alpha=0.7)
-
-  return ax
-
-from analysis.experiment_analysis import plot_rt_differences
-
-
-def compute_condition_difference_df(
-  df: pl.DataFrame, measures: List[str]
-) -> pl.DataFrame:
-  """Compute differences between conditions 1 and 2 for matched reversal conditions.
-
-  Args:
-      df: DataFrame containing columns [condition, reversal, setting, {measures}]
-      setting: Which setting to filter for ('short' or 'long')
-      measures: List of measure column names to compute differences for
-
-  Returns:
-      DataFrame with columns [user_id, reversal, diff_{measure1}, diff_{measure2}, ...]
-  """
-
-  # Get condition 1 and 2 data separately
-  cond1_df = df.filter(condition=1)
-  cond2_df = df.filter(condition=2)
-
-  # Join the dataframes on user_id and reversal to match pairs
-  diff_df = cond1_df.join(cond2_df, on=["user_id", "reversal"], suffix="_cond2")
-
-  # Compute differences for each measure
-  diff_exprs = [
-    (pl.col(f"{measure}_cond2") - pl.col(measure)).alias(measure)
-    for measure in measures
-  ]
-
-  # Select user_id, reversal and all difference columns
-  diff_df = diff_df.select(["user_id", "reversal"] + diff_exprs)
-
-  return diff_df
-
-
-# define functions to run power analysis for linear mixed effects model (LME)
-
-
-def simulate_mixed_effects_trial(args):
-  """Simulate a single mixed effects trial and test for significance.
-
-  Args:
-      args: Tuple containing:
-          - num_subjects: Number of subjects in simulation
-          - trials_per_subject: Number of trials per subject
-          - B0: Intercept coefficient
-          - B1: Slope coefficient
-          - random_effect_var: Variance of random effects
-          - residual_var: Variance of residuals
-          - alpha: Significance level for test
-
-  Returns:
-      bool: True if result is significant at alpha level
-  """
-  # Unpack arguments
-  num_subjects, trials_per_subject, B0, B1, random_effect_var, residual_var, alpha = (
-    args
-  )
-
-  # Generate data
-  user_ids = np.repeat(range(num_subjects), trials_per_subject)
-  reuse = np.random.choice([0, 1], num_subjects * trials_per_subject)
-  random_intercepts = np.random.normal(0, np.sqrt(random_effect_var), num_subjects)
-  random_intercepts = np.repeat(random_intercepts, trials_per_subject)
-  residuals = np.random.normal(
-    0, np.sqrt(residual_var), num_subjects * trials_per_subject
-  )
-
-  # Generate response variable
-  RT = B0 + B1 * reuse + random_intercepts + residuals
-
-  # Create and test model
-  data = pd.DataFrame({"RT": RT, "reuse": reuse, "user_id": user_ids})
-  model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
-  result = model.fit(reml=True)
-
-  return result.pvalues["reuse"] < alpha
-
-
-def mixed_effects_compute_power(
-  num_subjects: int,
-  trials_per_subject: int,
-  B0: float,
-  B1: float,
-  random_effect_var: float,
-  residual_var: float,
-  n_simulations: int = 500,
-  alpha: float = 0.05,
-  parallel: bool = False,
-  n_jobs: int = -1,
-  verbose: bool = False,
-) -> float:
-  """Compute power for mixed effects model using parallel or sequential processing.
-
-  Args:
-      num_subjects: Number of subjects in each simulation
-      trials_per_subject: Number of trials per subject
-      B0: Intercept coefficient
-      B1: Slope coefficient
-      random_effect_var: Variance of random effects
-      residual_var: Variance of residuals
-      n_simulations: Number of simulations to run (default: 500)
-      alpha: Significance level (default: 0.05)
-      parallel: Whether to use parallel processing (default: True)
-      n_jobs: Number of processes to use if parallel (-1 for all cores, default: -1)
-      **kwargs: Additional arguments to pass to simulate_mixed_effects_trial
-
-  Returns:
-      float: Computed power (proportion of significant results)
-  """
-  # Prepare simulation parameters
-  sim_args = [
-    (
-      num_subjects,
-      trials_per_subject,
-      B0,
-      B1,
-      random_effect_var,
-      residual_var,
-      alpha,
-    )
-  ] * n_simulations
-
-  if parallel:
-    # Use all available cores if n_jobs is -1
-    n_jobs = None if n_jobs == -1 else n_jobs
-
-    # Run simulations in parallel
-    with Pool(processes=n_jobs) as pool:
-      results = list(
-        tqdm(
-          pool.imap(simulate_mixed_effects_trial, sim_args),
-          total=n_simulations,
-          desc="Simulating data",
-          disable=not verbose,
-        )
-      )
-  else:
-    # Run simulations sequentially
-    results = [
-      simulate_mixed_effects_trial(args)
-      for args in tqdm(sim_args, desc="Simulating data")
-    ]
-
-  return sum(results) / n_simulations
-
-
-######################################
-# Power Analysis function
-######################################
-
-
-def power_analysis_path_reuse(
-  df: pl.DataFrame,
-  measure: str = "reuse",
-  mu: float = 0.5,
-  alpha: float = 0.05,
-  plot: bool = False,
-  stats_file=None,
-):
-  """Analyze binary proportion data using appropriate statistical test based on normality.
-
-  Args:
-      df: DataFrame containing reuse column (binary 0/1) and user_id
-      mu: null hypothesis value (default: 0.5)
-      alpha: significance level for tests (default: 0.05)
-      plot: whether to show diagnostic plots (default: False)
-      stats_file: optional file handle to write stats output
-  """
-  # First aggregate by user to get their mean reuse rate
-  user_means = df.group_by("user_id").agg(
-    reuse_rate=pl.col(measure).mean(), n_trials=pl.col(measure).count()
-  )
-  reuse_rates = user_means["reuse_rate"].to_numpy()
-  n_users = len(reuse_rates)
-  n_trials = user_means["n_trials"].to_numpy()
-
-  # Test normality using Shapiro-Wilk test
-  _, normality_p = stats.shapiro(reuse_rates)
-  is_normal = normality_p > alpha
-
-  # Calculate mean and standard error
-  p_obs = np.mean(reuse_rates)
-  se = np.std(reuse_rates, ddof=1) / np.sqrt(n_users)
-
-  if is_normal:
-    # One-sided t-test
-    t_stat, p_value = stats.ttest_1samp(reuse_rates, mu)
-    # Convert to one-sided p-value if t-statistic is in predicted direction
-    p_value = p_value / 2 if t_stat > 0 else 1 - p_value / 2
-
-    # Calculate Cohen's d effect size
-    d = (p_obs - mu) / np.std(reuse_rates, ddof=1)
-    effect_size = {"name": "Cohen's d", "value": d}
-
-    test_name = "One-sample t-test"
-    test_stat = t_stat
-
-  else:
-    # One-sided Wilcoxon signed-rank test
-    w_stat, p_value = stats.wilcoxon(reuse_rates - mu, alternative="greater")
-
-    # Calculate r effect size (correlation coefficient) for Wilcoxon test
-    z = stats.norm.ppf(1 - p_value)  # Convert p-value to Z score
-    r = z / np.sqrt(n_users)  # Standardize by sample size
-    effect_size = {"name": "r", "value": r}
-
-    test_name = "Wilcoxon signed-rank test"
-    test_stat = w_stat
-
-  # Print summary
-  summary = f"\nAnalysis Results:\n"
-  summary += f"N = {n_users} participants (mean {np.mean(n_trials):.1f} trials per participant)\n"
-  summary += f"Mean reuse rate: {p_obs:.3f} (SE: {se:.3f})\n\n"
-  summary += f"Normality Test (Shapiro-Wilk):\n"
-  summary += f"p = {normality_p:.3f} ({'Normal' if is_normal else 'Non-normal'} distribution)\n\n"
-  summary += f"{test_name}:\n"
-  summary += f"statistic = {test_stat:.3f}\n"
-  summary += f"p = {p_value:.3f}\n\n"
-  summary += f"Effect Size ({effect_size['name']}):\n"
-  summary += f"{effect_size['value']:.3f}\n"
-
-  # Calculate required sample sizes for different power levels
-  power_levels = [0.8, 0.9, 0.95]
-  summary += "\nRequired Sample Sizes:\n"
-
-  if is_normal:
-    # For t-test
-    effect = effect_size["value"]  # Cohen's d
-    for power in power_levels:
-      analysis = TTestPower()
-      n_required = analysis.solve_power(
-        effect_size=effect, alpha=alpha, power=power, alternative="larger"
-      )
-      summary += f"Power {power * 100:g}%: N ≥ {ceil(n_required)} participants\n"
-  else:
-    # For Wilcoxon test (based on asymptotic relative efficiency)
-    # Wilcoxon test is ~95% as efficient as t-test
-    effect = effect_size["value"]  # r score
-    # Convert r to d using formula: d = 2r/sqrt(1-r^2)
-    d = 2 * effect / sqrt(1 - effect**2) if abs(effect) < 1 else float("inf")
-    for power in power_levels:
-      analysis = TTestPower()
-      n_required = analysis.solve_power(
-        effect_size=d, alpha=alpha, power=power, alternative="larger"
-      )
-      # Adjust for Wilcoxon efficiency
-      n_required = ceil(n_required / 0.95)
-      summary += f"Power {power * 100:g}%: N ≥ {n_required} participants\n"
-
-  if stats_file:
-    stats_file.write(summary)
-
-  if plot:
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-    # Histogram with density plot
-    sns.histplot(data=user_means, x="reuse_rate", kde=True, ax=ax1)
-    ax1.axvline(mu, color="r", linestyle="--", label=f"Null (μ={mu})")
-    ax1.set_title("Distribution of User Reuse Rates")
-    ax1.set_xlabel("Reuse Rate")
-    ax1.legend()
-
-    # Q-Q plot
-    stats.probplot(reuse_rates, dist="norm", plot=ax2)
-    ax2.set_title("Q-Q Plot")
-
-    plt.tight_layout()
-    plt.show()
-
-  return {
-    "n_users": n_users,
-    "mean_trials": np.mean(n_trials),
-    "reuse_rates": reuse_rates,
-    "mean": p_obs,
-    "se": se,
-    "normality": {"is_normal": is_normal, "p_value": normality_p},
-    "test": {"name": test_name, "statistic": test_stat, "p_value": p_value},
-    "effect_size": effect_size,
-  }
-
-
-def power_analysis_rt_across_groups(
-  df: pl.DataFrame, measure: str, alpha=0.05, stats_file=None, n_simulations=500
-):
-  """Perform power analysis for between-groups comparison using linear mixed effects model.
-
-  Args:
-      df: DataFrame with columns [user_id, reuse, rt] where:
-          - user_id: identifier for each participant
-          - reuse: boolean indicating condition
-          - rt: reaction time measurement (in log seconds)
-      alpha: Significance level (default: 0.05)
-      stats_file: Optional file handle to write stats output
-
-  Returns:
-      dict containing analysis results
-  """
-  # Convert to pandas for statsmodels compatibility
-  data = df._df.select(["user_id", "reuse", measure]).to_pandas()
-  data.columns = ["user_id", "reuse", "RT"]
-
-  # Fit linear mixed effects model
-  model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
-  result = model.fit(reml=True)
-
-  # Calculate descriptive statistics by group
-  user_stats = df.group_by(["user_id", "reuse"]).agg(mean_val=pl.col(measure).mean())
-
-  reuse_means = user_stats.filter(pl.col("reuse") == True)["mean_val"].to_numpy()
-  no_reuse_means = user_stats.filter(pl.col("reuse") == False)["mean_val"].to_numpy()
-
-  n1, n2 = len(no_reuse_means), len(reuse_means)
-  mean1, mean2 = np.mean(no_reuse_means), np.mean(reuse_means)
-  var1, var2 = np.var(no_reuse_means, ddof=1), np.var(reuse_means, ddof=1)
-
-  # Get effect size (standardized coefficient)
-  param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
-  effect_size = result.params[param_name] / np.std(data["RT"])
-
-  # Calculate required sample sizes for different power levels
-  power_levels = [0.8, 0.9, 0.95]
-  n_required = {}
-
-  # Binary search for each power level
-  for target_power in tqdm(power_levels, desc="Power levels"):
-    left = 10  # minimum sample size
-    right = 200  # maximum sample size to try
-
-    while left < right:
-      n = (left + right) // 2
-      power = mixed_effects_compute_power(
-        num_subjects=n,
-        trials_per_subject=len(data) // len(data["user_id"].unique()),
-        B0=result.params["Intercept"],
-        B1=result.params[param_name],
-        random_effect_var=result.cov_re.iloc[0, 0],
-        residual_var=result.scale,
-        n_simulations=n_simulations,
-      )
-
-      if abs(power - target_power) < 0.01:  # within 1% of target
-        break
-      elif power < target_power:
-        left = n + 1
-      else:
-        right = n - 1
-
-    n_required[target_power] = n
-
-  # Calculate actual power with current sample size
-  current_power = mixed_effects_compute_power(
-    num_subjects=len(data["user_id"].unique()),
-    trials_per_subject=len(data) // len(data["user_id"].unique()),
-    B0=result.params["Intercept"],
-    B1=result.params[param_name],
-    random_effect_var=result.cov_re.iloc[0, 0],
-    residual_var=result.scale,
-    n_simulations=n_simulations,
-  )
-
-  results = {
-    "effect_size": {"name": "Standardized coefficient", "value": effect_size},
-    "n_required": n_required,
-    "current_power": current_power,
-    "test_results": {
-      "name": "Linear mixed effects model",
-      "statistic": result.tvalues[param_name],
-      "p_value": result.pvalues[param_name],
-      "n1": n1,
-      "n2": n2,
-    },
-    "descriptive": {
-      "means": {"no_reuse": mean1, "reuse": mean2},
-      "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
-      "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
-    },
-    "raw_means": {"no_reuse": no_reuse_means, "reuse": reuse_means},
-  }
-
-  if stats_file:
-    stats_file.write("\nLinear Mixed Effects Model Results:\n")
-    stats_file.write("================================\n")
-    stats_file.write(str(result.summary()) + "\n\n")
-
-    stats_file.write("Sample Sizes:\n")
-    stats_file.write(f"\tNo Reuse: {n1} users\n")
-    stats_file.write(f"\tReuse: {n2} users\n")
-    stats_file.write(
-      f"\tTrials per user: {len(data) // len(data['user_id'].unique())}\n\n"
-    )
-
-    stats_file.write("Means:\n")
-    stats_file.write(f"\tNo Reuse: {mean1:.3f}\n")
-    stats_file.write(f"\tReuse: {mean2:.3f}\n")
-    stats_file.write(f"\tDifference: {mean2 - mean1:.3f}\n\n")
-
-    stats_file.write(f"Effect size: {effect_size:.3f}\n\n")
-
-    stats_file.write("Power Analysis:\n")
-    stats_file.write(f"Current power: {current_power:.3f}\n")
-    for power, n in n_required.items():
-      stats_file.write(f"Required sample size for {power * 100:g}% power: {n}\n")
-
-  return results
-
-
-def power_analysis_rt_differences(
-  difference_df: pl.DataFrame, measure: str, alpha: float = 0.05, stats_file=None
-) -> dict:
-  """Analyze RT differences between conditions with appropriate statistical tests.
-
-  Args:
-      difference_df: DataFrame containing RT differences and user/reversal info
-      measure: Name of RT measure column being analyzed
-      alpha: significance level for tests (default: 0.05)
-      stats_file: optional file handle to write stats output
-
-  Returns:
-      dict containing test results and effect size
-  """
-  # Get mean difference per user (averaging across reversals)
-  user_means = (
-    difference_df.group_by("user_id").agg(pl.col(measure).mean()).select(measure)
-  )
-  differences = user_means.to_numpy().flatten()
-
-  n = len(differences)
-
-  # Test normality using Shapiro-Wilk test
-  _, normality_p = stats.shapiro(differences)
-  is_normal = normality_p > alpha
-
-  # Calculate mean and standard error
-  mean = np.mean(differences)
-  se = np.std(differences, ddof=1) / np.sqrt(n)
-
-  if stats_file:
-    stats_file.write(f"\n{measure}:\n")
-    stats_file.write("=" * (len(measure) + 10) + "\n")
-    stats_file.write(f"N = {n} participants\n")
-    stats_file.write(f"Mean difference = {mean:.3f} (SE: {se:.3f})\n\n")
-    stats_file.write("Normality Test (Shapiro-Wilk):\n")
-    stats_file.write(
-      f"p = {normality_p:.3f} ({'Normal' if is_normal else 'Non-normal'} distribution)\n\n"
-    )
-
-  if is_normal:
-    # One-sided paired t-test (testing if condition 1 < condition 2)
-    t_stat, p_value = stats.ttest_rel(differences, np.zeros_like(differences))
-    # Convert to one-sided p-value if t-statistic is in predicted direction
-    p_value = p_value / 2 if t_stat > 0 else 1 - p_value / 2
-
-    # Calculate Cohen's d effect size for paired differences
-    d = mean / np.std(differences, ddof=1)
-    effect_size = {"name": "Cohen's d", "value": d}
-
-    test_name = "Paired t-test"
-    test_stat = t_stat
-
-    # Power analysis for paired t-test
-    analysis = TTestPower()
-    actual_power = analysis.power(
-      effect_size=abs(d), nobs=n, alpha=alpha, alternative="larger"
-    )
-
-    # Calculate required sample sizes for different power levels
-    power_levels = [0.8, 0.9, 0.95]
-    required_n = {}
-    for power in power_levels:
-      n_required = analysis.solve_power(
-        effect_size=abs(d), alpha=alpha, power=power, alternative="larger"
-      )
-      required_n[power] = ceil(n_required)
-
-  else:
-    # One-sided Wilcoxon signed-rank test
-    w_stat, p_value = stats.wilcoxon(differences, alternative="greater")
-    test_name = "Wilcoxon signed-rank test"
-    test_stat = w_stat
-
-    # Calculate r effect size for Wilcoxon test
-    # Convert p-value to z-score using inverse normal CDF
-    z = stats.norm.ppf(1 - p_value)  # One-sided p-value
-    r = z / np.sqrt(n)  # Standardize by sample size
-    effect_size = {"name": "r", "value": r}
-
-    # Convert r to d for power analysis
-    # Formula: d = 2r/sqrt(1-r^2)
-    d = 2 * r / sqrt(1 - r**2) if abs(r) < 1 else float("inf")
-
-    # Power analysis using t-test as approximation (with 95% efficiency adjustment)
-    analysis = TTestPower()
-    actual_power = (
-      analysis.power(effect_size=abs(d), nobs=n, alpha=alpha, alternative="larger")
-      * 0.95
-    )  # Adjust for Wilcoxon efficiency
-
-    # Calculate required sample sizes for different power levels
-    power_levels = [0.8, 0.9, 0.95]
-    required_n = {}
-    for power in power_levels:
-      n_required = analysis.solve_power(
-        effect_size=abs(d), alpha=alpha, power=power, alternative="larger"
-      )
-      # Adjust for Wilcoxon efficiency
-      required_n[power] = ceil(n_required / 0.95)
-
-  if stats_file:
-    stats_file.write(f"{test_name}:\n")
-    stats_file.write(f"statistic = {test_stat:.3f}\n")
-    stats_file.write(f"p = {p_value:.3f}\n\n")
-    stats_file.write(f"Effect Size ({effect_size['name']}):\n")
-    stats_file.write(f"{effect_size['value']:.3f}\n\n")
-
-    # Add power analysis results
-    stats_file.write("Power Analysis:\n")
-    stats_file.write(f"Achieved power with current N={n}: {actual_power:.3f}\n")
-    stats_file.write("Required sample sizes:\n")
-    for power, n_req in required_n.items():
-      stats_file.write(f"  {power * 100:g}% power: N ≥ {n_req}\n")
-
-  return {
-    "n": n,
-    "mean": mean,
-    "se": se,
-    "normality": {"is_normal": is_normal, "p_value": normality_p},
-    "test": {"name": test_name, "statistic": test_stat, "p_value": p_value},
-    "effect_size": effect_size,
-    "power_analysis": {"actual_power": actual_power, "required_n": required_n},
-  }
+#def success(e: EpisodeData):
+#  """Returns 1.0 if episode received reward > 0.5 at any timestep, 0.0 otherwise."""
+#  rewards = e.timesteps.reward
+#  # return rewards
+#  assert rewards.ndim == 1, "this is only defined over vector, e.g. 1 episode"
+#  success = rewards > 0.5
+#  return success.any().astype(np.float32)
+
+
+#def get_in_episode(timestep):
+#  # get mask for within episode
+#  non_terminal = timestep.discount
+#  is_last = timestep.last()
+#  term_cumsum = jnp.cumsum(is_last, -1)
+#  in_episode = (term_cumsum + non_terminal) < 2
+#  return in_episode
+
+
+#def filter_train_by_min_success(df: DataFrame, min_successes: int = 16):
+#  """Filter out users who did not achieve enough successes during training.
+
+#  Args:
+#      df (DataFrame): DataFrame containing episodes for a single user
+#      min_successes (int, optional): Minimum number of successful episodes required. Defaults to 16.
+
+#  Returns:
+#      bool: True if user should be removed (did not meet min_successes), False otherwise
+
+#  Notes:
+#      - Applies success() function to each episode to count total successes
+#      - Prints debug info about removed users including:
+#          - Success rate
+#          - Number of successes vs minimum required
+#          - Total number of episodes
+#  """
+#  successes = df.apply(success)
+#  remove = True
+#  if len(successes) == 0:
+#    return remove
+
+#  user = df["user_id"].unique().to_list()[0]
+#  nsuccess = int(sum(successes))
+#  remove = nsuccess < min_successes
+#  if remove:
+#    print(
+#      f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{min_successes}/{len(successes)}"
+#    )
+#  return remove
+
+
+#def filter_outliers(
+#  df: DataFrame,
+#  filter_columns: List[str],
+#  method: str = "iqr",
+#  verbose: bool = False,
+#  threshold: float = 1.5,
+#) -> DataFrame:
+#  """Filter outliers from specified columns using various methods.
+
+#  Args:
+#      df (DataFrame): Input DataFrame
+#      filter_columns (list): List of column names to check for outliers
+#      method (str): Method to use for outlier detection ('iqr', 'zscore', or 'percentile')
+#      threshold (float): Threshold for outlier detection:
+#          - For IQR: Number of IQRs to use (default: 1.5)
+#          - For zscore: Number of standard deviations (default: 3)
+#          - For percentile: Percentile range from 0-100 (default: 1, meaning 1st-99th percentile)
+
+#  Returns:
+#      DataFrame: Filtered DataFrame with outliers removed
+#  """
+#  original_size = len(df)
+
+#  # Create mask (all True initially)
+#  mask = np.ones(len(df), dtype=bool)
+#  bounds = {}
+
+#  # Check each column
+#  for col in filter_columns:
+#    values = np.array(df[col])
+
+#    if method == "iqr":
+#      q1 = np.percentile(values, 25)
+#      q3 = np.percentile(values, 75)
+#      iqr = q3 - q1
+#      lower_bound = q1 - threshold * iqr
+#      upper_bound = q3 + threshold * iqr
+
+#    elif method == "zscore":
+#      mean = np.mean(values)
+#      std = np.std(values)
+#      lower_bound = mean - threshold * std
+#      upper_bound = mean + threshold * std
+
+#    elif method == "percentile":
+#      lower_bound = np.percentile(values, threshold)
+#      upper_bound = np.percentile(values, 100 - threshold)
+
+#    else:
+#      raise ValueError(f"Unknown method: {method}")
+
+#    bounds[col] = {"lower": lower_bound, "upper": upper_bound}
+
+#    # Update mask with column constraints
+#    col_mask = (values >= lower_bound) & (values <= upper_bound)
+#    mask &= col_mask
+
+#  # Apply the mask to filter outliers
+#  filtered_df = df.filter(pl.Series(mask))
+
+#  # Print how many were filtered
+#  n_filtered = original_size - len(filtered_df)
+#  if n_filtered > 0 and verbose:
+#    removed_df = df.filter(pl.Series(~mask))
+#    users_removed = set()
+#    print(
+#      f"Filtered {n_filtered} outliers from {original_size} rows using {method} method"
+#    )
+#    for row in removed_df.iter_rows(named=True):
+#      user = str(row["user_id"])
+#      users_removed.add(user)
+#      for col in filter_columns:
+#        val = row[col]
+#        bound = bounds[col]
+#        if val < bound["lower"] or val > bound["upper"]:
+#          print(
+#            f"\t{user}. {col}:{val} \t(bounds: {bound['lower']} to {bound['upper']})"
+#          )
+#    print(f"Users removed: {users_removed}")
+
+#  return filtered_df
+
+
+#def bar_plot_error(
+#  human_data, model_stats=None, ax=None, ylim=None, legend=True, xlabels=False
+#):
+#  """Plot bar chart comparing human and model performance with error bars.
+
+#  Args:
+#      human_data: Dict containing human_means and human_se
+#      model_stats: DataFrame with columns 'algo', 'mean', 'se'
+#      ax: Optional matplotlib axis
+#      ylim: Optional y-axis limits tuple
+#  """
+#  if ax is None:
+#    fig, ax = plt.subplots(figsize=(8, 6))
+#  else:
+#    fig = ax.figure
+
+#  # Combine human and model data
+#  all_data = {"human": human_data["means"]}
+#  # Add model data
+#  yerr = [human_data["se"]]  # Start with human SE
+#  if model_stats is not None:
+#    algos = model_stats["algo"].unique().to_list()
+#    for algo in model_order:
+#      if not algo in algos:
+#        continue
+#      row = model_stats.filter(algo=algo)
+#      all_data[algo] = row["mean"].to_numpy()[0]
+#      yerr.append(row["se"].to_numpy()[0])
+
+#  # Plot bars
+#  x_pos = np.arange(len(all_data))
+#  ordered_keys = [k for k in model_order if k in all_data]
+#  bars = ax.bar(
+#    x_pos,
+#    [all_data[k] for k in ordered_keys],
+#    yerr=yerr,
+#    capsize=5,
+#    color=[model_colors.get(k, "#333333") for k in ordered_keys],
+#  )
+
+#  # Update x-tick labels to match new ordering
+#  if xlabels:
+#    ax.set_xticks(x_pos)
+#    ax.set_xticklabels([model_names[k] for k in ordered_keys], rotation=45, ha="right")
+#  else:
+#    ax.set_xticks([])
+
+#  # Add individual dots for human data with jitter
+#  if "raw" in human_data:
+#    x_jitter = np.random.normal(0, 0.15, size=len(human_data["raw"]))
+#    ax.scatter(
+#      [0 + j for j in x_jitter],
+#      human_data["raw"],
+#      color="black",
+#      alpha=0.5,
+#      zorder=3,
+#    )
+
+#  # Add chance level line
+#  ax.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
+
+#  if ylim is not None:
+#    ax.set_ylim(ylim)
+
+#  if legend:
+#    legend_elements = bars
+#    legend_labels = [model_names[k] for k in ordered_keys]
+#    ax.legend(legend_elements, legend_labels, loc="lower right")
+
+#  ax.grid(True, linestyle="--", alpha=0.7)
+
+#  return fig, ax
+
+
+#def plot_bar_rt_comparison(
+#  df,
+#  rt_column,
+#  ax=None,
+#  title=None,
+#  ylabel=None,
+#  xlabels=None,
+#  colors=None,
+#  stats_file=None,
+#  percentile_ylim: bool = True,
+#  n_simulations: int = 500,
+#):
+#  """Plot comparison of reaction times between multiple conditions.
+
+#  Args:
+#      episode_sets: List of DataFrames, each containing episodes for one condition
+#      rt_column: Name of reaction time column to analyze (e.g. 'first_rt', 'avg_rt')
+#      ax: Optional matplotlib axis to plot on
+#      display_stats: Whether to print statistical test results
+#      title: Custom title
+#      ylabel: Custom y-axis label
+#      xlabels: List of labels for x-axis ticks
+#      colors: List of colors for bars
+
+#  Returns:
+#      matplotlib axis
+#  """
+
+#  power_results = power_analysis_rt_across_groups(
+#    df, measure=rt_column, stats_file=stats_file, n_simulations=n_simulations
+#  )
+#  means = (
+#    power_results["descriptive"]["means"]["no_reuse"],
+#    power_results["descriptive"]["means"]["reuse"],
+#  )
+#  sems = (
+#    power_results["descriptive"]["ses"]["no_reuse"],
+#    power_results["descriptive"]["ses"]["reuse"],
+#  )
+
+#  # Create bar plot
+#  x_pos = np.arange(len(means))
+#  ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[: len(means)])
+
+#  # Add individual points with jitter
+#  all_data = []
+#  for i, key in enumerate(["no_reuse", "reuse"]):
+#    data = power_results["raw_means"][key]
+#    x_jitter = np.random.normal(i, 0.04, size=len(data))
+#    ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
+#    all_data.append(data)
+
+#  # Customize plot
+#  ax.set_xticks(x_pos)
+#  if xlabels:
+#    ax.set_xticklabels(xlabels, ha="center")
+#  ax.set_ylabel(ylabel or f"Log {rt_column}", fontsize=DEFAULT_LABEL_SIZE)
+#  ax.set_title(title or f"{rt_column} Comparison", fontsize=DEFAULT_TITLE_SIZE)
+#  ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
+#  ax.grid(True, linestyle="--", alpha=0.7)
+
+#  if percentile_ylim:
+#    all_data_combined = np.concatenate(all_data)
+#    y_min, y_max = np.percentile(all_data_combined, [1, 99])
+#    y_range = y_max - y_min
+#    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+
+#  return ax
+
+
+#def plot_bar_rt_comparison_columns(
+#  df,
+#  rt_columns,
+#  ax=None,
+#  title=None,
+#  ylabel=None,
+#  xlabels=None,
+#  colors=None,
+#):
+#  """Plot comparison of reaction times between multiple columns in a DataFrame.
+
+#  Args:
+#      df: DataFrame containing reaction time data
+#      rt_columns: List of column names to analyze (e.g. ['first_rt', 'avg_rt'])
+#      ax: Optional matplotlib axis to plot on
+#      title: Custom title
+#      ylabel: Custom y-axis label
+#      xlabels: List of labels for x-axis ticks (defaults to column names)
+#      colors: List of colors for bars
+
+#  Returns:
+#      matplotlib axis
+#  """
+
+#  if colors is None:
+#    colors = [i for i in default_colors.values()]
+#    # Extend colors if needed
+#    while len(colors) < len(rt_columns):
+#      colors.extend(colors)
+
+#  if ax is None:
+#    _, ax = plt.subplots(figsize=(5, 4))
+
+#  # Calculate log RTs and group by user for each column
+#  all_data = []
+#  for col in rt_columns:
+#    log_col = f"log_{col}"
+#    stats = (
+#      df.with_columns((1000 * pl.col(col)).log().alias(log_col))
+#      .group_by("user_id")
+#      .agg(pl.col(log_col).mean())
+#    )
+#    all_data.append(stats[log_col].to_numpy())
+
+#  # Calculate means and standard errors
+#  means = [np.mean(data) for data in all_data]
+#  sems = [np.std(data) / np.sqrt(len(data)) for data in all_data]
+
+#  # Create bar plot
+#  x_pos = np.arange(len(rt_columns))
+#  bars = ax.bar(x_pos, means, yerr=sems, capsize=5, color=colors[: len(rt_columns)])
+
+#  # Add individual points with jitter
+#  for i, data in enumerate(all_data):
+#    x_jitter = np.random.normal(i, 0.04, size=len(data))
+#    ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
+
+#  # Customize plot
+#  ax.set_xticks(x_pos)
+#  if xlabels:
+#    ax.set_xticklabels(xlabels, ha="center")
+#  else:
+#    ax.set_xticklabels(rt_columns, ha="center")
+#  ax.set_ylabel(ylabel or "Log Reaction Time", fontsize=DEFAULT_LABEL_SIZE)
+#  ax.set_title(title or "Reaction Time Comparison", fontsize=DEFAULT_TITLE_SIZE)
+#  ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
+#  ax.grid(True, linestyle="--", alpha=0.7)
+
+#  return ax
+
+#from analysis.experiment_analysis import plot_rt_differences
+
+
+#def compute_condition_difference_df(
+#  df: pl.DataFrame, measures: List[str]
+#) -> pl.DataFrame:
+#  """Compute differences between conditions 1 and 2 for matched reversal conditions.
+
+#  Args:
+#      df: DataFrame containing columns [condition, reversal, setting, {measures}]
+#      setting: Which setting to filter for ('short' or 'long')
+#      measures: List of measure column names to compute differences for
+
+#  Returns:
+#      DataFrame with columns [user_id, reversal, diff_{measure1}, diff_{measure2}, ...]
+#  """
+
+#  # Get condition 1 and 2 data separately
+#  cond1_df = df.filter(condition=1)
+#  cond2_df = df.filter(condition=2)
+
+#  # Join the dataframes on user_id and reversal to match pairs
+#  diff_df = cond1_df.join(cond2_df, on=["user_id", "reversal"], suffix="_cond2")
+
+#  # Compute differences for each measure
+#  diff_exprs = [
+#    (pl.col(f"{measure}_cond2") - pl.col(measure)).alias(measure)
+#    for measure in measures
+#  ]
+
+#  # Select user_id, reversal and all difference columns
+#  diff_df = diff_df.select(["user_id", "reversal"] + diff_exprs)
+
+#  return diff_df
+
+
+## define functions to run power analysis for linear mixed effects model (LME)
+
+
+#def simulate_mixed_effects_trial(args):
+#  """Simulate a single mixed effects trial and test for significance.
+
+#  Args:
+#      args: Tuple containing:
+#          - num_subjects: Number of subjects in simulation
+#          - trials_per_subject: Number of trials per subject
+#          - B0: Intercept coefficient
+#          - B1: Slope coefficient
+#          - random_effect_var: Variance of random effects
+#          - residual_var: Variance of residuals
+#          - alpha: Significance level for test
+
+#  Returns:
+#      bool: True if result is significant at alpha level
+#  """
+#  # Unpack arguments
+#  num_subjects, trials_per_subject, B0, B1, random_effect_var, residual_var, alpha = (
+#    args
+#  )
+
+#  # Generate data
+#  user_ids = np.repeat(range(num_subjects), trials_per_subject)
+#  reuse = np.random.choice([0, 1], num_subjects * trials_per_subject)
+#  random_intercepts = np.random.normal(0, np.sqrt(random_effect_var), num_subjects)
+#  random_intercepts = np.repeat(random_intercepts, trials_per_subject)
+#  residuals = np.random.normal(
+#    0, np.sqrt(residual_var), num_subjects * trials_per_subject
+#  )
+
+#  # Generate response variable
+#  RT = B0 + B1 * reuse + random_intercepts + residuals
+
+#  # Create and test model
+#  data = pd.DataFrame({"RT": RT, "reuse": reuse, "user_id": user_ids})
+#  model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
+#  result = model.fit(reml=True)
+
+#  return result.pvalues["reuse"] < alpha
+
+
+#def mixed_effects_compute_power(
+#  num_subjects: int,
+#  trials_per_subject: int,
+#  B0: float,
+#  B1: float,
+#  random_effect_var: float,
+#  residual_var: float,
+#  n_simulations: int = 500,
+#  alpha: float = 0.05,
+#  parallel: bool = False,
+#  n_jobs: int = -1,
+#  verbose: bool = False,
+#) -> float:
+#  """Compute power for mixed effects model using parallel or sequential processing.
+
+#  Args:
+#      num_subjects: Number of subjects in each simulation
+#      trials_per_subject: Number of trials per subject
+#      B0: Intercept coefficient
+#      B1: Slope coefficient
+#      random_effect_var: Variance of random effects
+#      residual_var: Variance of residuals
+#      n_simulations: Number of simulations to run (default: 500)
+#      alpha: Significance level (default: 0.05)
+#      parallel: Whether to use parallel processing (default: True)
+#      n_jobs: Number of processes to use if parallel (-1 for all cores, default: -1)
+#      **kwargs: Additional arguments to pass to simulate_mixed_effects_trial
+
+#  Returns:
+#      float: Computed power (proportion of significant results)
+#  """
+#  # Prepare simulation parameters
+#  sim_args = [
+#    (
+#      num_subjects,
+#      trials_per_subject,
+#      B0,
+#      B1,
+#      random_effect_var,
+#      residual_var,
+#      alpha,
+#    )
+#  ] * n_simulations
+
+#  if parallel:
+#    # Use all available cores if n_jobs is -1
+#    n_jobs = None if n_jobs == -1 else n_jobs
+
+#    # Run simulations in parallel
+#    with Pool(processes=n_jobs) as pool:
+#      results = list(
+#        tqdm(
+#          pool.imap(simulate_mixed_effects_trial, sim_args),
+#          total=n_simulations,
+#          desc="Simulating data",
+#          disable=not verbose,
+#        )
+#      )
+#  else:
+#    # Run simulations sequentially
+#    results = [
+#      simulate_mixed_effects_trial(args)
+#      for args in tqdm(sim_args, desc="Simulating data")
+#    ]
+
+#  return sum(results) / n_simulations
+
+
+#######################################
+## Power Analysis function
+#######################################
+
+
+#def power_analysis_path_reuse(
+#  df: pl.DataFrame,
+#  measure: str = "reuse",
+#  mu: float = 0.5,
+#  alpha: float = 0.05,
+#  plot: bool = False,
+#  stats_file=None,
+#):
+#  """Analyze binary proportion data using appropriate statistical test based on normality.
+
+#  Args:
+#      df: DataFrame containing reuse column (binary 0/1) and user_id
+#      mu: null hypothesis value (default: 0.5)
+#      alpha: significance level for tests (default: 0.05)
+#      plot: whether to show diagnostic plots (default: False)
+#      stats_file: optional file handle to write stats output
+#  """
+#  # First aggregate by user to get their mean reuse rate
+#  user_means = df.group_by("user_id").agg(
+#    reuse_rate=pl.col(measure).mean(), n_trials=pl.col(measure).count()
+#  )
+#  reuse_rates = user_means["reuse_rate"].to_numpy()
+#  n_users = len(reuse_rates)
+#  n_trials = user_means["n_trials"].to_numpy()
+
+#  # Test normality using Shapiro-Wilk test
+#  _, normality_p = stats.shapiro(reuse_rates)
+#  is_normal = normality_p > alpha
+
+#  # Calculate mean and standard error
+#  p_obs = np.mean(reuse_rates)
+#  se = np.std(reuse_rates, ddof=1) / np.sqrt(n_users)
+
+#  if is_normal:
+#    # One-sided t-test
+#    t_stat, p_value = stats.ttest_1samp(reuse_rates, mu)
+#    # Convert to one-sided p-value if t-statistic is in predicted direction
+#    p_value = p_value / 2 if t_stat > 0 else 1 - p_value / 2
+
+#    # Calculate Cohen's d effect size
+#    d = (p_obs - mu) / np.std(reuse_rates, ddof=1)
+#    effect_size = {"name": "Cohen's d", "value": d}
+
+#    test_name = "One-sample t-test"
+#    test_stat = t_stat
+
+#  else:
+#    # One-sided Wilcoxon signed-rank test
+#    w_stat, p_value = stats.wilcoxon(reuse_rates - mu, alternative="greater")
+
+#    # Calculate r effect size (correlation coefficient) for Wilcoxon test
+#    z = stats.norm.ppf(1 - p_value)  # Convert p-value to Z score
+#    r = z / np.sqrt(n_users)  # Standardize by sample size
+#    effect_size = {"name": "r", "value": r}
+
+#    test_name = "Wilcoxon signed-rank test"
+#    test_stat = w_stat
+
+#  # Print summary
+#  summary = f"\nAnalysis Results:\n"
+#  summary += f"N = {n_users} participants (mean {np.mean(n_trials):.1f} trials per participant)\n"
+#  summary += f"Mean reuse rate: {p_obs:.3f} (SE: {se:.3f})\n\n"
+#  summary += f"Normality Test (Shapiro-Wilk):\n"
+#  summary += f"p = {normality_p:.3f} ({'Normal' if is_normal else 'Non-normal'} distribution)\n\n"
+#  summary += f"{test_name}:\n"
+#  summary += f"statistic = {test_stat:.3f}\n"
+#  summary += f"p = {p_value:.3f}\n\n"
+#  summary += f"Effect Size ({effect_size['name']}):\n"
+#  summary += f"{effect_size['value']:.3f}\n"
+
+#  # Calculate required sample sizes for different power levels
+#  power_levels = [0.8, 0.9, 0.95]
+#  summary += "\nRequired Sample Sizes:\n"
+
+#  if is_normal:
+#    # For t-test
+#    effect = effect_size["value"]  # Cohen's d
+#    for power in power_levels:
+#      analysis = TTestPower()
+#      n_required = analysis.solve_power(
+#        effect_size=effect, alpha=alpha, power=power, alternative="larger"
+#      )
+#      summary += f"Power {power * 100:g}%: N ≥ {ceil(n_required)} participants\n"
+#  else:
+#    # For Wilcoxon test (based on asymptotic relative efficiency)
+#    # Wilcoxon test is ~95% as efficient as t-test
+#    effect = effect_size["value"]  # r score
+#    # Convert r to d using formula: d = 2r/sqrt(1-r^2)
+#    d = 2 * effect / sqrt(1 - effect**2) if abs(effect) < 1 else float("inf")
+#    for power in power_levels:
+#      analysis = TTestPower()
+#      n_required = analysis.solve_power(
+#        effect_size=d, alpha=alpha, power=power, alternative="larger"
+#      )
+#      # Adjust for Wilcoxon efficiency
+#      n_required = ceil(n_required / 0.95)
+#      summary += f"Power {power * 100:g}%: N ≥ {n_required} participants\n"
+
+#  if stats_file:
+#    stats_file.write(summary)
+
+#  if plot:
+#    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+#    # Histogram with density plot
+#    sns.histplot(data=user_means, x="reuse_rate", kde=True, ax=ax1)
+#    ax1.axvline(mu, color="r", linestyle="--", label=f"Null (μ={mu})")
+#    ax1.set_title("Distribution of User Reuse Rates")
+#    ax1.set_xlabel("Reuse Rate")
+#    ax1.legend()
+
+#    # Q-Q plot
+#    stats.probplot(reuse_rates, dist="norm", plot=ax2)
+#    ax2.set_title("Q-Q Plot")
+
+#    plt.tight_layout()
+#    plt.show()
+
+#  return {
+#    "n_users": n_users,
+#    "mean_trials": np.mean(n_trials),
+#    "reuse_rates": reuse_rates,
+#    "mean": p_obs,
+#    "se": se,
+#    "normality": {"is_normal": is_normal, "p_value": normality_p},
+#    "test": {"name": test_name, "statistic": test_stat, "p_value": p_value},
+#    "effect_size": effect_size,
+#  }
+
+
+#def power_analysis_rt_across_groups(
+#  df: pl.DataFrame, measure: str, alpha=0.05, stats_file=None, n_simulations=500
+#):
+#  """Perform power analysis for between-groups comparison using linear mixed effects model.
+
+#  Args:
+#      df: DataFrame with columns [user_id, reuse, rt] where:
+#          - user_id: identifier for each participant
+#          - reuse: boolean indicating condition
+#          - rt: reaction time measurement (in log seconds)
+#      alpha: Significance level (default: 0.05)
+#      stats_file: Optional file handle to write stats output
+
+#  Returns:
+#      dict containing analysis results
+#  """
+#  # Convert to pandas for statsmodels compatibility
+#  data = df._df.select(["user_id", "reuse", measure]).to_pandas()
+#  data.columns = ["user_id", "reuse", "RT"]
+
+#  # Fit linear mixed effects model
+#  model = smf.mixedlm("RT ~ reuse", data, groups=data["user_id"])
+#  result = model.fit(reml=True)
+
+#  # Calculate descriptive statistics by group
+#  user_stats = df.group_by(["user_id", "reuse"]).agg(mean_val=pl.col(measure).mean())
+
+#  reuse_means = user_stats.filter(pl.col("reuse") == True)["mean_val"].to_numpy()
+#  no_reuse_means = user_stats.filter(pl.col("reuse") == False)["mean_val"].to_numpy()
+
+#  n1, n2 = len(no_reuse_means), len(reuse_means)
+#  mean1, mean2 = np.mean(no_reuse_means), np.mean(reuse_means)
+#  var1, var2 = np.var(no_reuse_means, ddof=1), np.var(reuse_means, ddof=1)
+
+#  # Get effect size (standardized coefficient)
+#  param_name = "reuse[T.True]" if "reuse[T.True]" in result.params else "reuse"
+#  effect_size = result.params[param_name] / np.std(data["RT"])
+
+#  # Calculate required sample sizes for different power levels
+#  power_levels = [0.8, 0.9, 0.95]
+#  n_required = {}
+
+#  # Binary search for each power level
+#  for target_power in tqdm(power_levels, desc="Power levels"):
+#    left = 10  # minimum sample size
+#    right = 200  # maximum sample size to try
+
+#    while left < right:
+#      n = (left + right) // 2
+#      power = mixed_effects_compute_power(
+#        num_subjects=n,
+#        trials_per_subject=len(data) // len(data["user_id"].unique()),
+#        B0=result.params["Intercept"],
+#        B1=result.params[param_name],
+#        random_effect_var=result.cov_re.iloc[0, 0],
+#        residual_var=result.scale,
+#        n_simulations=n_simulations,
+#      )
+
+#      if abs(power - target_power) < 0.01:  # within 1% of target
+#        break
+#      elif power < target_power:
+#        left = n + 1
+#      else:
+#        right = n - 1
+
+#    n_required[target_power] = n
+
+#  # Calculate actual power with current sample size
+#  current_power = mixed_effects_compute_power(
+#    num_subjects=len(data["user_id"].unique()),
+#    trials_per_subject=len(data) // len(data["user_id"].unique()),
+#    B0=result.params["Intercept"],
+#    B1=result.params[param_name],
+#    random_effect_var=result.cov_re.iloc[0, 0],
+#    residual_var=result.scale,
+#    n_simulations=n_simulations,
+#  )
+
+#  results = {
+#    "effect_size": {"name": "Standardized coefficient", "value": effect_size},
+#    "n_required": n_required,
+#    "current_power": current_power,
+#    "test_results": {
+#      "name": "Linear mixed effects model",
+#      "statistic": result.tvalues[param_name],
+#      "p_value": result.pvalues[param_name],
+#      "n1": n1,
+#      "n2": n2,
+#    },
+#    "descriptive": {
+#      "means": {"no_reuse": mean1, "reuse": mean2},
+#      "sds": {"no_reuse": np.sqrt(var1), "reuse": np.sqrt(var2)},
+#      "ses": {"no_reuse": np.sqrt(var1 / n1), "reuse": np.sqrt(var2 / n2)},
+#    },
+#    "raw_means": {"no_reuse": no_reuse_means, "reuse": reuse_means},
+#  }
+
+#  if stats_file:
+#    stats_file.write("\nLinear Mixed Effects Model Results:\n")
+#    stats_file.write("================================\n")
+#    stats_file.write(str(result.summary()) + "\n\n")
+
+#    stats_file.write("Sample Sizes:\n")
+#    stats_file.write(f"\tNo Reuse: {n1} users\n")
+#    stats_file.write(f"\tReuse: {n2} users\n")
+#    stats_file.write(
+#      f"\tTrials per user: {len(data) // len(data['user_id'].unique())}\n\n"
+#    )
+
+#    stats_file.write("Means:\n")
+#    stats_file.write(f"\tNo Reuse: {mean1:.3f}\n")
+#    stats_file.write(f"\tReuse: {mean2:.3f}\n")
+#    stats_file.write(f"\tDifference: {mean2 - mean1:.3f}\n\n")
+
+#    stats_file.write(f"Effect size: {effect_size:.3f}\n\n")
+
+#    stats_file.write("Power Analysis:\n")
+#    stats_file.write(f"Current power: {current_power:.3f}\n")
+#    for power, n in n_required.items():
+#      stats_file.write(f"Required sample size for {power * 100:g}% power: {n}\n")
+
+#  return results
+
+
+#def power_analysis_rt_differences(
+#  difference_df: pl.DataFrame, measure: str, alpha: float = 0.05, stats_file=None
+#) -> dict:
+#  """Analyze RT differences between conditions with appropriate statistical tests.
+
+#  Args:
+#      difference_df: DataFrame containing RT differences and user/reversal info
+#      measure: Name of RT measure column being analyzed
+#      alpha: significance level for tests (default: 0.05)
+#      stats_file: optional file handle to write stats output
+
+#  Returns:
+#      dict containing test results and effect size
+#  """
+#  # Get mean difference per user (averaging across reversals)
+#  user_means = (
+#    difference_df.group_by("user_id").agg(pl.col(measure).mean()).select(measure)
+#  )
+#  differences = user_means.to_numpy().flatten()
+
+#  n = len(differences)
+
+#  # Test normality using Shapiro-Wilk test
+#  _, normality_p = stats.shapiro(differences)
+#  is_normal = normality_p > alpha
+
+#  # Calculate mean and standard error
+#  mean = np.mean(differences)
+#  se = np.std(differences, ddof=1) / np.sqrt(n)
+
+#  if stats_file:
+#    stats_file.write(f"\n{measure}:\n")
+#    stats_file.write("=" * (len(measure) + 10) + "\n")
+#    stats_file.write(f"N = {n} participants\n")
+#    stats_file.write(f"Mean difference = {mean:.3f} (SE: {se:.3f})\n\n")
+#    stats_file.write("Normality Test (Shapiro-Wilk):\n")
+#    stats_file.write(
+#      f"p = {normality_p:.3f} ({'Normal' if is_normal else 'Non-normal'} distribution)\n\n"
+#    )
+
+#  if is_normal:
+#    # One-sided paired t-test (testing if condition 1 < condition 2)
+#    t_stat, p_value = stats.ttest_rel(differences, np.zeros_like(differences))
+#    # Convert to one-sided p-value if t-statistic is in predicted direction
+#    p_value = p_value / 2 if t_stat > 0 else 1 - p_value / 2
+
+#    # Calculate Cohen's d effect size for paired differences
+#    d = mean / np.std(differences, ddof=1)
+#    effect_size = {"name": "Cohen's d", "value": d}
+
+#    test_name = "Paired t-test"
+#    test_stat = t_stat
+
+#    # Power analysis for paired t-test
+#    analysis = TTestPower()
+#    actual_power = analysis.power(
+#      effect_size=abs(d), nobs=n, alpha=alpha, alternative="larger"
+#    )
+
+#    # Calculate required sample sizes for different power levels
+#    power_levels = [0.8, 0.9, 0.95]
+#    required_n = {}
+#    for power in power_levels:
+#      n_required = analysis.solve_power(
+#        effect_size=abs(d), alpha=alpha, power=power, alternative="larger"
+#      )
+#      required_n[power] = ceil(n_required)
+
+#  else:
+#    # One-sided Wilcoxon signed-rank test
+#    w_stat, p_value = stats.wilcoxon(differences, alternative="greater")
+#    test_name = "Wilcoxon signed-rank test"
+#    test_stat = w_stat
+
+#    # Calculate r effect size for Wilcoxon test
+#    # Convert p-value to z-score using inverse normal CDF
+#    z = stats.norm.ppf(1 - p_value)  # One-sided p-value
+#    r = z / np.sqrt(n)  # Standardize by sample size
+#    effect_size = {"name": "r", "value": r}
+
+#    # Convert r to d for power analysis
+#    # Formula: d = 2r/sqrt(1-r^2)
+#    d = 2 * r / sqrt(1 - r**2) if abs(r) < 1 else float("inf")
+
+#    # Power analysis using t-test as approximation (with 95% efficiency adjustment)
+#    analysis = TTestPower()
+#    actual_power = (
+#      analysis.power(effect_size=abs(d), nobs=n, alpha=alpha, alternative="larger")
+#      * 0.95
+#    )  # Adjust for Wilcoxon efficiency
+
+#    # Calculate required sample sizes for different power levels
+#    power_levels = [0.8, 0.9, 0.95]
+#    required_n = {}
+#    for power in power_levels:
+#      n_required = analysis.solve_power(
+#        effect_size=abs(d), alpha=alpha, power=power, alternative="larger"
+#      )
+#      # Adjust for Wilcoxon efficiency
+#      required_n[power] = ceil(n_required / 0.95)
+
+#  if stats_file:
+#    stats_file.write(f"{test_name}:\n")
+#    stats_file.write(f"statistic = {test_stat:.3f}\n")
+#    stats_file.write(f"p = {p_value:.3f}\n\n")
+#    stats_file.write(f"Effect Size ({effect_size['name']}):\n")
+#    stats_file.write(f"{effect_size['value']:.3f}\n\n")
+
+#    # Add power analysis results
+#    stats_file.write("Power Analysis:\n")
+#    stats_file.write(f"Achieved power with current N={n}: {actual_power:.3f}\n")
+#    stats_file.write("Required sample sizes:\n")
+#    for power, n_req in required_n.items():
+#      stats_file.write(f"  {power * 100:g}% power: N ≥ {n_req}\n")
+
+#  return {
+#    "n": n,
+#    "mean": mean,
+#    "se": se,
+#    "normality": {"is_normal": is_normal, "p_value": normality_p},
+#    "test": {"name": test_name, "statistic": test_stat, "p_value": p_value},
+#    "effect_size": effect_size,
+#    "power_analysis": {"actual_power": actual_power, "required_n": required_n},
+#  }
 
 
 ######################################
@@ -1195,7 +1195,7 @@ def path_reuse_results(
   # get all episodes for users who achieved at least 16 successes during training
   ##################
   sub_df = user_df.filter_by_group(
-    input_episode_filter=filter_train_by_min_success,
+    input_episode_filter=experiment_analysis.filter_train_by_min_success,
     input_settings=dict(eval=False),
     output_settings=dict(manipulation=3, tell_reuse=tell_reuse),
     group_key="user_id",
@@ -1208,7 +1208,7 @@ def path_reuse_results(
     df=sub_df,
     model_df=mdf,
     stats_file=stats_file,
-    title= "Path Reuse & Generalization Success Rate",
+    title= "Path Reuse & Generalization Success",
     figsize=(6, 4),
     include_raw_data=True,
   )
@@ -1468,40 +1468,47 @@ def shortcut_results(
   ##################
   # get all episodes for users who achieved at least 16 successes during training
   ##################
-  exp2_eval_df = user_df.filter_by_group(
-    input_episode_filter=filter_train_by_min_success,
+  sub_df = user_df.filter_by_group(
+    input_episode_filter=experiment_analysis.filter_train_by_min_success,
     input_settings=dict(eval=False),
     output_settings=dict(manipulation=1, tell_reuse=tell_reuse),
     group_key="user_id",
   ).filter(eval=True)
 
-  # Convert reuse column from string to boolean
-  if exp2_eval_df.schema["reuse"] == pl.String:
-    exp2_eval_df = exp2_eval_df.with_columns(pl.col("reuse") == "true")
-  elif exp2_eval_df.schema["reuse"] == pl.Boolean:
-    pass
-  else:
-    raise ValueError("Reuse column is type: ", exp2_eval_df.schema["reuse"])
+  ## Convert reuse column from string to boolean
+  #if sub_df.schema["reuse"] == pl.String:
+  #  sub_df = sub_df.with_columns(pl.col("reuse") == "true")
+  #elif sub_df.schema["reuse"] == pl.Boolean:
+  #  pass
+  #else:
+  #  raise ValueError("Reuse column is type: ", sub_df.schema["reuse"])
 
-  ##################
-  # filter outliers based on episode path length and max reaction time
-  ##################
-  # TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
-  # Check if reuse column is string type
-  if filter_columns:
-    exp2_eval_df = filter_outliers(
-      exp2_eval_df,
-      filter_columns=filter_columns,
-    )
+  ###################
+  ## filter outliers based on episode path length and max reaction time
+  ###################
+  ## TODO. QUESTION: should I separately filter out participants that reused the training path vs. though that took a new path?
+  ## Check if reuse column is string type
+  #if filter_columns:
+  #  sub_df = filter_outliers(
+  #    sub_df,
+  #    filter_columns=filter_columns,
+  #  )
 
   ##################
   # Create success rate and path reuse plots
   ##################
-
-  fig, ax = plt.subplots(figsize=(6, 3))
-  plot_success_rate_comparison(
-    df=exp2_eval_df, model_df=mdf, ax=ax, title="Exp 3 Generalization Success Rate"
+  fig, ax = experiment_analysis.plot_success_rate_path_reuse_metrics(
+    df=sub_df,
+    model_df=mdf,
+    stats_file=stats_file,
+    title= "Shortcut Path Reuse & Generalization Success",
+    figsize=(6, 4),
+    include_raw_data=True,
   )
+  #fig, ax = plt.subplots(figsize=(6, 3))
+  #experiment_analysis.plot_success_rate_comparison(
+  #  df=sub_df, model_df=mdf, ax=ax, title="Exp 3 Generalization Success"
+  #)
 
   if save_figs:
     fig.savefig(os.path.join(save_dir, "exp2_2_success_rate.pdf"), bbox_inches="tight")
@@ -1509,43 +1516,43 @@ def shortcut_results(
   if display_figs:
     plt.show()
 
-  ##################
-  # Create path re-use analysis plots
-  ##################
-  stats_file.write("\nPath Reuse Analysis\n")
-  stats_file.write("======================================\n")
+  ###################
+  ## Create path re-use analysis plots
+  ###################
+  #stats_file.write("\nPath Reuse Analysis\n")
+  #stats_file.write("======================================\n")
 
-  fig, ax = plt.subplots(figsize=(6, 3))
-  plot_path_reuse_comparison(
-    df=exp2_eval_df,
-    model_df=mdf,
-    ax=ax,
-    stats_file=stats_file,
-    title="Exp 3 Path Reuse",
-  )
+  #fig, ax = plt.subplots(figsize=(6, 3))
+  #experiment_analysis.plot_path_reuse_comparison(
+  #  df=sub_df,
+  #  model_df=mdf,
+  #  ax=ax,
+  #  stats_file=stats_file,
+  #  title="Exp 3 Path Reuse",
+  #)
 
-  if save_figs:
-    fig.savefig(os.path.join(save_dir, "exp2_3_path_reuse.pdf"), bbox_inches="tight")
+  #if save_figs:
+  #  fig.savefig(os.path.join(save_dir, "exp2_3_path_reuse.pdf"), bbox_inches="tight")
 
-  if display_figs:
-    plt.show()
+  #if display_figs:
+  #  plt.show()
 
-  # Replace the separate success rate and path reuse plots with:
-  fig, ax1, ax2 = plot_success_rate_path_reuse_metrics(
-    df=exp2_eval_df,
-    model_df=mdf,
-    title="Exp 3 Success Rate and Path Reuse",
-    figsize=(6, 4),
-    include_raw_data=True,
-  )
+  ## Replace the separate success rate and path reuse plots with:
+  #fig, ax1, ax2 = experiment_analysis.plot_success_rate_path_reuse_metrics(
+  #  df=sub_df,
+  #  model_df=mdf,
+  #  title="Exp 3 Success Rate and Path Reuse",
+  #  figsize=(6, 4),
+  #  include_raw_data=True,
+  #)
 
-  if save_figs:
-    fig.savefig(
-      os.path.join(save_dir, "exp3_combined_metrics.pdf"), bbox_inches="tight"
-    )
+  #if save_figs:
+  #  fig.savefig(
+  #    os.path.join(save_dir, "exp3_combined_metrics.pdf"), bbox_inches="tight"
+  #  )
 
-  if display_figs:
-    plt.show()
+  #if display_figs:
+  #  plt.show()
 
   # Close stats file at the end
   stats_file.close()
@@ -1556,7 +1563,6 @@ def shortcut_results(
 
 def start_results(
   user_df: DataFrame,
-  model_df: DataFrame,
   save_dir: str,
   filter_columns: List[str] = None,
   display_figs: bool = False,
@@ -1570,7 +1576,6 @@ def start_results(
 
     Args:
       user_df (DataFrame): _description_
-      model_df (DataFrame): _description_
       save_dir (str): Directory to save figures
       filter_columns (List[str], optional): Columns to use for outlier filtering in RT analysis.
           Defaults to ['avg_rt'].
@@ -1589,7 +1594,7 @@ def start_results(
   # get all episodes for users who achieved at least 16 successes during training
   ##################
   exp3_eval_df = user_df.filter_by_group(
-    input_episode_filter=filter_train_by_min_success,
+    input_episode_filter=experiment_analysis.filter_train_by_min_success,
     input_settings=dict(eval=False),
     output_settings=dict(manipulation=2),
     group_key="user_id",
@@ -1600,33 +1605,35 @@ def start_results(
   # Create filter string for filename
   filter_columns = filter_columns or []
   filter_str = ",".join(filter_columns)
-  difference_df = compute_condition_difference_df(
+  difference_df = experiment_analysis.compute_condition_difference_df(
     exp3_eval_df._df.filter(tell_reuse=tell_reuse),
     measures=["log_first_rt", "log_max_rt", "log_avg_rt"],
   )
   xlabels = [
     "First",
     # "Max",
-    "Average",
+    #"Average",
   ]
   measures = [
     "log_first_rt",
     # "log_max_rt",
-    "log_avg_rt",
+    #"log_avg_rt",
   ]
   colors = [
     default_colors["google blue"],
     # default_colors["sky blue"],
-    default_colors["google orange"],
+    #default_colors["google orange"],
   ]
-  fig, ax = plot_rt_differences(
+  fig, ax = plt.subplots(figsize=(3, 4))
+  fig, ax = experiment_analysis.plot_rt_differences(
     difference_df,
     measures=measures,
-    title=f"Exp 4 RT Diff",
+    title="Start Manipulation\nReaction Time Difference",
     colors=colors,
-    ylabel="log seconds",
+    ylabel="log milliseconds",
     xlabels=xlabels,
     stats_file=stats_file,
+    ax=ax,
   )
 
   if save_figs:
@@ -1650,6 +1657,7 @@ if __name__ == "__main__":
   ################
   # Load model data
   ################
+  # %debug
   model_df = get_model_data(
     qlearning_path=f"{data_dir}/model_data/ql/save_data/ql-big-2/tota=40000000,exp=exp2/seed=*",
     sf_path=f"{data_dir}/model_data/usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2/seed=*",
@@ -1657,28 +1665,32 @@ if __name__ == "__main__":
     search_path=f"{data_dir}/search_algos",
     overwrite_episodes=False,
     overwrite_df=False,
-    cache_dir=f"{data_dir}/model_data/cache",
   )
 
   ################
   # Load user data
   ################
-  searches = {
-    "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
-    "Start": f"{data_dir}/user_data/*exps*/*v1*start*.json",
-    "Plan (Tell)": f"{data_dir}/user_data/*exps*/*v1*r1-t0-plan*.json",
-    "Plan (Don't Tell)": f"{data_dir}/user_data/*exps*/*v1*r0-t0-plan*.json",
-    "Shortcut": f"{data_dir}/user_data/*exps*/*v1*shortcut*.json",
-  }
+  from glob import glob
 
-  valid_files = get_valid_files(searches, verbose=True, plot=False)
+  # ON COMPUTER
+  RESULTS_DIR = "/Users/wilka/git/research/"
+  USER_RESULTS_DIR = os.path.join(RESULTS_DIR, "results/human_dyna/user_data/exps")
+
+  human_data_pattern = "final*v2*"
+  files = f"{USER_RESULTS_DIR}/*{human_data_pattern}*.json"
+  # files = 'jaxemaze_data/*.json'
+  valid_files = list(set(glob(files)))
   user_df = get_human_data(
-    valid_files, overwrite_episode_data=False, overwrite_episode_info=False
+    valid_files,
+    overwrite_episode_data=False,
+    overwrite_episode_info=False,
+    require_finished=False,
+    load_df_only=True,
   )
   ################
   # Exp 1 analysis
   ################
-  save_dir = f"{data_dir}/analysis_results/"
+  save_dir = f"{data_dir}/housemaze_analysis_results_final/"
   os.makedirs(save_dir, exist_ok=True)
 
   path_reuse_results(user_df, model_df, save_dir=save_dir)

@@ -196,7 +196,7 @@ def filter_train_by_min_success(df: DataFrame, min_successes: int = 16):
   remove = nsuccess < min_successes
   if remove:
     print(
-      f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{min_successes}/{len(successes)}"
+      f"removed: user {user} rate: {np.mean(successes)} = {nsuccess}/{min_successes}. n={len(successes)}"
     )
   return remove
 
@@ -317,7 +317,7 @@ def plot_bar_rt_comparison(
 
     # Create a unique cache key based on the analysis parameters
     cache_key = f"{rt_column}_{reuse_column}_{n_simulations}"
-    cache_path = f"{stats_file}.{cache_key}.pkl"
+    cache_path = f"temp/statsfile.{cache_key}.pkl"
 
     if os.path.exists(cache_path):
       print(f"Loading cached results from {cache_path}")
@@ -731,7 +731,7 @@ def plot_success_rate_path_reuse_metrics(
   stats_file=None,
   ax=None,
   reuse_column: str = "reuse",
-  path_deviance_column: str = "path_length_deviance",
+  path_deviance_column: str = None,
   title="Success Rate and Path Reuse",
   figsize=(8, 8),  # Changed to square figure for better 2D visualization
   include_raw_data: bool = True,
@@ -763,14 +763,17 @@ def plot_success_rate_path_reuse_metrics(
   else:
     fig = ax.figure
 
-  # Calculate human statistics
-  human_successes = (
+  # Calculate human statistics with consistent ordering
+  user_data = (
     df.group_by("user_id")
-    .agg(pl.col("success").mean())
-    .select("success")
-    .to_numpy()
-    .flatten()
+    .agg(
+      success_mean=pl.col("success").mean(),
+      reuse_mean=pl.col(reuse_column).mean()
+    )
+    .sort("user_id")  # Sort by user_id for consistent ordering
   )
+  
+  human_successes = user_data["success_mean"].to_numpy()
   human_success_mean = np.mean(human_successes)
 
   human_success_se = np.sqrt(
@@ -781,43 +784,37 @@ def plot_success_rate_path_reuse_metrics(
     df, measure=reuse_column, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
   )
 
-  human_reuse = (
-    df.group_by("user_id")
-    .agg(pl.col(reuse_column).mean())
-    .select(reuse_column)
-    .to_numpy()
-    .flatten()
-  )
+  human_reuse = user_data["reuse_mean"].to_numpy()
   human_reuse_mean = results["mean"]
   human_reuse_se = results["se"]
 
   # Calculate path length deviance per user if the column exists
-  if path_deviance_column in df.columns:
-    user_deviance = (
-      df.group_by("user_id")
-      .agg(pl.col(path_deviance_column).mean())
-      .select(path_deviance_column)
-      .to_numpy()
-      .flatten()
-    )
-    # Scale deviance values to circle sizes
-    mean_deviance = np.mean(user_deviance)
-    # Map deviance values to circle sizes between min_circle_size and max_circle_size
-    if np.max(user_deviance) > np.min(user_deviance):  # Avoid division by zero
-      normalized_deviance = (user_deviance - np.min(user_deviance)) / (
-        np.max(user_deviance) - np.min(user_deviance)
-      )
-      user_circle_sizes = min_circle_size + normalized_deviance * (
-        max_circle_size - min_circle_size
-      )
-    else:
-      user_circle_sizes = np.ones_like(user_deviance) * (
-        (min_circle_size + max_circle_size) / 2
-      )
-  else:
-    # If path_deviance_column doesn't exist, use a default size
-    user_circle_sizes = np.ones(len(human_successes)) * 20
-    mean_deviance = None
+  #if path_deviance_column in df.columns:
+  #  user_deviance = (
+  #    df.group_by("user_id")
+  #    .agg(pl.col(path_deviance_column).mean())
+  #    .select(path_deviance_column)
+  #    .to_numpy()
+  #    .flatten()
+  #  )
+  #  # Scale deviance values to circle sizes
+  #  mean_deviance = np.mean(user_deviance)
+  #  # Map deviance values to circle sizes between min_circle_size and max_circle_size
+  #  if np.max(user_deviance) > np.min(user_deviance):  # Avoid division by zero
+  #    normalized_deviance = (user_deviance - np.min(user_deviance)) / (
+  #      np.max(user_deviance) - np.min(user_deviance)
+  #    )
+  #    user_circle_sizes = min_circle_size + normalized_deviance * (
+  #      max_circle_size - min_circle_size
+  #    )
+  #  else:
+  #    user_circle_sizes = np.ones_like(user_deviance) * (
+  #      (min_circle_size + max_circle_size) / 2
+  #    )
+  #else:
+  # If path_deviance_column doesn't exist, use a default size
+  user_circle_sizes = np.ones(len(human_successes)) * 20
+  mean_deviance = None
 
   # Prepare data for plotting
   all_data = {
@@ -867,9 +864,14 @@ def plot_success_rate_path_reuse_metrics(
 
   # Add individual human data points if requested
   if include_raw_data:
-    # Count occurrences of each unique (reuse, success) combination
-    reuse_success_pairs = list(zip(100 * human_reuse, 100 * human_successes))
+    # Create a sorted list of (reuse, success) pairs for deterministic results
+    reuse_success_pairs = sorted(list(zip(100 * human_reuse, 100 * human_successes)))
     unique_pairs, counts = np.unique(reuse_success_pairs, axis=0, return_counts=True)
+    
+    # Sort unique pairs for consistent plotting order
+    sorted_indices = np.lexsort((unique_pairs[:, 1], unique_pairs[:, 0]))
+    unique_pairs = unique_pairs[sorted_indices]
+    counts = counts[sorted_indices]
     
     # Create a dictionary to store counts for each position
     position_counts = {tuple(pair): count for pair, count in zip(unique_pairs, counts)}
@@ -889,7 +891,7 @@ def plot_success_rate_path_reuse_metrics(
       )
       
       # Add annotation with count if more than 1 participant
-      if count > 1:
+      if count > 0:
         ax.annotate(
           f"{count}",
           xy=(x + 2, y - 5),  # Offset slightly from the point
