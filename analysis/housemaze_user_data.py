@@ -708,7 +708,7 @@ def make_episode_data(
       return features_achieved(e)
 
     def get_log_rt(e: EpisodeData):
-      return np.log(e.reaction_times + 1e-5)
+      return np.log(1000 * e.reaction_times + 1e-5)
 
     def total_rt(e: EpisodeData):
       return np.sum(e.reaction_times[:-1])
@@ -859,7 +859,7 @@ def get_human_data(
   valid_files,
   overwrite_episode_data=False,
   overwrite_episode_info=True,
-  load_df_only: bool = False,
+  load_df_only: bool = True,
   require_finished: bool = True,
   debug=False,
 ):
@@ -879,7 +879,10 @@ def get_human_data(
   example_web_timestep = end.reset(dummy_rng, dummy_env_params)
 
   data_dir = "/Users/wilka/git/research/results/human_dyna/"
-  df_location = os.path.join(data_dir, "user_data/exps/all_data.csv")
+  if debug:
+    df_location = os.path.join(data_dir, "user_data/exps/all_data_debug.csv")
+  else:
+    df_location = os.path.join(data_dir, "user_data/exps/all_data.csv")
   ################
   # Load data
   ################

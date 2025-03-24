@@ -291,6 +291,7 @@ def astar(
           heapq.heappush(open_set, (f_score, count, new_pos, current_path + [new_pos]))
 
   pbar.close()
+  import ipdb; ipdb.set_trace()
   return [], iterations
 
 
@@ -797,7 +798,7 @@ def render_goal_object(goal_object_idx: int, block_pixel_size: int):
 
 
 def create_reaction_times_video(
-  initial_map, first_state, images, path, actions, reaction_times, output_file, fps=1
+  initial_map, first_state, images, path, actions, reaction_times, output_file, fps=3
 ):
   # Ensure the directory exists
   output_dir = os.path.dirname(output_file)
@@ -806,7 +807,7 @@ def create_reaction_times_video(
 
   n = len(images)
   width = 4
-  fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(3 * width, width))
+  fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(3 * width, width), dpi=150)
   ax1.imshow(initial_map)
   place_arrows_on_image(
     image=initial_map,
@@ -857,7 +858,7 @@ def create_reaction_times_video(
 def create_episode_reaction_times_video(
   episode_data,
   output_file="/tmp/housemaze_anlaysis_craftax/rt_video.mp4",
-  fps=1,
+  fps=3,
   html: bool = True,
 ):
   def partial_render_fn(state):
@@ -894,6 +895,91 @@ def create_episode_reaction_times_video(
   if html:
     from IPython.display import HTML, display
 
+    return display(HTML(video))
+  return video
+
+
+def create_episode_video(
+  episode_data,
+  output_file="/tmp/housemaze_anlaysis_craftax/episode_video.mp4",
+  fps=3,
+  html: bool = True,
+):
+  """Creates a video of an episode without reaction time visualizations.
+  
+  Args:
+    episode_data: Data from an episode containing states and paths
+    output_file: Path to save the video file
+    fps: Frames per second for the video
+    html: Whether to return an HTML display object (for notebooks)
+    
+  Returns:
+    Video as HTML if html=True, otherwise returns the video data
+  """
+  def partial_render_fn(state):
+    return render_craftax_pixels_partial(
+      state, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+    ).astype(jnp.uint8)
+
+  def full_render_fn(state):
+    return render_craftax_pixels_full(
+      state, show_agent=False, block_pixel_size=BLOCK_PIXEL_SIZE_IMG
+    ).astype(jnp.uint8)
+
+  initial_map = full_render_fn(
+    jax.tree_map(lambda x: x[0], episode_data.timesteps.state)
+  )
+  images = jax.vmap(partial_render_fn)(episode_data.timesteps.state)
+  path = episode_data.timesteps.state.player_position
+  actions = actions_from_path(path)
+  first_state = jax.tree_map(lambda s: s[0], episode_data.timesteps.state)
+  
+  # Ensure the directory exists
+  output_dir = os.path.dirname(output_file)
+  if output_dir and not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+  n = len(images)
+  width = 4
+  fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(2 * width, width), dpi=150)
+  ax1.imshow(initial_map)
+  place_arrows_on_image(
+    image=initial_map,
+    positions=path,
+    actions=actions,
+    maze_height=first_state.map.shape[1],
+    maze_width=first_state.map.shape[2],
+    ax=ax1,
+    display_image=True,
+    arrow_color="red",
+    show_path_length=False,
+    start_color="red",
+  )
+
+  def update(frame):
+    # Clear previous content
+    ax2.clear()
+
+    # Display current frame
+    if images.size > 0:
+      img = images[frame]
+      ax2.imshow(img, cmap="viridis")
+    else:
+      ax2.text(0.5, 0.5, "No image data", ha="center", va="center")
+
+    ax1.set_title(f"Step: {frame}")
+    ax1.axis("off")
+    ax2.axis("off")
+
+    return ax2,
+
+  # Create the animation
+  anim = FuncAnimation(fig, update, frames=n, interval=1000 / fps, blit=False)
+  video = anim.to_html5_video()
+  plt.close(fig)  # Close the figure after creating the video
+  
+  if html:
+    from IPython.display import HTML, display
     return display(HTML(video))
   return video
 

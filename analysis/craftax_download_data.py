@@ -71,7 +71,7 @@ def run_command(command, dir_path):
 
 def download_model_files(base_server_dir, base_local_dir, dir_list):
   # SSH connection details
-  hostname = "rcfas_login1"  # Using the SSH config alias
+  hostname = "rcfas_login"  # Using the SSH config alias
 
   # Common rsync options
   rsync_options = "-avz --prune-empty-dirs --exclude='*wandb*'"
@@ -102,31 +102,29 @@ destination_folder = (
 
 ##############################
 # Model Data
-server_dir = (
-  "/n/holylfs06/LABS/kempner_fellow_wcarvalho/results/jaxrl_result/housemaze_trainer"
-)
 local_dir = "/Users/wilka/git/research/results/human_dyna_craftax/model_data"
-qlearning_dir = f"ql/save_data/ql-big-2/tota=40000000,exp=exp2"
-sf_dir = f"usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2"
-dyna_dir = f"dynaq_shared/save_data/dynaq-big-4/alg=dynaq_shared,agen=256,tota=100000000,exp=exp2"
-
-qlearning_server_dir = f"{server_dir}/{qlearning_dir}"
-sf_server_dir = f"{server_dir}/{sf_dir}"
-dyna_server_dir = f"{server_dir}/{dyna_dir}"
+server_dir = (
+  "/n/holylfs06/LABS/kempner_fellow_wcarvalho/jax_rl_results/craftax_multigoal_trainer"
+)
+qlearning_dir = "ql-final/save_data/ql-final-1/alg=qlearning"
+sf_dir = "usfa-final/save_data/usfa-final-1/alg=usfa"
+dyna_dir = "dyna-final/save_data/dyna-final-1/alg=dyna"
+preplay_dir = "preplay-final/save_data/preplay-final-1/alg=preplay"
 
 qlearning_local_dir = f"{local_dir}/{qlearning_dir}"
 sf_local_dir = f"{local_dir}/{sf_dir}"
 dyna_local_dir = f"{local_dir}/{dyna_dir}"
+preplay_local_dir = f"{local_dir}/{preplay_dir}"
 
 if __name__ == "__main__":
-  pass
   # download_user_files(bucket_name, prefix, human_data_pattern, destination_folder)
   download_model_files(
     base_server_dir=server_dir,
     base_local_dir=local_dir,
     dir_list=[
-      # qlearning_dir,
+      qlearning_dir,
       sf_dir,
-      # dyna_dir,
+      dyna_dir,
+      preplay_dir,
     ],
   )

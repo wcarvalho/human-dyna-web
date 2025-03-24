@@ -207,21 +207,236 @@ def visualize_user_path_reuse(df: DataFrame, user_id: int, idx=None, **kwargs):
 
     plt.show()
 
+def plot_success_rate_path_reuse_metrics(
+  df: DataFrame,
+  model_df: DataFrame = None,
+  stats_file=None,
+  ax=None,
+  reuse_column: str = "reuse",
+  title="Success Rate and Path Reuse",
+  figsize=(8, 8),
+  legend_loc: str = "lower right",
+  legend_ncol: int = 1,
+) -> Tuple[plt.Figure, plt.Axes]:
+  """Plot success rate vs path reuse as a 2D scatter plot with error bars.
+
+  Args:
+      df (DataFrame): DataFrame containing human data
+      model_df (DataFrame, optional): DataFrame containing model data. If None, only plots human data.
+      stats_file (file, optional): File to write statistics to
+      ax (plt.Axes, optional): Matplotlib axes to plot on. If None, creates new figure
+      reuse_column (str, optional): Column name for path reuse metric
+      title (str, optional): Plot title
+      figsize (tuple, optional): Figure size if creating new figure
+      legend_loc (str, optional): Location of the legend
+      legend_ncol (int, optional): Number of columns in the legend
+
+  Returns:
+      tuple: (fig, ax) containing the figure and axes object
+  """
+
+  # Create figure if needed
+  if ax is None:
+    fig, ax = plt.subplots(figsize=figsize)
+  else:
+    fig = ax.figure
+
+  # Prepare data for plotting
+  all_data = {}
+  
+  # Process human data for tell_reuse=1 and tell_reuse=0
+  tell_reuse_values = [1, 0]
+  tell_reuse_labels = ["Human (know eval goal = True)", "Human (know eval goal = False)"]
+  tell_reuse_markers = ['o', 'x']  # Plus for True, X for False
+  
+  for i, (tell_value, label, marker) in enumerate(zip(tell_reuse_values, tell_reuse_labels, tell_reuse_markers)):
+    # Filter data for this tell_reuse value
+    filtered_df = df.filter(tell_reuse=tell_value)
+    
+    # Calculate statistics with consistent ordering
+    user_data = (
+      filtered_df.group_by("user_id")
+      .agg(
+        success_mean=pl.col("success").mean(),
+        reuse_mean=pl.col(reuse_column).mean()
+      )
+      .sort("user_id")  # Sort by user_id for consistent ordering
+    )
+    
+    human_successes = user_data["success_mean"].to_numpy()
+    human_success_mean = np.mean(human_successes)
+
+    human_success_se = np.sqrt(
+      (human_success_mean * (1 - human_success_mean)) / len(human_successes)
+    )
+
+    results = experiment_analysis.power_analysis_path_reuse(
+      filtered_df, measure=reuse_column, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
+    )
+
+    #human_reuse = user_data["reuse_mean"].to_numpy()
+    human_reuse_mean = results["mean"]
+    human_reuse_se = results["se"]
+
+    # Add to data dictionary
+    all_data[label] = {
+      "success": 100 * human_success_mean,
+      "reuse": 100 * human_reuse_mean,
+      "success_se": 100 * human_success_se,
+      "reuse_se": 100 * human_reuse_se,
+      "marker": marker,  # Store the marker type
+    }
+
+  # Add model data if provided
+  if model_df is not None:
+    # Calculate model statistics
+    model_stats = model_df.filter(eval=True).group_by("algo").agg(
+        success_mean=(pl.col("success").cast(pl.Float64).mean() * 100),
+        success_se=(
+            pl.col("success").cast(pl.Float64).mean()
+            * (1 - pl.col("success").cast(pl.Float64).mean())
+            / pl.count()
+        ).sqrt()
+        * 100,
+        reuse_mean=(pl.col("reuse").cast(pl.Float64).mean() * 100),
+        reuse_se=(
+            pl.col("reuse").cast(pl.Float64).mean() 
+            * (1 - pl.col("reuse").cast(pl.Float64).mean()) 
+            / pl.count()
+        ).sqrt()
+        * 100,
+    )
+
+    # Add model data
+    algos = model_stats["algo"].unique().to_list()
+    for algo in experiment_analysis.model_order:
+      if algo not in algos:
+        continue
+      row = model_stats.filter(algo=algo)
+      all_data[algo] = {
+        "success": row["success_mean"].to_numpy()[0],
+        "reuse": row["reuse_mean"].to_numpy()[0],
+        "success_se": min(row["success_se"].to_numpy()[0], 5),
+        "reuse_se": min(row["reuse_se"].to_numpy()[0], 5),
+        "marker": "o",  # Use circle marker for models
+      }
+
+  # Define colors for human data points
+  human_colors = {
+    tell_reuse_labels[0]: experiment_analysis.default_colors["orange"],  # Green
+    tell_reuse_labels[1]: experiment_analysis.default_colors["light gray"],  # Red
+  }
+
+  # Plot data points with error bars
+  marker_size = 50  # Default size for all scatter points
+  
+  # First plot human data points
+  for key in tell_reuse_labels:
+    if key in all_data:
+      data = all_data[key]
+      color = human_colors.get(key, "#333333")
+      marker = data["marker"]
+
+      ax.errorbar(
+        data["reuse"],
+        data["success"],
+        xerr=data["reuse_se"],
+        yerr=data["success_se"],
+        fmt="none",
+        color=color,
+        capsize=5,
+        capthick=2,
+        elinewidth=2,
+        zorder=2,
+      )
+
+      ax.scatter(
+        data["reuse"],
+        data["success"],
+        color=color,
+        s=marker_size,
+        marker=marker,
+        label=key,
+        zorder=3,
+        linewidths=2,  # Make markers thicker for better visibility
+      )
+  
+  # Then plot model data points
+  if model_df is not None:
+    ordered_keys = [k for k in experiment_analysis.model_order if k in all_data]
+    for key in ordered_keys:
+      if key in tell_reuse_labels:  # Skip if it's human data (already plotted)
+        continue
+        
+      data = all_data[key]
+      color = experiment_analysis.model_colors.get(key, "#333333")
+
+      ax.errorbar(
+        data["reuse"],
+        data["success"],
+        xerr=data["reuse_se"],
+        yerr=data["success_se"],
+        fmt="none",
+        color=color,
+        capsize=5,
+        capthick=2,
+        elinewidth=2,
+        zorder=2,
+      )
+
+      ax.scatter(
+        data["reuse"],
+        data["success"],
+        color=color,
+        s=marker_size,
+        marker=data["marker"],
+        label=experiment_analysis.model_names[key],
+        zorder=3,
+      )
+
+  # Customize axes
+  ax.set_xlabel("Path Reuse (%)", fontsize=experiment_analysis.DEFAULT_LABEL_SIZE)
+  ax.set_ylabel("Success Rate (%)", fontsize=experiment_analysis.DEFAULT_LABEL_SIZE)
+  ax.set_title(title, fontsize=experiment_analysis.DEFAULT_TITLE_SIZE)
+
+  # Add chance level line for success rate
+  ax.axhline(y=50, color="r", linestyle="--", alpha=0.5, label="Chance level")
+  ax.axvline(x=50, color="r", linestyle="--", alpha=0.5)
+
+  # Set axis limits with some padding
+  ax.set_xlim(-5, 105)
+  ax.set_ylim(-5, 105)
+
+  # Add grid
+  ax.grid(True, linestyle="--", alpha=0.7)
+
+  # Add legend
+  ax.legend(
+    loc=legend_loc,
+    ncol=legend_ncol,
+    columnspacing=1,
+    handletextpad=0.5,
+    fontsize=experiment_analysis.DEFAULT_LEGEND_SIZE,
+  )
+
+  return fig, ax
+
 
 def path_reuse_manipulation_analysis(
   sub_df: DataFrame,
+  model_df: DataFrame,
   save_dir: str,
-  filter: dict,
   save_figs: bool = True,
   display_figs: bool = True,
   verbosity: int = 1,
   reuse_column: str = "reuse",
   n_simulations: int = 1000,
+
 ):
   ############################################################
   # Create stats file
   ############################################################
-  suffix = filter_to_str(filter)
+  suffix = ''
   stats_filename = get_path_reuse_stats_file(save_dir, suffix)
   stats_file = open(stats_filename, "w")
   stats_file.write("Statistical Analysis\n\n")
@@ -229,21 +444,23 @@ def path_reuse_manipulation_analysis(
   ############################################################
   # Plot success rate and path reuse
   ############################################################
-  tell_reuse = filter.get("tell_reuse")
   if reuse_column == "reuse":
     title = "Path Reuse & Generalization Success Rate"
   else:
     title = "Efficient Path Reuse & Generalization Success Rate"
-  if tell_reuse is not None:
-    title += f"\nTell Reuse: {bool(tell_reuse)}"
-  fig, ax = experiment_analysis.plot_success_rate_path_reuse_metrics(
+  #tell_reuse = filter.get("tell_reuse")
+  #if tell_reuse is not None:
+  #  title += f"\nTell Reuse: {bool(tell_reuse)}"
+  
+  # first plot when tell_reuse is 1
+  fig, ax = plot_success_rate_path_reuse_metrics(
     df=sub_df,
-    model_df=None,
+    model_df=model_df,
     stats_file=stats_file,
     title=title,
-    figsize=(6, 4),
-    include_raw_data=True,
     reuse_column=reuse_column,
+    figsize=(6, 4),
+    legend_loc="upper left",
   )
   if reuse_column == "efficient_reuse":
     ax.set_xlabel(
@@ -251,9 +468,11 @@ def path_reuse_manipulation_analysis(
     )
 
   if save_figs:
-    fig.savefig(os.path.join(save_dir, "success_path_reuse.pdf"), bbox_inches="tight")
+    fig.savefig(os.path.join(save_dir, "success_path_reuse.pdf"), bbox_inches="tight", dpi=300)
+    fig.savefig(os.path.join(save_dir, "success_path_reuse.png"), bbox_inches="tight", dpi=300)
   if display_figs:
-    plt.show()
+    from IPython.display import display
+    display(fig)
 
   #############################################################
   ## Plot path length

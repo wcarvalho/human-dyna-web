@@ -10,8 +10,8 @@ rm -r craftax_data .nicegui; pkill -9 -f craftax; \
   MANIPULATION="paths" \
   SAY_REUSE=0 \
   EVAL_SHOW_MAP=0 \
-  DEBUG=1 \
-  DUMMY_ENV=0 \
+  DEBUG=0 \
+  DUMMY_ENV=1 \
   python craftax_web_app.py
 
 

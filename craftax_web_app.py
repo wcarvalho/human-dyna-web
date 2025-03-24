@@ -214,7 +214,7 @@ async def global_handle_key_press(e, container):
     return
 
   experiment = experiment_structure.experiment
-  stage = experiment.get_stage()
+  stage = await experiment.get_stage()
 
   if stage.get_user_data("finished", False):
     return
@@ -323,6 +323,7 @@ async def make_consent_form(container):
 async def collect_demographic_info(container):
   # Create a markdown title for the section
   nicewebrl.clear_element(container)
+  collected_demographic_info_event = asyncio.Event()
   with container:
     ui.markdown("## Demographic Info")
     ui.markdown("Please fill out the following information.")
@@ -347,6 +348,7 @@ async def collect_demographic_info(container):
       app.storage.user["age"] = int(age)
       app.storage.user["sex"] = sex
       logger.info(f"age: {int(age)}, sex: {sex}")
+      collected_demographic_info_event.set()
 
     button = ui.button("Submit", on_click=submit)
     await button.clicked()
@@ -396,16 +398,16 @@ async def start_experiment(meta_container, stage_container, button_container):
   # Run experiment
   # ========================================
   logger.info("Starting experiment")
-  block_order = experiment.get_block_order()
+  block_order = await experiment.get_block_order()
   block_names_in_order = [experiment.blocks[i].name for i in block_order]
   logger.info(f"Block order: {block_names_in_order}")
 
   while experiment_not_finished():
     # get current block
-    block = experiment.get_block()
+    block = await experiment.get_block()
 
-    while block.not_finished():
-      stage = block.get_stage()
+    while await block.not_finished():
+      stage = await block.get_stage()
 
       # activate stage
       await run_stage(stage, stage_container, button_container)
@@ -417,11 +419,12 @@ async def start_experiment(meta_container, stage_container, button_container):
         logger.info(f"Saved data for stage '{stage.name}'")
 
       # next stage
-      experiment.advance_stage()
+      await experiment.advance_stage()
       get_experiment_progress()
 
     # next block
-    experiment.advance_block()
+    logger.info(f"Finished block '{block.name}'")
+    await experiment.advance_block()
 
     # see if over
     blocks_over = experiment.get_block_idx() >= experiment.num_blocks

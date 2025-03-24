@@ -9,6 +9,7 @@ Key functions:
 MOST OF THE LOGIC IS IN `make_episode_data`
 """
 
+import time
 from glob import glob
 from joblib import Parallel, delayed
 from typing import Optional, Tuple
@@ -346,6 +347,25 @@ def add_reuse_columns(df: DataFrame, overlap_threshold=0.15) -> DataFrame:
   return new_df
 
 
+def reduce_timestep_size(t: nicewebrl.TimeStep):
+  state = t.state
+
+  def make_uint(x):
+    return x.astype(jnp.uint8)
+    # return x
+
+  new_state = state.replace(
+    # remove all levels after 1st
+    map=jax.tree_map(lambda t: make_uint(t[:1]), state.map),
+    item_map=jax.tree_map(lambda t: make_uint(t[:1]), state.item_map),
+    mob_map=jax.tree_map(lambda t: make_uint(t[:1]), state.mob_map),
+    light_map=jax.tree_map(lambda t: make_uint(t[:1]), state.light_map),
+  )
+  return t.replace(
+    observation=None,  # remove observation
+    state=new_state,
+  )
+
 async def make_episode_data(
   file: str,
   example_timestep: TimeStep,
@@ -451,6 +471,8 @@ async def make_episode_data(
     def get_timestep(datum, example_timestep):
       timestep = datum["data"]["timestep"]
       timestep = serialization.from_bytes(example_timestep, timestep)
+      timestep = reduce_timestep_size(timestep)
+
       return timestep
 
     for key in gds.keys():
@@ -652,45 +674,52 @@ async def make_episode_data(
   return file, episode_info, episode_data
 
 
-async def make_all_episode_data(
+def make_all_episode_data(
   files,
   example_timestep,
   debug=False,
   overwrite_episode_data=False,
   overwrite_episode_info=False,
+  n_jobs=2,  # Use all available cores by default
 ):
-  """Synchronous version of make_all_episode_data that processes files sequentially."""
+  """Process episode data using parallel processing."""
 
   if debug:
     files = files[: max(int(len(files) * 0.1), 10)]
-
+    
+  # Define a synchronous wrapper function that processes a single file
+  def process_file_sync(file):
+    try:
+      start_time = time.time()
+      # Run the async function in a new event loop
+      result = asyncio.run(make_episode_data(
+        file,
+        example_timestep,
+        overwrite_episode_data=overwrite_episode_data,
+        overwrite_episode_info=overwrite_episode_info,
+        debug=debug,
+      ))
+      print(f"Processed {file} in {time.time() - start_time:.2f} seconds")
+      return result
+    except Exception as e:
+      print(f"Error processing {file}: {str(e)}")
+      return file, None, None
+  
+  # Run processing in parallel using joblib with the synchronous function
+  results = Parallel(n_jobs=n_jobs, verbose=10)(
+    delayed(process_file_sync)(file) for file in files
+  )
+  
   all_episode_data = []
   episode_df_list = []
-
-  # Process files sequentially
-  for enum, file in enumerate(files):
-    # try:
-    # Convert the async make_episode_data to sync by running it in an event loop
-    file, episode_df, episode_data = await make_episode_data(
-      file,
-      example_timestep,
-      overwrite_episode_data=overwrite_episode_data,
-      overwrite_episode_info=overwrite_episode_info,
-      debug=debug,
-    )
-
-    print(f"{enum}/{len(files)}", file)
-
+  
+  for file, episode_df, episode_data in results:
     if episode_df is not None and episode_data is not None:
       all_episode_data.extend(episode_data)
       episode_df_list.append(episode_df)
     else:
-      print(f"skipping {file} because one of the episode_df or episode_data is None")
-
-    # except Exception as e:
-    #  print(f"error processing {file}: {str(e)}")
-    #  continue
-
+      print(f"Skipping {file} because one of the episode_df or episode_data is None")
+  
   episode_df = pl.concat(episode_df_list, how="diagonal_relaxed")
   return DataFrame(episode_df, all_episode_data)
 
@@ -730,7 +759,7 @@ async def get_human_data(
   ################
   # Load data
   ################
-  initial_user_df = await make_all_episode_data(
+  initial_user_df = make_all_episode_data(
     files=valid_files,
     example_timestep=example_web_timestep,
     overwrite_episode_data=overwrite_episode_data,

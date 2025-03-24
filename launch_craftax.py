@@ -3,24 +3,18 @@ import argparse
 
 
 def launch_experiment(
-  name, environment, env_vars, memory=16, scale: bool = True, count=8
+  name, environment, env_vars, memory=16, scale: int =4*12
 ):
   # Construct the flyctl launch command
   launch_cmd = [
     "flyctl",
     "launch",
-    "--dockerfile",
-    f"Dockerfile_{environment}",
-    "--name",
-    f"human-dyna-{environment}-{name}",
-    "--config",
-    f"configs/human-dyna-{environment}-{name}.toml",
-    "--vm-size",
-    "performance-8x",
-    "--vm-memory",
-    str(1024 * memory),
-    "--wait-timeout",
-    "20m0s",
+    "--dockerfile", f"Dockerfile_{environment}",
+    "--name", f"human-dyna-{environment}-{name}",
+    "--config", f"configs/human-dyna-{environment}-{name}.toml",
+    "--vm-size", "performance-8x",
+    "--vm-memory", str(1024 * memory),
+    "--wait-timeout", "20m0s",
     "--yes",
   ]
   launch_cmd.extend(env_vars)
@@ -38,24 +32,18 @@ def launch_experiment(
 
   # Deploy the website
   deploy_cmd = [
-    "flyctl",
-    "deploy",
-    "--config",
-    f"configs/human-dyna-{environment}-{name}.toml",
+    "flyctl", "deploy",
+    "--config", f"configs/human-dyna-{environment}-{name}.toml",
   ]
   subprocess.run(deploy_cmd, check=True)
 
   # Scale regionally application
   if scale:
     scale_cmd = [
-      "flyctl",
-      "scale",
-      "count",
-      str(count),
-      "--config",
-      f"configs/human-dyna-{environment}-{name}.toml",
-      "--region",
-      "iad,sea,lax,den",
+      "flyctl", "scale",
+      "count", str(scale),
+      "--config", f"configs/human-dyna-{environment}-{name}.toml",
+      "--region", "iad,sea,lax,den",
       "--yes",
     ]
     subprocess.run(scale_cmd, check=True)
@@ -71,6 +59,9 @@ if __name__ == "__main__":
     "--env", action="append", help="Environment variables in the format KEY=VALUE"
   )
 
+  parser.add_argument(
+    "--scale", type=int, default=28, help="Number of instances to scale the application to"
+  )
   args = parser.parse_args()
 
   env_vars = ["--name", args.name]
@@ -79,4 +70,4 @@ if __name__ == "__main__":
     for env in args.env:
       env_vars.extend(["--env", env])
 
-  launch_experiment(args.name, args.environment, env_vars)
+  launch_experiment(args.name, args.environment, env_vars, scale=args.scale)

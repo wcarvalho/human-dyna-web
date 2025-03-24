@@ -58,6 +58,7 @@ model_colors = {
   "usfa": default_colors["nice purple"],
   "qlearning": default_colors["purple"],
   "dynaq_shared": default_colors["vermillion"],
+  "preplay": default_colors["vermillion"],
   "bfs": default_colors["pretty blue"],
   "dfs": default_colors["sky blue"],
   "new_path": default_colors["new_path"],
@@ -71,7 +72,8 @@ model_names = {
   "qlearning": "Q-learning",
   "usfa": "Successor features",
   "dyna": "Dyna",
-  "dynaq_shared": "Multi-task preplay",
+  "dynaq_shared": "Multitask preplay",
+  "preplay": "Multitask Preplay",
   "bfs": "Breadth-first search",
   "dfs": "Depth-first search",
 }
@@ -80,10 +82,11 @@ model_order = [
   "human",
   "human_success",
   "human_terminate",
-  "dyna",
-  "dynaq_shared",
   "qlearning",
   "usfa",
+  "dyna",
+  "dynaq_shared",
+  "preplay",
   "bfs",
   "dfs",
 ]
@@ -121,15 +124,15 @@ measure_to_ylabel = {
   "success": "Success Rate (%)",
   "path_length": "Number of Steps",
   "termination": "Completion Rate (%)",
-  "log_first_rt": "Log Response Time (milliseconds)",
-  "log_avg_rt": "Log Response Time (milliseconds)",
-  "log_total_rt": "Log Response Time (milliseconds)",
-  "log_avg_post_rt": "Log Response Time (milliseconds)",
-  "log_max_rt": "Log Response Time (milliseconds)",
-  "log_max_post_rt": "Log Response Time (milliseconds)",
-  "log_max_init_post_rt": "Log Response Time (milliseconds)",
-  "log_max_end_rt": "Log Response Time (milliseconds)",
-  "log_max_final_rt": "Log Response Time (milliseconds)",
+  "log_first_rt": "Log RT (ms)",
+  "log_avg_rt": "Log RT (ms)",
+  "log_total_rt": "Log RT (ms)",
+  "log_avg_post_rt": "Log RT (ms)",
+  "log_max_rt": "Log RT (ms)",
+  "log_max_post_rt": "Log RT (ms)",
+  "log_max_init_post_rt": "Log RT (ms)",
+  "log_max_end_rt": "Log RT (ms)",
+  "log_max_final_rt": "Log RT (ms)",
 }
 
 
@@ -286,6 +289,9 @@ def plot_bar_rt_comparison(
   stats_file=None,
   percentile_ylim: bool = True,
   n_simulations: int = 1000,
+  rereun_analysis: bool = False,
+  include_raw_data: bool = False,
+  ylim: Tuple[float, float] = None,
 ):
   """Plot comparison of reaction times between multiple conditions.
 
@@ -319,7 +325,7 @@ def plot_bar_rt_comparison(
     cache_key = f"{rt_column}_{reuse_column}_{n_simulations}"
     cache_path = f"temp/statsfile.{cache_key}.pkl"
 
-    if os.path.exists(cache_path):
+    if os.path.exists(cache_path) and not rereun_analysis:
       print(f"Loading cached results from {cache_path}")
       try:
         with open(cache_path, 'rb') as f:
@@ -377,12 +383,13 @@ def plot_bar_rt_comparison(
 
   # Add individual points with jitter
   all_data = []
-  for i, key in enumerate(["no_reuse", "reuse"]):
-    data = power_results["raw_means"][key]
-    print(f"n {key}: {len(data)}")
-    x_jitter = np.random.normal(i, 0.04, size=len(data))
-    ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
-    all_data.append(data)
+  if include_raw_data:
+    for i, key in enumerate(["no_reuse", "reuse"]):
+      data = power_results["raw_means"][key]
+      print(f"n {key}: {len(data)}")
+      x_jitter = np.random.normal(i, 0.04, size=len(data))
+      ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
+      all_data.append(data)
 
   # Customize plot
   ax.set_xticks(x_pos)
@@ -394,9 +401,13 @@ def plot_bar_rt_comparison(
   ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
   ax.grid(True, linestyle="--", alpha=0.7)
 
-  if percentile_ylim:
+  if percentile_ylim and len(all_data) > 0:
     all_data_combined = np.concatenate(all_data)
     y_min, y_max = np.percentile(all_data_combined, [1, 99])
+    y_range = y_max - y_min
+    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+  elif ylim is not None:
+    y_min, y_max = ylim
     y_range = y_max - y_min
     ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
 
@@ -483,6 +494,8 @@ def plot_rt_differences(
   ylabel="Log RT Difference (Cond2 - Cond1)",
   stats_file=None,
   xlabels=None,
+  include_raw_data: bool = False,
+  ylim: Tuple[float, float] = None,
 ) -> Tuple[plt.Figure, plt.Axes]:
   """Plot RT differences between conditions.
 
@@ -520,13 +533,14 @@ def plot_rt_differences(
     yerr=sems,
     capsize=5,
     color=colors,
-    error_kw=dict(ecolor=default_colors["vermillion"]),
+    #error_kw=dict(ecolor=default_colors["vermillion"]),
   )
 
   # Add individual points with jitter (now showing user means)
-  for i, diffs in enumerate(all_diffs):
-    x_jitter = np.random.normal(i, 0.125, size=len(diffs))
-    ax.scatter(x_jitter, diffs, alpha=0.3, color="black", s=20)
+  if include_raw_data:
+    for i, diffs in enumerate(all_diffs):
+      x_jitter = np.random.normal(i, 0.125, size=len(diffs))
+      ax.scatter(x_jitter, diffs, alpha=0.3, color="black", s=20)
 
   # Add zero line
   ax.axhline(y=0, color="black", linestyle="--", alpha=0.5)
@@ -541,8 +555,11 @@ def plot_rt_differences(
   ax.grid(True, linestyle="--", alpha=0.7)
 
   # Set y-axis limits based on all data points
-  all_data = np.concatenate(all_diffs)
-  y_min, y_max = np.percentile(all_data, [1, 99])
+  if ylim is None:
+    all_data = np.concatenate(all_diffs)
+    y_min, y_max = np.percentile(all_data, [1, 99])
+  else:
+    y_min, y_max = ylim
   y_range = y_max - y_min
   ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
 
@@ -737,6 +754,8 @@ def plot_success_rate_path_reuse_metrics(
   include_raw_data: bool = True,
   min_circle_size: int = 10,
   max_circle_size: int = 100,
+  legend_loc: str = "lower right",
+  legend_ncol: int = 1,
 ) -> Tuple[plt.Figure, plt.Axes]:
   """Plot success rate vs path reuse as a 2D scatter plot with error bars.
 
@@ -830,19 +849,21 @@ def plot_success_rate_path_reuse_metrics(
   # Add model data if provided
   if model_df is not None:
     # Calculate model statistics
-    model_stats = model_df.group_by("algo").agg(
-      success_mean=pl.col("success").mean() * 100,
-      success_se=(
-        pl.col("success").mean()
-        * (1 - pl.col("success").mean())
-        / pl.col("success").count()
-      ).sqrt()
-      * 100,
-      reuse_mean=pl.col("reuse").mean() * 100,
-      reuse_se=(
-        pl.col("reuse").mean() * (1 - pl.col("reuse").mean()) / pl.col("reuse").count()
-      ).sqrt()
-      * 100,
+    model_stats = model_df.filter(eval=True).group_by("algo").agg(
+        success_mean=(pl.col("success").cast(pl.Float64).mean() * 100),
+        success_se=(
+            pl.col("success").cast(pl.Float64).mean()
+            * (1 - pl.col("success").cast(pl.Float64).mean())
+            / pl.count()
+        ).sqrt()
+        * 100,
+        reuse_mean=(pl.col("reuse").cast(pl.Float64).mean() * 100),
+        reuse_se=(
+            pl.col("reuse").cast(pl.Float64).mean() 
+            * (1 - pl.col("reuse").cast(pl.Float64).mean()) 
+            / pl.count()
+        ).sqrt()
+        * 100,
     )
 
     # Add model data
@@ -854,8 +875,8 @@ def plot_success_rate_path_reuse_metrics(
       all_data[algo] = {
         "success": row["success_mean"].to_numpy()[0],
         "reuse": row["reuse_mean"].to_numpy()[0],
-        "success_se": row["success_se"].to_numpy()[0],
-        "reuse_se": row["reuse_se"].to_numpy()[0],
+        "success_se": min(row["success_se"].to_numpy()[0], 5),
+        "reuse_se": min(row["reuse_se"].to_numpy()[0], 5),
       }
 
   # Plot data points with error bars
@@ -973,9 +994,9 @@ def plot_success_rate_path_reuse_metrics(
   if model_df is not None:
     ax.legend(
       #bbox_to_anchor=(0.5, -0.15),  # Place legend below plot
-      loc="lower right",
+      loc=legend_loc,
       #ncol=len(ordered_keys) // 2,  # Arrange in two rows
-      ncol=2,
+      ncol=legend_ncol,
       columnspacing=1,
       handletextpad=0.5,
       fontsize=DEFAULT_LEGEND_SIZE,
@@ -1236,6 +1257,7 @@ def power_analysis_rt_across_groups(
   alpha=0.05,
   stats_file=None,
   n_simulations=500,
+  power_levels = [0.8],
 ):
   """Perform power analysis for between-groups comparison using linear mixed effects model.
 
@@ -1287,13 +1309,12 @@ def power_analysis_rt_across_groups(
   effect_size = result.params[param_name] / np.std(data["RT"])
 
   # Calculate required sample sizes for different power levels
-  power_levels = [0.8, 0.9, 0.95]
   n_required = {}
 
   # Binary search for each power level
   for target_power in tqdm(power_levels, desc="Power levels"):
     left = 10  # minimum sample size
-    right = 200  # maximum sample size to try
+    right = 500  # maximum sample size to try
 
     while left < right:
       n = (left + right) // 2

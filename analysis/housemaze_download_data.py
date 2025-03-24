@@ -70,7 +70,7 @@ def run_command(command, dir_path):
 
 def download_model_files(base_server_dir, base_local_dir, dir_list):
   # SSH connection details
-  hostname = "rcfas_login1"  # Using the SSH config alias
+  hostname = "rcfas_login"  # Using the SSH config alias
 
   # Common rsync options
   rsync_options = "-avz --prune-empty-dirs --exclude='*wandb*'"
@@ -99,7 +99,7 @@ destination_folder = "/Users/wilka/git/research/results/human_dyna/user_data/exp
 ##############################
 # Model Data
 server_dir = (
-  "/n/holylfs06/LABS/kempner_fellow_wcarvalho/results/jaxrl_result/housemaze_trainer"
+  "/n/holylfs06/LABS/kempner_fellow_wcarvalho/jax_rl_results/housemaze_trainer"
 )
 local_dir = "/Users/wilka/git/research/results/human_dyna/model_data"
 qlearning_dir = f"ql/save_data/ql-big-2/tota=40000000,exp=exp2"
