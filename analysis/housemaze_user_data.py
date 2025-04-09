@@ -351,6 +351,7 @@ def make_row(
     eval=datum["metadata"]["eval"],
     task=int(get_task_object(timesteps)),
     room=int(get_task_room(timesteps, task_groups=groups)),
+    start_pos=str(timesteps.state.agent_pos[0]),
   )
   row.update(datum["user_data"])
   row.update(user_storage['user_info'])
@@ -579,6 +580,10 @@ def make_episode_data(
 
   nbefore = len(data)
   data = [datum for datum in data if not filter_fn(datum)]
+
+  if len(data) == 0:
+    return file, None, None
+
   if verbose:
     print(f"Filtered {nbefore - len(data)} data points")
 
@@ -750,16 +755,23 @@ def make_episode_data(
       "path_length": path_length,
       "termination": terminated,
       "log_first_rt": log_first_rt,
-      "first_rt": lambda e: e.reaction_times[0],
+      "first_rt": lambda e: e.reaction_times[0],  # Convert to milliseconds
       "log_avg_rt": log_avg_rt,
+      "avg_rt": lambda e: np.mean(e.reaction_times[:-1]),  # Non-log version in ms
       "log_total_rt": log_total_rt,
-      "total_rt": total_rt,
+      "total_rt": lambda e: np.sum(e.reaction_times[:-1]),  # Already existed, now in ms
       "log_avg_post_rt": log_avg_post_rt,
+      "avg_post_rt": lambda e: np.mean(e.reaction_times[1:-1]),  # Non-log version in ms
       "log_max_rt": log_max_rt,
+      "max_rt": lambda e: np.max(e.reaction_times[:-1]),  # Non-log version in ms
       "log_max_post_rt": log_max_post_rt,
+      #"max_post_rt": lambda e: np.max(e.reaction_times[1:-1]),  # Non-log version in ms
       "log_max_init_post_rt": log_max_init_post_rt,
+      #"max_init_post_rt": lambda e: np.max(e.reaction_times[1:(len(e.reaction_times[:-1]) // 2 + 1)]),  # Non-log version in ms
       "log_max_end_rt": log_max_end_rt,
+      #"max_end_rt": lambda e: np.max(e.reaction_times[-11:-1]),  # Non-log version in ms
       "log_max_final_rt": log_max_final_rt,
+      #"max_final_rt": lambda e: np.max(e.reaction_times[-(len(e.reaction_times[:-1]) // 2 + 1):-1]),  # Non-log version in ms
     }
     computed_values = {key: [] for key in measures}
 

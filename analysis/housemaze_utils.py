@@ -20,7 +20,7 @@ from housemaze.human_dyna import mazes
 from housemaze.human_dyna import multitask_env
 from housemaze.human_dyna import experiments as housemaze_experiments
 
-from analysis import data_loading
+from analysis.experiment_analysis import EpisodeData
 
 
 image_dict = utils.load_image_dict()
@@ -29,14 +29,6 @@ num_groups = 2
 char2idx, groups, task_objects = mazes.get_group_set(num_groups)
 idx2key = {idx: image_dict["keys"][idx] for char, idx in char2idx.items()}
 task_runner = multitask_env.TaskRunner(task_objects=task_objects)
-
-
-class EpisodeData(NamedTuple):
-  actions: jax.Array
-  timesteps: multitask_env.TimeStep
-  positions: jax.Array = None
-  reaction_times: jax.Array = None
-  transitions: struct.PyTreeNode = None
 
 
 def is_in_notebook():
@@ -77,9 +69,25 @@ def get_params(maze_str: str = None):
     make_env_params=True,
   )
 
+def swap_task(timestep, new_task):
+  task_object = (task_objects * new_task).sum(-1)
+  task_object = task_object.astype(jnp.int32)
+  new_state = timestep.state.replace(
+    step_num=jnp.zeros_like(timestep.state.step_num),
+    task_w=new_task,
+    task_object=task_object,  # only used for logging
+    is_train_task=jnp.full(timestep.reward.shape, False),
+  )
+  return timestep.replace(
+    state=new_state,
+    # reset reward, discount, step type
+    reward=jnp.zeros_like(timestep.reward),
+    discount=jnp.ones_like(timestep.discount),
+    step_type=jnp.ones_like(timestep.step_type),
+  )
 
 def get_algorithm_data(
-  algorithm: data_loading.Algorithm,
+  algorithm,
   exp: str,
   overwrite: bool = False,
   extra_info=None,
@@ -188,7 +196,7 @@ def collect_search_episodes(
   def collect_episode(task, actions, rng):
     timestep = env.reset(rng, env_params)
     task_vector = task_runner.task_vector(task)
-    init_timestep = data_loading.swap_task(timestep, task_vector)
+    init_timestep = swap_task(timestep, task_vector)
     initial_carry = (rng, init_timestep)
     (rng, _), timesteps = jax.lax.scan(step_fn, initial_carry, actions)
     return concat_first_rest(init_timestep, timesteps)
@@ -229,7 +237,7 @@ def collect_search_episodes(
   all_actions = np.array(all_actions)
   all_episodes = jtu.tree_map(lambda *v: jnp.stack(v), *all_episodes)
 
-  return data_loading.EpisodeData(timesteps=all_episodes, actions=all_actions)
+  return EpisodeData(timesteps=all_episodes, actions=all_actions)
 
 
 def get_search_data(
@@ -388,6 +396,7 @@ def create_reaction_times_video(images, reaction_times, output_file, fps=1):
   # Create the animation
   anim = FuncAnimation(fig, update, frames=n, interval=1000 / fps, blit=False)
   video = anim.to_html5_video()
+  plt.close(fig)  # Close the figure after creating the video
   return video
 
 

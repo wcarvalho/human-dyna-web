@@ -262,11 +262,18 @@ def path_reuse_results(
   stats_file.write("\nReaction Time Analysis\n")
   stats_file.write("======================================\n")
 
-  for measure in ['log_max_rt', 'log_first_rt']:
+  for idx, measure in enumerate(['log_max_rt', 'log_first_rt', 'first_rt', 'max_rt', 'total_rt']):
     stats_file.write(f"\n{measure}\n")
     stats_file.write("--------------------\n")
 
     fig, ax = plt.subplots(figsize=(4, 4))
+
+    #if rt_ylim:
+    #  if isinstance(rt_ylim[0], list):
+    #    rt_ylim_ = rt_ylim[idx]
+    #  else:
+    #    rt_ylim_ = rt_ylim
+
     experiment_analysis.plot_bar_rt_comparison(
       sub_df.filter(success=1),
       measure,
@@ -274,7 +281,7 @@ def path_reuse_results(
       stats_file=stats_file,
       ax=ax,
       rereun_analysis=rereun_analysis,
-      ylim=rt_ylim,
+      #ylim=rt_ylim_,
     )
     plt.show()
 
@@ -326,6 +333,7 @@ def juncture_results(
   include_raw_data: bool = False,
   show_legend: bool = True,
   options: List[Tuple[str, int]] = None,
+  measure = "log_first_rt",
   ylim=None,
 ):
   """Analyze results from experiment 4.
@@ -374,7 +382,7 @@ def juncture_results(
   fig, ax = plt.subplots(figsize=figsize)
 
   # We'll focus only on first RT
-  measure = "log_first_rt"
+  
   
   # Define colors and labels for each condition
   condition_colors = {
@@ -448,7 +456,7 @@ def juncture_results(
   # Customize plot
   ax.set_xticks(x_pos)
   ax.set_xticklabels([])
-  ax.set_ylabel("Log RT Difference", fontsize=DEFAULT_LABEL_SIZE)
+  ax.set_ylabel(experiment_analysis.measure_to_ylabel[measure], fontsize=DEFAULT_LABEL_SIZE)
   ax.set_title("Juncture Manipulation\nReaction Time Difference", fontsize=DEFAULT_TITLE_SIZE)
   ax.tick_params(axis="both", which="major", labelsize=DEFAULT_LABEL_SIZE)
   ax.grid(True, linestyle="--", alpha=0.7)
@@ -476,8 +484,8 @@ def juncture_results(
   # Save combined figure in multiple formats
   if save_figs:
     base_path = os.path.join(save_dir, "exp4_2_rt_diff_combined")
-    fig.savefig(f"{base_path}.pdf", bbox_inches="tight")
-    fig.savefig(f"{base_path}.png", bbox_inches="tight", dpi=300)
+    fig.savefig(f"{base_path}_{measure}.pdf", bbox_inches="tight")
+    fig.savefig(f"{base_path}_{measure}.png", bbox_inches="tight", dpi=300)
   if display_figs:
     from IPython.display import display
     display(fig)

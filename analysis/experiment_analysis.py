@@ -109,30 +109,48 @@ measure_to_title = {
   "success": "Success Rate",
   "path_length": "Path Length",
   "termination": "Task Completion Rate",
-  "log_first_rt": "First Action Response Time",
-  "log_avg_rt": "Average Response Time",
-  "log_total_rt": "Total Response Time",
-  "log_avg_post_rt": "Post First Action Average Response Time",
-  "log_max_rt": "Maximum Response Time",
-  "log_max_post_rt": "Post First Action Maximum Response Time",
-  "log_max_init_post_rt": "Initial Post First Action Maximum Response Time",
-  "log_max_end_rt": "End-Phase Maximum Response Time",
-  "log_max_final_rt": "Final Maximum Response Time",
+  "log_first_rt": "First Action Response Time (Log)",
+  "log_avg_rt": "Average Response Time (Log)",
+  "log_total_rt": "Total Response Time (Log)",
+  "log_avg_post_rt": "Post First Action Average Response Time (Log)",
+  "log_max_rt": "Maximum Response Time (Log)",
+  "log_max_post_rt": "Post First Action Maximum Response Time (Log)",
+  "log_max_init_post_rt": "Initial Post First Action Maximum Response Time (Log)",
+  "log_max_end_rt": "End-Phase Maximum Response Time (Log)",
+  "log_max_final_rt": "Final Maximum Response Time (Log)",
+  "first_rt": "First Action Response Time",
+  "avg_rt": "Average Response Time",
+  "total_rt": "Total Response Time",
+  "avg_post_rt": "Post First Action Average Response Time",
+  "max_rt": "Maximum Response Time",
+  "max_post_rt": "Post First Action Maximum Response Time",
+  "max_init_post_rt": "Initial Post First Action Maximum Response Time",
+  "max_end_rt": "End-Phase Maximum Response Time",
+  "max_final_rt": "Final Maximum Response Time",
 }
 
 measure_to_ylabel = {
   "success": "Success Rate (%)",
   "path_length": "Number of Steps",
   "termination": "Completion Rate (%)",
-  "log_first_rt": "Log RT (ms)",
-  "log_avg_rt": "Log RT (ms)",
-  "log_total_rt": "Log RT (ms)",
-  "log_avg_post_rt": "Log RT (ms)",
-  "log_max_rt": "Log RT (ms)",
-  "log_max_post_rt": "Log RT (ms)",
-  "log_max_init_post_rt": "Log RT (ms)",
-  "log_max_end_rt": "Log RT (ms)",
-  "log_max_final_rt": "Log RT (ms)",
+  "log_first_rt": "Log RT",
+  "log_avg_rt": "Log RT",
+  "log_total_rt": "Log RT",
+  "log_avg_post_rt": "Log RT",
+  "log_max_rt": "Log RT",
+  "log_max_post_rt": "Log RT",
+  "log_max_init_post_rt": "Log RT",
+  "log_max_end_rt": "Log RT",
+  "log_max_final_rt": "Log RT",
+  "first_rt": "seconds",
+  "avg_rt": "seconds",
+  "total_rt": "seconds",
+  "avg_post_rt": "seconds",
+  "max_rt": "seconds",
+  "max_post_rt": "seconds",
+  "max_init_post_rt": "seconds",
+  "max_end_rt": "seconds",
+  "max_final_rt": "seconds",
 }
 
 
@@ -203,6 +221,86 @@ def filter_train_by_min_success(df: DataFrame, min_successes: int = 16):
     )
   return remove
 
+def plot_reaction_times(reaction_times, figsize=(6, 3), color='lightblue', title=None, ylabel=True, ylim=None, remove_last: bool = True, ax=None):
+    """
+    Creates a bar plot showing the progression of reaction times over steps.
+    
+    Args:
+        reaction_times: numpy array of reaction times
+        figsize: tuple specifying figure size (width, height)
+        color: color for the plotted bars
+        ylim: optional tuple (ymin, ymax) for setting y-axis limits
+        
+    Returns:
+        fig, ax: matplotlib figure and axis objects
+    """
+    reaction_times = reaction_times[:-1] if remove_last else reaction_times
+    if ax is None:
+      fig, ax = plt.subplots(figsize=figsize)
+    else:
+      fig = ax.figure
+    
+    # Plot reaction times as bars
+    steps = np.arange(len(reaction_times))
+    ax.bar(steps, reaction_times, color=color, alpha=0.7, edgecolor='black')
+    
+    ax.set_xlabel('Episode timestep', fontsize=DEFAULT_LABEL_SIZE)
+    if ylabel:
+      ax.set_ylabel('Reaction Time (s)', fontsize=DEFAULT_LABEL_SIZE)
+    ax.set_title(title or 'Reaction Times', fontsize=DEFAULT_TITLE_SIZE)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+    
+    # Add mean line
+    mean_rt = np.mean(reaction_times)
+    ax.axhline(y=mean_rt, color='r', linestyle='--', 
+                label=f'Mean: {mean_rt:.2f}s')
+    ax.legend(fontsize=DEFAULT_LEGEND_SIZE)
+    
+    # Adjust tick label sizes
+    ax.tick_params(axis='both', which='major', labelsize=DEFAULT_LABEL_SIZE)
+
+    # Set y-axis limits if provided
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    
+    plt.tight_layout()
+    return fig, ax
+
+def plot_reaction_time_histogram(reaction_times, figsize=(8, 5), color='lightblue'):
+    """
+    Creates a histogram showing the distribution of reaction times with 0.5s bins.
+    
+    Args:
+        reaction_times: numpy array of reaction times
+        figsize: tuple specifying figure size (width, height)
+        color: color for the histogram bars
+        
+    Returns:
+        fig, ax: matplotlib figure and axis objects
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Determine bin edges in 0.5s increments
+    max_rt = np.ceil(np.max(reaction_times))
+    bin_edges = np.arange(0, max_rt + 0.5, 0.5)
+    
+    # Plot histogram with specified bins
+    ax.hist(reaction_times, bins=bin_edges, alpha=0.7, color=color,
+            edgecolor='black')
+    
+    # Add mean line
+    mean_rt = np.mean(reaction_times)
+    ax.axvline(mean_rt, color='r', linestyle='--', 
+               label=f'Mean: {mean_rt:.2f}s')
+    
+    ax.set_xlabel('Reaction Time (s)')
+    ax.set_ylabel('Frequency')
+    ax.set_title('Distribution of Reaction Times')
+    ax.grid(True)
+    ax.legend()
+    
+    plt.tight_layout()
+    return fig, ax
 
 def bar_plot_error(
   human_data, model_stats=None, ax=None, ylim=None, legend=True, xlabels=False
@@ -383,13 +481,13 @@ def plot_bar_rt_comparison(
 
   # Add individual points with jitter
   all_data = []
-  if include_raw_data:
-    for i, key in enumerate(["no_reuse", "reuse"]):
-      data = power_results["raw_means"][key]
-      print(f"n {key}: {len(data)}")
+  for i, key in enumerate(["no_reuse", "reuse"]):
+    data = power_results["raw_means"][key]
+    print(f"n {key}: {len(data)}")
+    if include_raw_data:
       x_jitter = np.random.normal(i, 0.04, size=len(data))
       ax.scatter(x_jitter, data, alpha=0.3, color="black", s=20)
-      all_data.append(data)
+    all_data.append(data)
 
   # Customize plot
   ax.set_xticks(x_pos)
@@ -403,9 +501,11 @@ def plot_bar_rt_comparison(
 
   if percentile_ylim and len(all_data) > 0:
     all_data_combined = np.concatenate(all_data)
-    y_min, y_max = np.percentile(all_data_combined, [1, 99])
-    y_range = y_max - y_min
-    ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+    y_mean = np.mean(all_data_combined)
+    y_stderr = np.std(all_data_combined, ddof=1) / np.sqrt(len(all_data_combined))
+    y_min, y_max = y_mean - 6 * y_stderr, y_mean + 6 * y_stderr
+    ax.set_ylim(y_min, max(0, y_max))
+
   elif ylim is not None:
     y_min, y_max = ylim
     y_range = y_max - y_min
