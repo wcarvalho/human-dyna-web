@@ -219,6 +219,7 @@ async def finish_experiment(meta_container, stage_container, button_container):
   if not app.storage.user["data_saved"]:
     with meta_container:
       clear_element(meta_container)
+      await nicewebrl.prevent_default_spacebar_behavior(False)
       ui.markdown(
         "Please provide feedback on the experiment here. For example, please describe if anything went wrong or if you have any suggestions for the experiment."
       )
@@ -442,7 +443,9 @@ async def start_experiment(meta_container, stage_container, button_container):
     app.storage.user["block_progress"] = block_progress()
     logger.info("=" * 30)
     logger.info(f"Began {stage_name(stage)}")
+    await nicewebrl.prevent_default_spacebar_behavior(True)
     await run_stage(stage, stage_container, button_container)
+    await nicewebrl.prevent_default_spacebar_behavior(False)
 
     # wait for any saves to finish before updating stage
     if isinstance(stage, EnvStage):

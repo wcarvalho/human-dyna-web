@@ -410,7 +410,9 @@ async def start_experiment(meta_container, stage_container, button_container):
       stage = await block.get_stage()
 
       # activate stage
+      await nicewebrl.prevent_default_spacebar_behavior(False)
       await run_stage(stage, stage_container, button_container)
+      await nicewebrl.prevent_default_spacebar_behavior(True)
       logger.info(f"Finished stage '{stage.name}'")
       # wait for any saves to finish before updating stage
       # very important, otherwise may lose data

@@ -416,7 +416,7 @@ async def train_eval_feedback_display_fn(
       fig_height = 4
       with ui.matplotlib(figsize=(int(fig_width), int(fig_height))).figure as fig:
         axs = fig.subplots(1, 2)
-        axs[0].set_title(f"Phase 1 map")
+        axs[0].set_title("Phase 1 map")
         axs[0].imshow(train_image)
         axs[0].axis("off")
         axs[1].set_title(f"Phase 2 object: {eval_category}")
