@@ -675,101 +675,6 @@ def get_preplay_data(
   )
 
 
-###################
-# Search Algorithms
-###################
-
-
-def actions_from_search(env_params, rng, task, algo, budget):
-  map_init = jax.tree_util.tree_map(lambda x: x[0], env_params.reset_params.map_init)
-  grid = np.asarray(map_init.grid)
-  agent_pos = tuple(int(o) for o in map_init.agent_pos)
-  goal = np.array([task])
-  path, _ = algo(grid, agent_pos, goal, key=rng, budget=budget)
-  actions = utils.actions_from_path(path)
-  return actions
-
-
-def collect_search_episodes(
-  env, env_params, task_vector, algorithm: str, rng, budget=None, n: int = 100
-):
-  budget = budget or 1e8
-  env_params = env_params.replace(
-    task_probs=task_vector,
-  )
-  default_init_timestep = env.reset(rng, env_params)
-  task = default_init_timestep.state.task_object
-
-  @jax.jit
-  def concat_first_rest(first, rest):
-    """concat first pytree with sequence of pytrees
-    Args:
-        first (struct.PyTree): [...]
-        rest (struct.PyTree): [T, ...]
-
-    Returns:
-        struct.PyTree: [T+1, ...]
-    """
-
-    def concat_pytrees(tree1, tree2, **kwargs):
-      return jax.tree_util.tree_map(
-        lambda x, y: jnp.concatenate((x, y), **kwargs), tree1, tree2
-      )
-
-    def add_time(v):
-      return jax.tree_util.tree_map(lambda x: x[None], v)
-
-    return concat_pytrees(add_time(first), rest)
-
-  @jax.jit
-  def step_fn(carry, action):
-    rng, timestep = carry
-    rng, step_rng = jax.random.split(rng)
-    next_timestep = env.step(step_rng, timestep, action, env_params)
-    return (rng, next_timestep), next_timestep
-
-  @jax.jit
-  def collect_episode(actions, rng):
-    init_timestep = env.reset(rng, env_params)
-    initial_carry = (rng, init_timestep)
-    (rng, _), timesteps = jax.lax.scan(step_fn, initial_carry, actions)
-    init_timestep = jax.tree_util.tree_map(jnp.asarray, init_timestep)
-    timesteps = jax.tree_util.tree_map(jnp.asarray, timesteps)
-    return concat_first_rest(init_timestep, timesteps)
-
-  #######################
-  # first get actions from n different runs
-  #######################
-  all_actions = []
-  rngs = jax.random.split(rng, n)
-
-  # First, get all actions
-  for idx in tqdm(range(n), f"{algorithm}: planning"):
-    actions = actions_from_search(
-      env_params, rngs[idx], task, algo=getattr(utils, algorithm), budget=budget
-    )
-    all_actions.append(actions)
-
-  # Find the maximum length among all action sequences
-  max_length = max(len(actions) for actions in all_actions)
-
-  # Pad each action sequence to the maximum length
-  padded_actions = []
-  for actions in all_actions:
-    padding = [0] * (max_length - len(actions))
-    padded_actions.append(np.concatenate((actions, np.array(padding, dtype=np.int32))))
-
-  # Convert to numpy array
-  all_actions = np.array(padded_actions, dtype=np.int32)
-
-  # Now compute all episodes
-  # Vectorize collect_episode over batch dimension
-  vmapped_collect_episode = jax.jit(jax.vmap(collect_episode))
-  all_episodes = vmapped_collect_episode(all_actions[:, :-1], rngs)
-
-  return EpisodeData(timesteps=all_episodes, actions=all_actions)
-
-
 def get_model_data(
   qlearning_path: str = None,
   sf_path: str = None,
@@ -857,15 +762,6 @@ def get_model_data(
       overwrite_df=overwrite_df,
     )
     to_concat.append(preplay_df)
-  ###############################
-  ## Breadth-first search and Depth-first search
-  ###############################
-  #search_df = get_bfs_dfs_data(
-  #  path=search_path,
-  #  overwrite_episodes=overwrite_episodes,
-  #  overwrite_df=overwrite_df,
-  #  num_episodes=100,
-  #)
 
   model_df = concat_list(*to_concat)
 
@@ -879,8 +775,14 @@ def get_model_data(
   return model_df
 
 if __name__ == "__main__":
-  data_dir = "/Users/wilka/git/research/results/human_dyna/"
+  import sys
+  parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  sys.path.append(os.path.join(parent_dir, "simulations"))
+
   from analysis import craftax_download_data
+  from configs import DIRECTORY
+  data_dir = os.path.join(DIRECTORY, "craftax_model_data")
+
   ################
   # Load model data
   ################

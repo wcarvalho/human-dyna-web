@@ -102,9 +102,10 @@ server_dir = (
   "/n/holylfs06/LABS/kempner_fellow_wcarvalho/jax_rl_results/housemaze_trainer"
 )
 local_dir = "/Users/wilka/git/research/results/human_dyna/model_data"
-qlearning_dir = f"ql/save_data/ql-big-2/tota=40000000,exp=exp2"
-sf_dir = f"usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2"
-dyna_dir = f"dynaq_shared/save_data/dynaq-big-4/alg=dynaq_shared,agen=256,tota=100000000,exp=exp2"
+qlearning_dir = "ql/save_data/ql-big-2/tota=40000000,exp=exp2"
+sf_dir = "usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2"
+dyna_dir = "dynaq_shared/save_data/dynaq-big-4/alg=dynaq_shared,agen=256,tota=100000000,exp=exp2"
+preplay_dir = "preplay/save_data/preplay-final-1/sf_h=1024,num_=2,tota=40000000,exp=exp2"
 
 qlearning_server_dir = f"{server_dir}/{qlearning_dir}"
 sf_server_dir = f"{server_dir}/{sf_dir}"

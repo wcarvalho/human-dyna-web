@@ -1,4 +1,4 @@
-from typing import List, NamedTuple
+from typing import List
 
 import seaborn as sns
 import jax
@@ -11,8 +11,6 @@ from matplotlib.animation import FuncAnimation
 import jax.tree_util as jtu
 import polars as pl
 import pickle
-
-from flax import struct
 
 from housemaze import renderer
 from housemaze.human_dyna import utils

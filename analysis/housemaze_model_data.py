@@ -1,5 +1,8 @@
 from typing import Optional, List, NamedTuple, Callable
 import functools
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flax import struct
 from flax.traverse_util import unflatten_dict
@@ -221,7 +224,7 @@ def load_algorithm(
   make_agent: vbb.MakeAgentFn,
   make_optimizer: vbb.MakeOptimizerFn,
   make_actor: vbb.MakeActorFn,
-  num_episodes: int = 25,
+  num_episodes: int = 1,
   max_steps: int = 600,
   path: Optional[str] = None,
   name: Optional[str] = None,
@@ -375,7 +378,7 @@ def get_algorithm_data(
 
   base_path = path or f"{algorithm.path}/analysis/"
   os.makedirs(base_path, exist_ok=True)
-  timesteps_filename = f"{base_path}/{algorithm.name}_timesteps.pickle"
+  timesteps_filename = f"{base_path}/{algorithm.name}_timesteps.safetensors"
   df_filename = f"{base_path}/{algorithm.name}_df.csv"
 
   train_tasks = groups[:1, 0]
@@ -389,22 +392,25 @@ def get_algorithm_data(
   all_episodes = None
 
   if not overwrite_episodes and os.path.exists(timesteps_filename):
-    with open(timesteps_filename, "rb") as f:
-      print(f"{algorithm.name}: Loading from {timesteps_filename}")
-      serialized_data = f.read()
+    try:
+      with open(timesteps_filename, "rb") as f:
+        print(f"{algorithm.name}: Loading from {timesteps_filename}")
+        serialized_data = f.read()
 
-      # Create template episode structure
-      task_vector = data_task_runner.task_vector(groups[0, 0])
-      maze_name = next(iter(label2name.values()))
-      env_params = make_env_params(getattr(mazes, maze_name))
-      example_episodes = algorithm.eval_fn(rng, env_params, task_vector)
-      example1 = jax.tree_util.tree_map(lambda x: x[0], example_episodes)
+        # Create template episode structure
+        task_vector = data_task_runner.task_vector(groups[0, 0])
+        maze_name = next(iter(label2name.values()))
+        env_params = make_env_params(getattr(mazes, maze_name))
+        example_episodes = algorithm.eval_fn(rng, env_params, task_vector)
+        example1 = jax.tree_util.tree_map(lambda x: x[0], example_episodes)
 
-      # Two-step deserialization
-      attempt1 = serialization.from_bytes(None, serialized_data)
-      nepisodes = len(attempt1)
-      all_episodes = serialization.from_bytes([example1] * nepisodes, serialized_data)
-      print(f"{algorithm.name}: Loaded {nepisodes} episodes")
+        # Two-step deserialization
+        attempt1 = serialization.from_bytes(None, serialized_data)
+        nepisodes = len(attempt1)
+        all_episodes = serialization.from_bytes([example1] * nepisodes, serialized_data)
+        print(f"{algorithm.name}: Loaded {nepisodes} episodes")
+    except Exception as e:
+      print(f"{algorithm.name}: Error loading episodes: {e}")
 
   ##############################
   # If no episodes, generate them
@@ -869,15 +875,31 @@ def get_bfs_dfs_data(
     episodes=model_episodes_list,
   )
 
+def get_model_df(cache_dir: str, load_episodes: bool = True):
+  # Create cache filenames based on the paths
+  cache_base = os.path.join(cache_dir, "model_data_cache")
+  df_cache_path = f"{cache_base}_df.csv"
+  episodes_cache_path = f"{cache_base}_episodes.pickle"
+
+  df = pl.read_csv(df_cache_path)
+  if not load_episodes:
+    return DataFrame(df=df)
+
+  with open(episodes_cache_path, "rb") as f:
+    episodes = pickle.load(f)
+  return DataFrame(df=df, episodes=episodes)
+
 
 def get_model_data(
   qlearning_path: str,
   sf_path: str,
   dyna_path: str,
+  preplay_path: str,
   search_path: str,
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
   cache_dir: str = None,
+  debug: bool = False,
 ):
   """Load and process data from different model types.
 
@@ -921,14 +943,18 @@ def get_model_data(
   # Q-learning
   ##############################
   qlearning_df = get_qlearning_data(
-    qlearning_path, overwrite_episodes=overwrite_episodes, overwrite_df=overwrite_df
+    qlearning_path,
+    overwrite_episodes=overwrite_episodes,
+    overwrite_df=overwrite_df
   )
 
   ##############################
   # Successor Features
   ##############################
   sf_df = get_usfa_data(
-    sf_path, overwrite_episodes=overwrite_episodes, overwrite_df=overwrite_df
+    sf_path,
+    overwrite_episodes=overwrite_episodes,
+    overwrite_df=overwrite_df
   )
 
   ##############################
@@ -941,16 +967,23 @@ def get_model_data(
   )
 
   ##############################
+  # Preplay
+  ##############################
+  preplay_df = get_dyna_data(
+    preplay_path, overwrite_episodes=overwrite_episodes, overwrite_df=overwrite_df
+  )
+
+  ##############################
   # Breadth-first search and Depth-first search
   ##############################
   search_df = get_bfs_dfs_data(
     path=search_path,
     overwrite_episodes=overwrite_episodes,
     overwrite_df=overwrite_df,
-    num_episodes=100,
+    num_episodes=1 if debug else 100,
   )
 
-  model_df = concat_list(qlearning_df, sf_df, dyna_df, search_df)
+  model_df = concat_list(qlearning_df, sf_df, dyna_df, preplay_df, search_df)
 
   # Cache the results
   os.makedirs(os.path.dirname(cache_base), exist_ok=True)
@@ -963,13 +996,31 @@ def get_model_data(
 
 
 if __name__ == "__main__":
-  data_dir = "/Users/wilka/git/research/results/human_dyna"
+  import sys
+  parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  sys.path.append(os.path.join(parent_dir, "simulations"))
+
+  from configs import DIRECTORY
+  data_dir = os.path.join(DIRECTORY, "jaxmaze_model_data")
+
+  DEBUG = False
+
+  def get_dir(model_name):
+    if DEBUG:
+      return f"{data_dir}/final/{model_name}/seed=1"
+    else:
+      return f"{data_dir}/final/{model_name}/seed=*"
+
+  cache_dir = f"{data_dir}/saved_data_debug" if DEBUG else f"{data_dir}/saved_data"
+
   get_model_data(
-    qlearning_path=f"{data_dir}/model_data/ql/save_data/ql-big-2/tota=40000000,exp=exp2/seed=*",
-    sf_path=f"{data_dir}/model_data/usfa/save_data/usfa-big-10-search/sf_h=1024,num_=2,tota=40000000,exp=exp2/seed=*",
-    dyna_path=f"{data_dir}/model_data/dynaq_shared/save_data/dynaq-big-4/alg=dynaq_shared,agen=256,tota=100000000,exp=exp2/seed=*",
+    qlearning_path=get_dir("qlearning"),
+    sf_path=get_dir("sf"),
+    dyna_path=get_dir("dyna"),
+    preplay_path=get_dir("preplay"),
     search_path=f"{data_dir}/search_algos",
-    overwrite_episodes=True,
-    overwrite_df=True,
-    cache_dir=f"{data_dir}/model_data/cache",
+    overwrite_episodes=False,
+    overwrite_df=False,
+    cache_dir=cache_dir,
+    debug=DEBUG
   )
