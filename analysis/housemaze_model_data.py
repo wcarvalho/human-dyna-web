@@ -370,22 +370,36 @@ def get_algorithm_data(
   data_task_runner=None,
   maze_names: Optional[List[str]] = None,
   path: str = None,
+  config_updates: dict = None,
 ):
   extra_info = extra_info or {}
   _, _, _, label2name = housemaze_experiments.exp2(algorithm.config, analysis_eval=True)
 
   maze_names = maze_names or list(label2name.values())
 
-  base_path = path or f"{algorithm.path}/analysis/"
-  os.makedirs(base_path, exist_ok=True)
-  timesteps_filename = f"{base_path}/{algorithm.name}_timesteps.safetensors"
-  df_filename = f"{base_path}/{algorithm.name}_df.csv"
+  config_updates = config_updates or {}
+  if config_updates:
+    base_path = path or f"{algorithm.path}/analysis"
+    os.makedirs(base_path, exist_ok=True)
+    name = algorithm.name
+    for key, value in config_updates.items():
+      name = f"{name}_{key}={value}"
+    timesteps_filename = f"{base_path}/{name}_timesteps.safetensors"
+    df_filename = f"{base_path}/{name}_df.csv"
+  else:
+    base_path = path or f"{algorithm.path}/analysis"
+    os.makedirs(base_path, exist_ok=True)
+    timesteps_filename = f"{base_path}/{algorithm.name}_timesteps.safetensors"
+    df_filename = f"{base_path}/{algorithm.name}_df.csv"
+
+  all_train_objects = [image_keys[o] for o in groups[:, 0]]
+  all_test_objects = [image_keys[o] for o in groups[:, 1]]
 
   train_tasks = groups[:1, 0]
-  test_tasks = groups[:1, 1]
+  test_tasks = groups[:2, 1]
   tasks = jnp.concatenate((train_tasks, test_tasks))
   rng = jax.random.PRNGKey(42)
-
+  import ipdb; ipdb.set_trace()
   ##############################
   # First try to load episodes
   ##############################
@@ -478,6 +492,7 @@ def get_algorithm_data(
           path_length=int(path_length(episode)),
           task_vector=str(episode.timesteps.state.task_w[0]),
           manipulation=maze_to_manipulation.get(maze_name),
+          **config_updates,
           **extra_info,
         )
         if maze_name == "big_m1_maze3_shortcut":
@@ -572,12 +587,14 @@ def get_usfa_data(
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
   vis_coeff=0.1,
+  config_updates: dict = None,
   **kwargs,
 ):
   from housemaze.human_dyna import sf_task_runner
   from simulations.networks import CategoricalHouzemazeObsEncoder
   from simulations import usfa_housemaze as usfa
 
+  config_updates = config_updates or {}
   paths_str = paths
   paths = glob(paths)
   if len(paths) == 0:
@@ -586,11 +603,14 @@ def get_usfa_data(
   dummy_env_params = make_env_params(mazes.big_practice_maze)
   # first map (all same objects)
   train_objects = dummy_env_params.reset_params.train_objects[0]
-
+  test_objects = dummy_env_params.reset_params.test_objects[0]
   eval_task_runner_sf = sf_task_runner.TaskRunner(
     task_objects=task_objects, vis_coeff=vis_coeff, radius=5
   )
   train_tasks = jnp.array([eval_task_runner_sf.task_vector(o) for o in train_objects])
+  test_tasks = jnp.array([eval_task_runner_sf.task_vector(o) for o in test_objects])
+  all_tasks = jnp.concatenate((train_tasks, test_tasks), axis=0)
+
 
   ###################
   # Get environment
@@ -609,7 +629,7 @@ def get_usfa_data(
   for path in tqdm(paths):
     seed = path.split("/")[-1].split("=")[-1]
     agent_params, config = load_params_config(path, "usfa")
-
+    config.update(config_updates)
     HouzemazeObsEncoder = functools.partial(
       CategoricalHouzemazeObsEncoder,
       num_categories=10000,
@@ -630,6 +650,7 @@ def get_usfa_data(
         usfa.make_agent,
         train_tasks=train_tasks,
         ObsEncoderCls=HouzemazeObsEncoder,
+        all_tasks=all_tasks,
       ),
       num_episodes=num_episodes,
       max_steps=max_steps,
@@ -646,6 +667,7 @@ def get_usfa_data(
       overwrite_df=overwrite_df,
       extra_info=dict(seed=int(seed)),
       data_task_runner=eval_task_runner_sf,
+      config_updates=config_updates,
       **kwargs,
     )
     model_df_list.append(df)
@@ -898,6 +920,7 @@ def get_model_data(
   search_path: str,
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
+  check_locally: bool = False,
   cache_dir: str = None,
   debug: bool = False,
 ):
@@ -929,6 +952,7 @@ def get_model_data(
     not (overwrite_episodes or overwrite_df)
     and os.path.exists(df_cache_path)
     and os.path.exists(episodes_cache_path)
+    and not check_locally
   ):
     try:
       df = pl.read_csv(df_cache_path)
@@ -940,6 +964,19 @@ def get_model_data(
 
   # If we need to regenerate the data:
   ##############################
+  # Successor Features
+  ##############################
+  sf_dfs = []
+  for eval_task_support in ["train", "eval", "train_eval"]:
+    sf_dfs.append(get_usfa_data(
+      sf_path,
+      overwrite_episodes=overwrite_episodes,
+      overwrite_df=overwrite_df,
+      config_updates=dict(
+        EVAL_TASK_SUPPORT=eval_task_support
+      )
+    ))
+  ##############################
   # Q-learning
   ##############################
   qlearning_df = get_qlearning_data(
@@ -948,14 +985,6 @@ def get_model_data(
     overwrite_df=overwrite_df
   )
 
-  ##############################
-  # Successor Features
-  ##############################
-  sf_df = get_usfa_data(
-    sf_path,
-    overwrite_episodes=overwrite_episodes,
-    overwrite_df=overwrite_df
-  )
 
   ##############################
   # Multitask Preplay/Off-task Dyna
@@ -983,14 +1012,15 @@ def get_model_data(
     num_episodes=1 if debug else 100,
   )
 
-  model_df = concat_list(qlearning_df, sf_df, dyna_df, preplay_df, search_df)
+  model_df = concat_list(qlearning_df, *sf_dfs, dyna_df, preplay_df, search_df)
 
-  # Cache the results
-  os.makedirs(os.path.dirname(cache_base), exist_ok=True)
-  model_df._df.write_csv(df_cache_path)
-  with open(episodes_cache_path, "wb") as f:
-    pickle.dump(model_df.episodes, f)
-    print(f"Cached model data to {episodes_cache_path}")
+  ## Cache the results
+  # NOTE: TAKES UP A LOT OF DISK SPACE. better to just load previous. slower but more versatile
+  #os.makedirs(os.path.dirname(cache_base), exist_ok=True)
+  #model_df._df.write_csv(df_cache_path)
+  #with open(episodes_cache_path, "wb") as f:
+  #  pickle.dump(model_df.episodes, f)
+  #  print(f"Cached model data to {episodes_cache_path}")
 
   return model_df
 
@@ -1021,6 +1051,7 @@ if __name__ == "__main__":
     search_path=f"{data_dir}/search_algos",
     overwrite_episodes=False,
     overwrite_df=False,
+    check_locally=True,
     cache_dir=cache_dir,
     debug=DEBUG
   )

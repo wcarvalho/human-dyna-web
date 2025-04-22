@@ -105,14 +105,14 @@ def plot_sf_values(
   line_mask = line_mask or [True, True, False, False, True, True, False, False]
 
   line_names = line_names or [
-    "main",
+    "main-task",
     "off-task",
-    "main2",
+    "main2-task",
     "off-task2",
-    "near main",
-    "near off-task",
-    "near-main2",
-    "near-off-task2",
+    "main landmark",
+    "off-task landmark",
+    "main2 landmark",
+    "off-task2 landmark feature",
   ]
   # Get first half of line names and take every even index (0, 2)
   first_half = line_names[
@@ -168,10 +168,13 @@ def plot_sf_values(
       )
 
     if len(idxs) > 1:
-      ax.set_title(
-        f"Successor Feature Predictions (task={policy_names[idx]})",
-        fontsize=DEFAULT_TITLE_SIZE,
-      )
+      try:
+        ax.set_title(
+          f"Successor Feature Predictions (task={policy_names[idx]})",
+          fontsize=DEFAULT_TITLE_SIZE,
+        )
+      except:
+        pass
     else:
       ax.set_title("Successor Feature Predictions", fontsize=DEFAULT_TITLE_SIZE)
     ax.set_xlabel("Time Step", fontsize=DEFAULT_LABEL_SIZE)

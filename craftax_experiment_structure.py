@@ -48,7 +48,7 @@ load_dotenv()
 logger = get_logger(__name__)
 VERBOSITY = int(os.environ.get("VERBOSITY", 0))
 DEBUG = int(os.environ.get("DEBUG", 0))
-MANIPULATION = os.environ.get("MANIPULATION", "juncture")
+MANIPULATION = os.environ.get("MANIPULATION", "paths")
 SAY_REUSE = int(os.environ.get("SAY_REUSE", 0))
 NUM_BLOCKS = int(os.environ.get("NUM_BLOCKS", 100))
 EVAL_SHOW_MAP = int(os.environ.get("EVAL_SHOW_MAP", 1))
@@ -389,6 +389,7 @@ default_params = EnvParams(
   start_positions=dummy_start_position,
   num_start_locations=1,
 )
+
 
 dummy_params = make_block_env_params(dummy_block_config, default_params).replace(
   # to have compilation use valid current_goal value

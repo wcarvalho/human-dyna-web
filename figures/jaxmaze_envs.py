@@ -13,6 +13,10 @@ import numpy as np
 import itertools
 from configs import default_colors, DIRECTORY
 
+TRAIN_COLOR = 'red'
+EVAL_COLOR = default_colors["sky blue"]
+EVAL2_COLOR = 'yellow'
+
 image_dict = utils.load_image_dict()
 
 image_keys = image_dict["keys"]
@@ -144,15 +148,12 @@ def render_path(
 def save_figure(fig, filename, directory=None):
   directory = directory or DIRECTORY
   os.makedirs(directory, exist_ok=True)
-  plt.savefig(os.path.join(directory, f"{filename}.png"), bbox_inches='tight', dpi=300)
+  #plt.savefig(os.path.join(directory, f"{filename}.png"), bbox_inches='tight', dpi=300)
   plt.savefig(os.path.join(directory, f"{filename}.pdf"), bbox_inches='tight', dpi=300)
   print(f"Saved figure to {directory}/{filename}.pdf")
   plt.close()
 
 
-TRAIN_COLOR = 'red'
-EVAL_COLOR = default_colors["sky blue"]
-EVAL2_COLOR = 'yellow'
 
 def plot_single_and_rotations(base_name, plot_fn, save_figure_fn):
   """Plot both single first figure and all rotations for a given plot configuration.
@@ -210,6 +211,20 @@ if __name__ == "__main__":
     render_path(utils.reverse(mazes.big_m4_maze_long_eval_diff, *reversal), goal=task_objects[2], ax=ax, plot_image=False, arrow_color=EVAL2_COLOR, star_at_start=True)
 
   plot_single_and_rotations("2.juncture_manipulation_far_known", plot_juncture_far_known, save_figure)
+
+  # Plot all juncture manipulations together
+  def plot_all_junctures():
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+    plot_juncture_near_known(axs[0], (False, False))
+    axs[0].set_title("Near, Known Test Goal")
+    plot_juncture_near_unknown(axs[1], (False, False))
+    axs[1].set_title("Near, Unknown Test Goal")
+    plot_juncture_far_known(axs[2], (False, False))
+    axs[2].set_title("Far, Known Test Goal")
+    plt.tight_layout()
+    save_figure(fig, "2_juncture_manipulation")
+
+  plot_all_junctures()
 
   ########################################################
   # Start Manipulation

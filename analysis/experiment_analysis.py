@@ -221,7 +221,7 @@ def filter_train_by_min_success(df: DataFrame, min_successes: int = 16):
     )
   return remove
 
-def plot_reaction_times(reaction_times, figsize=(6, 3), color='lightblue', title=None, ylabel=True, ylim=None, remove_last: bool = True, ax=None):
+def plot_reaction_times(reaction_times, figsize=(6, 3), color='lightblue', title=None, ylabel=True, ylim=None, remove_last: bool = True, show_xlabel=True, ax=None):
     """
     Creates a bar plot showing the progression of reaction times over steps.
     
@@ -244,16 +244,19 @@ def plot_reaction_times(reaction_times, figsize=(6, 3), color='lightblue', title
     steps = np.arange(len(reaction_times))
     ax.bar(steps, reaction_times, color=color, alpha=0.7, edgecolor='black')
     
-    ax.set_xlabel('Episode timestep', fontsize=DEFAULT_LABEL_SIZE)
-    if ylabel:
+    if show_xlabel:
+      ax.set_xlabel('Episode timestep', fontsize=DEFAULT_LABEL_SIZE)
+    if ylabel is not None:
       ax.set_ylabel('Reaction Time (s)', fontsize=DEFAULT_LABEL_SIZE)
-    ax.set_title(title or 'Reaction Times', fontsize=DEFAULT_TITLE_SIZE)
+    if title is not None: 
+      ax.set_title(title, fontsize=DEFAULT_TITLE_SIZE)
     ax.grid(True, axis='y', linestyle='--', alpha=0.7)
     
     # Add mean line
     mean_rt = np.mean(reaction_times)
+    std_rt = np.std(reaction_times)
     ax.axhline(y=mean_rt, color='r', linestyle='--', 
-                label=f'Mean: {mean_rt:.2f}s')
+                label=f'Mean: {mean_rt:.3f}s, Std: {std_rt:.3f}s')
     ax.legend(fontsize=DEFAULT_LEGEND_SIZE)
     
     # Adjust tick label sizes

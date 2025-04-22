@@ -602,6 +602,7 @@ def draw_object_path(
   goal_idx: Optional[int] = None,
   nearby_goal: bool = False,
   show_path_length: bool = True,
+  arrow_scale: int = 5, 
 ):
   """Draw path to a specific object type from start position."""
   # Get goal position for the object
@@ -627,6 +628,8 @@ def draw_object_path(
     display_image=False,
     arrow_color=color,
     show_path_length=show_path_length,
+    arrow_scale=arrow_scale,
+    arrow_scale=arrow_scale,
     start_color=color,
   )
   return path
@@ -654,6 +657,10 @@ def train_test_paths(
   goal_idx: Optional[int] = None,
   ax=None,
   show_path_length: bool = True,
+  arrow_scale: int = 5,
+  train_color='',
+  eval_color='',
+
 ):
   #########################################
   # Create params
@@ -683,6 +690,9 @@ def train_test_paths(
 
   if ax is None:
     fig, ax = plt.subplots(1, figsize=(8, 8))
+  else:
+    fig = ax.figure
+
   with jax.disable_jit():
     image = render_fn(
       state, show_agent=False, block_pixel_size=constants.BLOCK_PIXEL_SIZE_IMG
@@ -696,33 +706,36 @@ def train_test_paths(
       state,
       train_distractor_object,
       start_position,
-      TRAIN_COLOR,
+      train_color or TRAIN_COLOR,
       ax,
       image,
       world_seed,
       show_path_length=show_path_length,
+      arrow_scale=arrow_scale,
     )
   draw_object_path(
     state,
     test_object,
     start_position,
-    TEST_COLOR,
+    eval_color or TEST_COLOR,
     ax,
     image,
     world_seed,
     goal_idx=goal_idx,
     show_path_length=show_path_length,
+    arrow_scale=arrow_scale,
   )
   draw_object_path(
     state,
     train_object,
     start_position,
-    TRAIN_COLOR,
+    train_color or TRAIN_COLOR,
     ax,
     image,
     world_seed,
     nearby_goal=nearby_goal,
     show_path_length=show_path_length,
+    arrow_scale=arrow_scale,
   )
 
   # Place start marker for the first position
@@ -772,8 +785,7 @@ def train_test_paths(
   output_path = os.path.join(cache_dir, f"world_{world_seed}_paths.png")
   plt.savefig(output_path, bbox_inches="tight", pad_inches=0)
   print(f"Saved to {output_path}")
-  plt.show()
-  plt.close()
+  return fig, ax
 
 
 def render_goal_object(goal_object_idx: int, block_pixel_size: int):

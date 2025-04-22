@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 from joblib import Parallel, delayed
 from typing import Optional
 import polars as pl
@@ -25,6 +30,7 @@ from housemaze.human_dyna import web_env
 
 from nicewebrl import nicejax
 from nicewebrl.dataframe import DataFrame
+import configs
 
 # for tqdm both in notebook and terminal
 try:
@@ -890,7 +896,7 @@ def get_human_data(
   end = SuccessTrackingAutoResetWrapper(base_env)
   example_web_timestep = end.reset(dummy_rng, dummy_env_params)
 
-  data_dir = "/Users/wilka/git/research/results/human_dyna/"
+  data_dir = configs.JAXMAZE_USER_DIR
   if debug:
     df_location = os.path.join(data_dir, "user_data/exps/all_data_debug.csv")
   else:
@@ -936,7 +942,7 @@ def get_human_data(
 
 if __name__ == "__main__":
   # Define searches
-  data_dir = "/Users/wilka/git/research/results/human_dyna/"
+  data_dir = configs.JAXMAZE_USER_DIR
 
   searches = {
     "Paths": f"{data_dir}/user_data/*exps*/*v1*paths*.json",
