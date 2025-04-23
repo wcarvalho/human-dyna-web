@@ -392,14 +392,11 @@ def get_algorithm_data(
     timesteps_filename = f"{base_path}/{algorithm.name}_timesteps.safetensors"
     df_filename = f"{base_path}/{algorithm.name}_df.csv"
 
-  all_train_objects = [image_keys[o] for o in groups[:, 0]]
-  all_test_objects = [image_keys[o] for o in groups[:, 1]]
 
   train_tasks = groups[:1, 0]
-  test_tasks = groups[:2, 1]
+  test_tasks = groups[:1, 1]
   tasks = jnp.concatenate((train_tasks, test_tasks))
   rng = jax.random.PRNGKey(42)
-  import ipdb; ipdb.set_trace()
   ##############################
   # First try to load episodes
   ##############################
@@ -500,7 +497,7 @@ def get_algorithm_data(
         elif maze_name == "big_m3_maze1":
           info["reuse"] = int(went_to_junction(episode, (14, 25)))
         else:
-          info["reuse"] = 2  # neither
+          info["reuse"] = 0  # neither
         all_info.append(info)
         episode_idx += 1
 
@@ -512,7 +509,7 @@ def get_algorithm_data(
 
 def get_qlearning_data(
   paths: str,
-  num_episodes: int = 25,
+  num_episodes: int = 1,
   max_steps: int = 200,
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
@@ -582,7 +579,7 @@ def get_qlearning_data(
 
 def get_usfa_data(
   paths: str,
-  num_episodes: int = 25,
+  num_episodes: int = 1,
   max_steps: int = 200,
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
@@ -678,10 +675,85 @@ def get_usfa_data(
     episodes=model_episodes_list,
   )
 
-
 def get_dyna_data(
   paths: str,
-  num_episodes: int = 25,
+  num_episodes: int = 1,
+  max_steps: int = 200,
+  overwrite_episodes: bool = False,
+  overwrite_df: bool = False,
+  **kwargs,
+):
+  """
+
+  NOTE: since planning is only used for learning, we don't need to load an planning machinery.
+  """
+
+  from simulations.networks import CategoricalHouzemazeObsEncoder
+  from simulations import multitask_preplay_craftax_v2 as dyna
+
+  paths_str = paths
+  paths = glob(paths)
+  if len(paths) == 0:
+    raise ValueError(f"No paths found for {paths_str}")
+
+  # Create environment once outside the loop
+  env = load_env()
+  dummy_env_params = make_env_params(mazes.big_practice_maze)
+  model_df_list = []
+  model_episodes_list = []
+
+  for path in tqdm(paths):
+    seed = path.split("/")[-1].split("=")[-1]
+    agent_params, config = load_params_config(path, "dyna")
+
+    HouzemazeObsEncoder = functools.partial(
+      CategoricalHouzemazeObsEncoder,
+      num_categories=10000,
+      embed_hidden_dim=config["EMBED_HIDDEN_DIM"],
+      mlp_hidden_dim=config["MLP_HIDDEN_DIM"],
+      num_embed_layers=config["NUM_EMBED_LAYERS"],
+      num_mlp_layers=config["NUM_MLP_LAYERS"],
+      activation=config["ACTIVATION"],
+      norm_type=config.get("NORM_TYPE", "none"),
+    )
+
+    algorithm = load_algorithm(
+      config=config,
+      agent_params=agent_params,
+      env=env,
+      example_env_params=dummy_env_params,
+      make_agent=functools.partial(
+        dyna.make_jaxmaze_multigoal_agent,
+        ObsEncoderCls=HouzemazeObsEncoder,
+      ),
+      num_episodes=num_episodes,
+      max_steps=max_steps,
+      make_optimizer=dyna.make_optimizer,
+      make_actor=dyna.make_actor,
+      path=path,
+      name="dyna",
+      overwrite=overwrite_episodes,
+    )
+
+    df, episodes = get_algorithm_data(
+      algorithm=algorithm,
+      overwrite_episodes=overwrite_episodes,
+      overwrite_df=overwrite_df,
+      extra_info=dict(seed=int(seed)),
+      data_task_runner=task_runner,
+      **kwargs,
+    )
+    model_df_list.append(df)
+    model_episodes_list.extend(episodes)
+
+  return DataFrame(
+    df=pl.concat(model_df_list, how="diagonal_relaxed"),
+    episodes=model_episodes_list,
+  )
+
+def get_preplay_data_old(
+  paths: str,
+  num_episodes: int = 1,
   max_steps: int = 200,
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
@@ -735,7 +807,7 @@ def get_dyna_data(
       make_optimizer=offtask_dyna.make_optimizer,
       make_actor=offtask_dyna.make_actor,
       path=path,
-      name="dynaq_shared",
+      name="preplay",
       overwrite=overwrite_episodes,
     )
 
@@ -857,6 +929,7 @@ def get_bfs_dfs_data(
   overwrite_df: bool = False,
   budget=None,
   num_episodes: int = 100,
+  algorithms: List[str] = ["bfs", "dfs"],
   **kwargs,
 ):
   env = load_env()
@@ -864,7 +937,7 @@ def get_bfs_dfs_data(
   model_df_list = []
   model_episodes_list = []
 
-  for algorithm in ["bfs", "dfs"]:
+  for algorithm in algorithms:
 
     def eval_fn(rng, env_params, task_vector):
       return collect_search_episodes(
@@ -913,16 +986,19 @@ def get_model_df(cache_dir: str, load_episodes: bool = True):
 
 
 def get_model_data(
-  qlearning_path: str,
-  sf_path: str,
-  dyna_path: str,
-  preplay_path: str,
-  search_path: str,
+  qlearning_path: str=None,
+  sf_path: str=None,
+  dyna_path: str=None,
+  preplay_path: str=None,
+  search_path: str=None,
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
   check_locally: bool = False,
   cache_dir: str = None,
   debug: bool = False,
+  load_df_only: bool = False,
+  #sf_eval_task_support: List[str] = ["train", "eval", "train_eval"],
+  sf_eval_task_support: List[str] = ["train"],
 ):
   """Load and process data from different model types.
 
@@ -937,12 +1013,23 @@ def get_model_data(
       search_path: Path to search algorithms data
       overwrite_episodes: If True, regenerate episode data even if it exists
       overwrite_df: If True, regenerate DataFrame even if it exists
+      check_locally: If True, check local files even if cache exists
+      cache_dir: Directory to cache the data
+      debug: If True, run in debug mode (fewer episodes)
+      load_df_only: If True, only load the DataFrame without loading episodes
+      sf_eval_task_support: List of evaluation task support types for SF
 
   Returns:
-      DataFrame containing combined model data
+      DataFrame containing combined model data or just the DataFrame if load_df_only=True
   """
   # Create cache filenames based on the paths
-  cache_dir = cache_dir or os.path.dirname(qlearning_path)
+  if cache_dir is None:
+    # Find the first non-None path to use as base for cache_dir
+    base_path = next((p for p in [qlearning_path, sf_path, dyna_path, preplay_path, search_path] if p is not None), None)
+    if base_path is None:
+      raise ValueError("No paths provided and no cache_dir specified")
+    cache_dir = os.path.dirname(base_path)
+  
   cache_base = os.path.join(cache_dir, "model_data_cache")
   df_cache_path = f"{cache_base}_df.csv"
   episodes_cache_path = f"{cache_base}_episodes.pickle"
@@ -951,11 +1038,14 @@ def get_model_data(
   if (
     not (overwrite_episodes or overwrite_df)
     and os.path.exists(df_cache_path)
-    and os.path.exists(episodes_cache_path)
+    and (os.path.exists(episodes_cache_path) or load_df_only)
     and not check_locally
   ):
     try:
       df = pl.read_csv(df_cache_path)
+      if load_df_only:
+        print(f"Loaded cached model DataFrame from {df_cache_path}")
+        return df
       with open(episodes_cache_path, "rb") as f:
         episodes = pickle.load(f)
       return DataFrame(df=df, episodes=episodes)
@@ -963,64 +1053,87 @@ def get_model_data(
       print(f"Error loading cached model data: {e}")
 
   # If we need to regenerate the data:
+  # Collect dataframes for models with provided paths
+  dfs_to_concat = []
+
   ##############################
   # Successor Features
   ##############################
-  sf_dfs = []
-  for eval_task_support in ["train", "eval", "train_eval"]:
-    sf_dfs.append(get_usfa_data(
-      sf_path,
-      overwrite_episodes=overwrite_episodes,
-      overwrite_df=overwrite_df,
-      config_updates=dict(
-        EVAL_TASK_SUPPORT=eval_task_support
-      )
-    ))
+  if sf_path is not None:
+    sf_dfs = []
+    for eval_task_support in sf_eval_task_support:
+      sf_dfs.append(get_usfa_data(
+        sf_path,
+        overwrite_episodes=overwrite_episodes,
+        overwrite_df=overwrite_df,
+        config_updates=dict(
+          EVAL_TASK_SUPPORT=eval_task_support
+        )
+      ))
+    dfs_to_concat.extend(sf_dfs)
+
   ##############################
   # Q-learning
   ##############################
-  qlearning_df = get_qlearning_data(
-    qlearning_path,
-    overwrite_episodes=overwrite_episodes,
-    overwrite_df=overwrite_df
-  )
-
+  if qlearning_path is not None:
+    qlearning_df = get_qlearning_data(
+      qlearning_path,
+      overwrite_episodes=overwrite_episodes,
+      overwrite_df=overwrite_df
+    )
+    dfs_to_concat.append(qlearning_df)
 
   ##############################
   # Multitask Preplay/Off-task Dyna
   ##############################
-  dyna_df = get_dyna_data(
-    dyna_path,
-    overwrite_episodes=overwrite_episodes,
-    overwrite_df=overwrite_df,
-  )
+  if dyna_path is not None:
+    dyna_df = get_dyna_data(
+      dyna_path,
+      overwrite_episodes=overwrite_episodes,
+      overwrite_df=overwrite_df,
+    )
+    dfs_to_concat.append(dyna_df)
 
   ##############################
   # Preplay
   ##############################
-  preplay_df = get_dyna_data(
-    preplay_path, overwrite_episodes=overwrite_episodes, overwrite_df=overwrite_df
-  )
+  if preplay_path is not None:
+    preplay_df = get_preplay_data_old(
+      preplay_path, overwrite_episodes=overwrite_episodes, overwrite_df=overwrite_df
+    )
+    dfs_to_concat.append(preplay_df)
 
   ##############################
   # Breadth-first search and Depth-first search
   ##############################
-  search_df = get_bfs_dfs_data(
-    path=search_path,
-    overwrite_episodes=overwrite_episodes,
-    overwrite_df=overwrite_df,
-    num_episodes=1 if debug else 100,
-  )
+  if search_path is not None:
+    search_df = get_bfs_dfs_data(
+      path=search_path,
+      overwrite_episodes=overwrite_episodes,
+      overwrite_df=overwrite_df,
+      num_episodes=1 if debug else 100,
+    )
+    dfs_to_concat.append(search_df)
 
-  model_df = concat_list(qlearning_df, *sf_dfs, dyna_df, preplay_df, search_df)
+  # Only try to concat if we have dataframes
+  if not dfs_to_concat:
+    raise ValueError("No data paths were provided. At least one path must be specified.")
+    
+  model_df = concat_list(*dfs_to_concat)
 
   ## Cache the results
   # NOTE: TAKES UP A LOT OF DISK SPACE. better to just load previous. slower but more versatile
-  #os.makedirs(os.path.dirname(cache_base), exist_ok=True)
-  #model_df._df.write_csv(df_cache_path)
-  #with open(episodes_cache_path, "wb") as f:
-  #  pickle.dump(model_df.episodes, f)
-  #  print(f"Cached model data to {episodes_cache_path}")
+  os.makedirs(os.path.dirname(cache_base), exist_ok=True)
+  model_df._df.write_csv(df_cache_path)
+  
+  if load_df_only:
+    print("Returning DataFrame only as requested")
+    return model_df._df
+    
+  # Only save episodes if we're not in load_df_only mode
+  with open(episodes_cache_path, "wb") as f:
+    pickle.dump(model_df.episodes, f)
+    print(f"Cached model data to {episodes_cache_path}")
 
   return model_df
 

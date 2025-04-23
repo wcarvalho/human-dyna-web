@@ -629,7 +629,6 @@ def draw_object_path(
     arrow_color=color,
     show_path_length=show_path_length,
     arrow_scale=arrow_scale,
-    arrow_scale=arrow_scale,
     start_color=color,
   )
   return path

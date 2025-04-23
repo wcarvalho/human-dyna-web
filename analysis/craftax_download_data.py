@@ -97,12 +97,12 @@ prefix = "data/"
 # pattern = "data/data_user=*_name=r0-v2*debug=0.json"
 human_data_pattern = "data/data_user=*r0-exp2-obj*-v0*debug=0.json"
 destination_folder = (
-  "/Users/wilka/git/research/results/human_dyna_craftax/user_data/exps"
+  "/Users/wilka/git/research/preplay_results/craftax_user_data/model_data/user_data/exps"
 )
 
 ##############################
 # Model Data
-local_dir = "/Users/wilka/git/research/results/human_dyna_craftax/model_data"
+local_dir = "/Users/wilka/git/research/preplay_results/craftax_user_data/model_data"
 server_dir = (
   "/n/holylfs06/LABS/kempner_fellow_wcarvalho/jax_rl_results/craftax_multigoal_trainer"
 )

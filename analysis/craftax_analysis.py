@@ -251,7 +251,7 @@ def plot_success_rate_path_reuse_metrics(
   
   for i, (tell_value, label, marker) in enumerate(zip(tell_reuse_values, tell_reuse_labels, tell_reuse_markers)):
     # Filter data for this tell_reuse value
-    filtered_df = df.filter(tell_reuse=tell_value)
+    filtered_df = df.filter(tell_reuse=tell_value, eval=True)
     
     # Calculate statistics with consistent ordering
     user_data = (
@@ -452,6 +452,13 @@ def path_reuse_manipulation_analysis(
   #if tell_reuse is not None:
   #  title += f"\nTell Reuse: {bool(tell_reuse)}"
   
+  sub_df = sub_df.filter_by_group(
+    input_episode_filter=experiment_analysis.filter_train_by_min_success,
+    input_settings=dict(eval=False),
+    output_settings=dict(),
+    group_key="user_id",
+  ).filter(eval=True)
+
   # first plot when tell_reuse is 1
   fig, ax = plot_success_rate_path_reuse_metrics(
     df=sub_df,
@@ -469,7 +476,7 @@ def path_reuse_manipulation_analysis(
 
   if save_figs:
     fig.savefig(os.path.join(save_dir, "success_path_reuse.pdf"), bbox_inches="tight", dpi=300)
-    fig.savefig(os.path.join(save_dir, "success_path_reuse.png"), bbox_inches="tight", dpi=300)
+    #fig.savefig(os.path.join(save_dir, "success_path_reuse.png"), bbox_inches="tight", dpi=300)
   if display_figs:
     from IPython.display import display
     display(fig)
@@ -495,3 +502,101 @@ def path_reuse_manipulation_analysis(
   if verbosity > 0:
     with open(stats_filename, "r") as f:
       print(f.read())
+
+
+def plot_non_reuse_frequency_by_world_seed(
+  user_df: DataFrame,
+  model_df: DataFrame,
+  save_dir: str,
+  save_figs: bool = True,
+  display_figs: bool = True,
+  figsize=(10, 6),
+  title="Frequency of Non-Reuse (reuse=0) by World Seed",
+):
+  """
+  Creates a grouped bar plot showing the frequency of non-reuse (reuse == 0)
+  for each world_seed, comparing user data and model data.
+  
+  Frequency is calculated as: count(reuse=0) / count(total) for each world_seed.
+
+  Args:
+      user_df (DataFrame): DataFrame containing human data with 'world_seed' and 'reuse' columns.
+      model_df (DataFrame): DataFrame containing model data with 'world_seed' and 'reuse' columns.
+      save_dir (str): Directory to save the plot.
+      save_figs (bool, optional): Whether to save the figure. Defaults to True.
+      display_figs (bool, optional): Whether to display the figure. Defaults to True.
+      figsize (tuple, optional): Figure size. Defaults to (10, 6).
+      title (str, optional): Plot title. Defaults to "Frequency of Non-Reuse (reuse=0) by World Seed".
+  """
+  
+  # --- Process User Data ---
+  settings = dict(eval=True)
+  user_counts = user_df.filter(**settings).group_by("world_seed").agg(count=pl.count()).sort("world_seed")
+  user_reuse0 = user_df.filter(reuse=1, **settings)
+  user_reuse0_counts = user_reuse0.group_by("world_seed").agg(count=pl.count()).sort("world_seed")
+  
+  # Merge and calculate probabilities
+  merged_user = user_counts.join(user_reuse0_counts, on="world_seed", how="left", suffix="_reuse0")
+  merged_user = merged_user.with_columns(
+      user_frequency=pl.col("count_reuse0") / pl.col("count")
+  )
+  
+  # --- Process Model Data ---
+  algo = 'preplay'
+  model_counts = model_df.filter(algo=algo, **settings).group_by("world_seed").agg(count=pl.count()).sort("world_seed")
+  model_reuse0 = model_df.filter(reuse=1, **settings, algo=algo)
+  model_reuse0_counts = model_reuse0.group_by("world_seed").agg(count=pl.count()).sort("world_seed")
+  
+  # Merge and calculate probabilities
+  merged_model = model_counts.join(model_reuse0_counts, on="world_seed", how="left", suffix="_reuse0")
+  merged_model = merged_model.with_columns(
+      model_frequency=pl.col("count_reuse0") / pl.col("count")
+  )
+
+  # --- Combine Data for Plotting ---
+  plot_data = merged_user.select(["world_seed", "user_frequency"]).join(
+      merged_model.select(["world_seed", "model_frequency"]), 
+      on="world_seed", 
+      how="outer"
+  ).sort("world_seed")
+
+  world_seeds = plot_data["world_seed"].to_list()
+  user_frequencies = plot_data["user_frequency"].to_numpy()
+  model_frequencies = plot_data["model_frequency"].to_numpy()
+
+  # --- Create Plot ---
+  x = np.arange(len(world_seeds))  # the label locations
+  width = 0.35  # the width of the bars
+
+  fig, ax = plt.subplots(figsize=figsize)
+  rects1 = ax.bar(x - width/2, user_frequencies, width, label='User', color=experiment_analysis.default_colors["orange"])
+  rects2 = ax.bar(x + width/2, model_frequencies, width, label='Model', color=experiment_analysis.default_colors["light gray"])
+
+  # Add some text for labels, title and axes ticks
+  ax.set_ylabel('Probability(reuse=1)')
+  ax.set_xlabel('World Seed')
+  ax.set_title(title, fontsize=experiment_analysis.DEFAULT_TITLE_SIZE)
+  ax.set_xticks(x)
+  ax.set_xticklabels(world_seeds, rotation=45, ha="right")
+  ax.legend(fontsize=experiment_analysis.DEFAULT_LEGEND_SIZE)
+  ax.grid(True, linestyle="--", alpha=0.7, axis='y')
+
+  ax.set_ylim(0, max(np.max(user_frequencies), np.max(model_frequencies)) * 1.1) # Add some padding to y-axis
+
+  fig.tight_layout()
+
+  # --- Save and Display ---
+  if save_figs:
+    plot_filename_base = os.path.join(save_dir, "non_reuse_frequency_by_seed")
+    os.makedirs(save_dir, exist_ok=True)
+    fig.savefig(f"{plot_filename_base}.pdf", bbox_inches="tight", dpi=300)
+    #fig.savefig(f"{plot_filename_base}.png", bbox_inches="tight", dpi=300)
+    print(f"Saved plot to {plot_filename_base}.pdf")
+
+  if display_figs:
+    from IPython.display import display
+    display(fig)
+  else:
+    plt.close(fig) # Close the figure if not displaying to save memory
+
+  return fig, ax

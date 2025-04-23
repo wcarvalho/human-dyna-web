@@ -935,7 +935,7 @@ def get_human_data(
   # Save the dataframe for future use
   initial_user_df._df.write_csv(df_location)
   if load_df_only:
-    return initial_user_df._df
+    return nicewebrl.DataFrame(initial_user_df._df)
 
   return initial_user_df
 

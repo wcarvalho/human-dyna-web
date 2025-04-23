@@ -586,7 +586,7 @@ def get_usfa_data(
       example_env_params=dummy_env_params,
       make_agent=functools.partial(
         usfa.make_multigoal_craftax_agent,
-        train_tasks=active_task_vectors,
+        all_tasks=active_task_vectors,
       ),
       num_episodes=num_episodes,
       max_steps=max_steps,
@@ -612,6 +612,66 @@ def get_usfa_data(
     episodes=model_episodes_list,
   )
 
+def get_dyna_data(
+  paths: str,
+  num_episodes: int = 1,
+  max_steps: int = 100,
+  overwrite_episodes: bool = False,
+  overwrite_df: bool = False,
+  **kwargs,
+):
+  """
+
+  NOTE: since planning is only used for learning, we don't need to load an planning machinery.
+  """
+
+  from simulations import dyna_craftax as dyna
+
+  paths_str = paths
+  paths = glob(paths)
+  if len(paths) == 0:
+    raise ValueError(f"No paths found for {paths_str}")
+
+  # Create environment once outside the loop
+  env = load_env()
+  dummy_env_params = craftax_simulation_configs.default_params
+  model_df_list = []
+  model_episodes_list = []
+
+  for path in tqdm(paths):
+    seed = path.split("/")[-1].split("=")[-1]
+    agent_params, config = load_params_config(path, "dyna")
+
+    algorithm = load_algorithm(
+      config=config,
+      agent_params=agent_params,
+      env=env,
+      example_env_params=dummy_env_params,
+      make_agent=dyna.make_agent,
+      num_episodes=num_episodes,
+      max_steps=max_steps,
+      make_optimizer=dyna.make_optimizer,
+      make_actor=dyna.make_actor,
+      path=path,
+      model_filename="dyna",
+      model_name="dyna",
+      overwrite=overwrite_episodes,
+    )
+
+    df, episodes = get_algorithm_data(
+      algorithm=algorithm,
+      overwrite_episodes=overwrite_episodes,
+      overwrite_df=overwrite_df,
+      extra_info=dict(seed=int(seed)),
+      **kwargs,
+    )
+    model_df_list.append(df)
+    model_episodes_list.extend(episodes)
+
+  return DataFrame(
+    df=pl.concat(model_df_list, how="diagonal_relaxed"),
+    episodes=model_episodes_list,
+  )
 
 def get_preplay_data(
   paths: str,
@@ -684,6 +744,7 @@ def get_model_data(
   overwrite_episodes: bool = False,
   overwrite_df: bool = False,
   cache_dir: str = None,
+  load_df_only: bool = False,
 ):
   """Load and process data from different model types.
 
@@ -698,6 +759,8 @@ def get_model_data(
       search_path: Path to search algorithms data
       overwrite_episodes: If True, regenerate episode data even if it exists
       overwrite_df: If True, regenerate DataFrame even if it exists
+      cache_dir: Directory to cache the data
+      load_df_only: If True, only load the DataFrame without loading episodes
 
   Returns:
       DataFrame containing combined model data
@@ -712,10 +775,13 @@ def get_model_data(
   if (
     not (overwrite_episodes or overwrite_df)
     and os.path.exists(df_cache_path)
-    and os.path.exists(episodes_cache_path)
+    and (os.path.exists(episodes_cache_path) or load_df_only)
   ):
     try:
       df = pl.read_csv(df_cache_path)
+      if load_df_only:
+        print(f"Loaded cached model DataFrame from {df_cache_path}")
+        return df
       with open(episodes_cache_path, "rb") as f:
         episodes = pickle.load(f)
         print(f"Loaded cached model data from {episodes_cache_path}")
@@ -768,6 +834,10 @@ def get_model_data(
   # Cache the results
   os.makedirs(os.path.dirname(cache_base), exist_ok=True)
   model_df._df.write_csv(df_cache_path)
+  
+  if load_df_only:
+    return model_df._df
+    
   with open(episodes_cache_path, "wb") as f:
     pickle.dump(model_df.episodes, f)
     print(f"Cached model data to {episodes_cache_path}")

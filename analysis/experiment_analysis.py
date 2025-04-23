@@ -772,7 +772,8 @@ def plot_path_reuse_comparison(
   """
 
   results = power_analysis_path_reuse(
-    df, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
+    df.with_columns(pl.col(measure).cast(pl.Int32)), 
+    measure=measure, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
   )
 
   # Calculate model statistics
@@ -903,7 +904,8 @@ def plot_success_rate_path_reuse_metrics(
   )
 
   results = power_analysis_path_reuse(
-    df, measure=reuse_column, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
+    df.with_columns(pl.col(reuse_column).cast(pl.Int32)), 
+    measure=reuse_column, mu=0.5, alpha=0.05, plot=False, stats_file=stats_file
   )
 
   human_reuse = user_data["reuse_mean"].to_numpy()

@@ -216,7 +216,7 @@ def path_reuse_results(
       user_df (DataFrame): _description_
       model_df (DataFrame): _description_
   """
-  save_dir = os.path.join(save_dir, f"ll_reuse_plots={tell_reuse}")
+  save_dir = os.path.join(save_dir, f"path_reuse_tell_reuse={tell_reuse}")
   os.makedirs(save_dir, exist_ok=True)
 
   # Open stats file
@@ -253,7 +253,6 @@ def path_reuse_results(
 
   if save_figs:
     fig.savefig(os.path.join(save_dir, "path_reuse_plots.pdf"), bbox_inches="tight")
-    fig.savefig(os.path.join(save_dir, "path_reuse_plots.png"), bbox_inches="tight", dpi=300)
 
   if display_figs:
     from IPython.display import display
